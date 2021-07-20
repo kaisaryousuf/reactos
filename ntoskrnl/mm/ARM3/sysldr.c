@@ -2436,8 +2436,6 @@ MiSetSystemCodeProtection(
 
     /* Flush it all */
     KeFlushEntireTb(TRUE, TRUE);
-
-    return;
 }
 
 VOID
@@ -2488,13 +2486,13 @@ MiWriteProtectSystemImage(
     /* Get the base address of the first section */
     SectionBase = Add2Ptr(ImageBase, SectionHeaders[0].VirtualAddress);
 
-    /* Start protecting the image header as R/O */
+    /* Start protecting the image header as R/W */
     FirstPte = MiAddressToPte(ImageBase);
     LastPte = MiAddressToPte(SectionBase) - 1;
-    Protection = IMAGE_SCN_MEM_READ;
+    Protection = IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE;
     if (LastPte >= FirstPte)
     {
-        MiSetSystemCodeProtection(FirstPte, LastPte, IMAGE_SCN_MEM_READ);
+        MiSetSystemCodeProtection(FirstPte, LastPte, Protection);
     }
 
     /* Loop the sections */
@@ -2562,17 +2560,20 @@ NTAPI
 MiSetPagingOfDriver(IN PMMPTE PointerPte,
                     IN PMMPTE LastPte)
 {
+#ifdef ENABLE_MISETPAGINGOFDRIVER
     PVOID ImageBase;
     PETHREAD CurrentThread = PsGetCurrentThread();
     PFN_COUNT PageCount = 0;
     PFN_NUMBER PageFrameIndex;
     PMMPFN Pfn1;
+#endif // ENABLE_MISETPAGINGOFDRIVER
+
     PAGED_CODE();
 
+#ifndef ENABLE_MISETPAGINGOFDRIVER
     /* The page fault handler is broken and doesn't page back in! */
     DPRINT1("WARNING: MiSetPagingOfDriver() called, but paging is broken! ignoring!\n");
-    return;
-
+#else  // ENABLE_MISETPAGINGOFDRIVER
     /* Get the driver's base address */
     ImageBase = MiPteToAddress(PointerPte);
     ASSERT(MI_IS_SESSION_IMAGE_ADDRESS(ImageBase) == FALSE);
@@ -2610,6 +2611,7 @@ MiSetPagingOfDriver(IN PMMPTE PointerPte,
         /* Update counters */
         InterlockedExchangeAdd((PLONG)&MmTotalSystemDriverPages, PageCount);
     }
+#endif // ENABLE_MISETPAGINGOFDRIVER
 }
 
 VOID

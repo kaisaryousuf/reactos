@@ -2,6 +2,10 @@
 
 #include <internal/arch/mm.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* TYPES *********************************************************************/
 
 struct _EPROCESS;
@@ -46,6 +50,11 @@ struct _KTRAP_FRAME;
 struct _EPROCESS;
 struct _MM_RMAP_ENTRY;
 typedef ULONG_PTR SWAPENTRY;
+
+//
+// Special IRQL value (found in assertions)
+//
+#define MM_NOIRQL ((KIRQL)0xFFFFFFFF)
 
 //
 // MmDbgCopyMemory Flags
@@ -155,14 +164,23 @@ typedef ULONG_PTR SWAPENTRY;
 #error Unsupported architecture!
 #endif
 
+#ifdef _M_AMD64
+#define InterlockedCompareExchangePte(PointerPte, Exchange, Comperand) \
+    InterlockedCompareExchange64((PLONG64)(PointerPte), Exchange, Comperand)
+
+#define InterlockedExchangePte(PointerPte, Value) \
+    InterlockedExchange64((PLONG64)(PointerPte), Value)
+#else
 #define InterlockedCompareExchangePte(PointerPte, Exchange, Comperand) \
     InterlockedCompareExchange((PLONG)(PointerPte), Exchange, Comperand)
 
 #define InterlockedExchangePte(PointerPte, Value) \
     InterlockedExchange((PLONG)(PointerPte), Value)
+#endif
 
 typedef struct _MM_SECTION_SEGMENT
 {
+    LONG64 RefCount;
     PFILE_OBJECT FileObject;
 
     FAST_MUTEX Lock;		/* lock which protects the page directory */
@@ -182,7 +200,6 @@ typedef struct _MM_SECTION_SEGMENT
 		ULONG Characteristics;
 	} Image;
 
-	LONG64 RefCount;
 	ULONG SegFlags;
 
     ULONGLONG LastPage;
@@ -192,9 +209,10 @@ typedef struct _MM_SECTION_SEGMENT
 
 typedef struct _MM_IMAGE_SECTION_OBJECT
 {
-    PFILE_OBJECT FileObject;
-
     LONG64 RefCount;
+    PFILE_OBJECT FileObject;
+    ULONG SectionCount;
+    LONG MapCount;
     ULONG SegFlags;
 
     SECTION_IMAGE_INFORMATION ImageInformation;
@@ -207,6 +225,7 @@ typedef struct _MM_IMAGE_SECTION_OBJECT
 #define MM_DATAFILE_SEGMENT                 (0x2)
 #define MM_SEGMENT_INDELETE                 (0x4)
 #define MM_SEGMENT_INCREATE                 (0x8)
+#define MM_IMAGE_SECTION_FLUSH_DELETE       (0x10)
 
 
 #define MA_GetStartingAddress(_MemoryArea) ((_MemoryArea)->VadNode.StartingVpn << PAGE_SHIFT)
@@ -263,7 +282,7 @@ void
 MI_SET_PROCESS_USTR(PUNICODE_STRING ustr)
 {
     PWSTR pos, strEnd;
-    int i;
+    ULONG i;
 
     if (!ustr->Buffer || ustr->Length == 0)
     {
@@ -395,6 +414,7 @@ typedef struct _MMPFN
     MI_PFN_USAGES PfnUsage;
     CHAR ProcessName[16];
 #define MI_SET_PFN_PROCESS_NAME(pfn, x) memcpy(pfn->ProcessName, x, min(sizeof(x), sizeof(pfn->ProcessName)))
+    PVOID CallSite;
 #endif
 
     // HACK until WS lists are supported
@@ -598,6 +618,7 @@ MiCheckAllProcessMemoryAreas(VOID);
 
 /* npool.c *******************************************************************/
 
+CODE_SEG("INIT")
 VOID
 NTAPI
 MiInitializeNonPagedPool(VOID);
@@ -648,6 +669,7 @@ MmInit1(
     VOID
 );
 
+CODE_SEG("INIT")
 BOOLEAN
 NTAPI
 MmInitSystem(IN ULONG Phase,
@@ -664,6 +686,7 @@ VOID
 NTAPI
 MmFreeSwapPage(SWAPENTRY Entry);
 
+CODE_SEG("INIT")
 VOID
 NTAPI
 MmInitPagingFile(VOID);
@@ -737,7 +760,7 @@ VOID
 NTAPI
 MmCleanProcessAddressSpace(IN PEPROCESS Process);
 
-NTSTATUS
+VOID
 NTAPI
 MmDeleteProcessAddressSpace(IN PEPROCESS Process);
 
@@ -823,6 +846,7 @@ MmDeleteKernelStack(PVOID Stack,
 
 /* balance.c *****************************************************************/
 
+CODE_SEG("INIT")
 VOID
 NTAPI
 MmInitializeMemoryConsumer(
@@ -830,6 +854,7 @@ MmInitializeMemoryConsumer(
     NTSTATUS (*Trim)(ULONG Target, ULONG Priority, PULONG NrFreed)
 );
 
+CODE_SEG("INIT")
 VOID
 NTAPI
 MmInitializeBalancer(
@@ -852,6 +877,7 @@ MmRequestPageMemoryConsumer(
     PPFN_NUMBER AllocatedPage
 );
 
+CODE_SEG("INIT")
 VOID
 NTAPI
 MiInitBalancerThread(VOID);
@@ -899,6 +925,7 @@ MmDeleteRmap(
     PVOID Address
 );
 
+CODE_SEG("INIT")
 VOID
 NTAPI
 MmInitializeRmapList(VOID);
@@ -1074,6 +1101,7 @@ MmIsDisabledPage(
     PVOID Address
 );
 
+CODE_SEG("INIT")
 VOID
 NTAPI
 MmInitGlobalKernelPageDirectory(VOID);
@@ -1175,6 +1203,7 @@ MmCreateProcessAddressSpace(
     IN PULONG_PTR DirectoryTableBase
 );
 
+CODE_SEG("INIT")
 NTSTATUS
 NTAPI
 MmInitializeHandBuiltProcess(
@@ -1182,6 +1211,7 @@ MmInitializeHandBuiltProcess(
     IN PULONG_PTR DirectoryTableBase
 );
 
+CODE_SEG("INIT")
 NTSTATUS
 NTAPI
 MmInitializeHandBuiltProcess2(
@@ -1268,7 +1298,11 @@ MmFindRegion(
 #define IS_DIRTY_SSE(E)          ((E) & 2)
 #define WRITE_SSE(E)             ((E) | 4)
 #define IS_WRITE_SSE(E)          ((E) & 4)
+#ifdef _WIN64
+#define PAGE_FROM_SSE(E)         ((E) & 0xFFFFFFF000ULL)
+#else
 #define PAGE_FROM_SSE(E)         ((E) & 0xFFFFF000)
+#endif
 #define SHARE_COUNT_FROM_SSE(E)  (((E) & 0x00000FFC) >> 3)
 #define MAX_SHARE_COUNT          0x1FF
 #define MAKE_SSE(P, C)           ((ULONG_PTR)((P) | ((C) << 3)))
@@ -1336,6 +1370,7 @@ MmProtectSectionView(
     PULONG OldProtect
 );
 
+CODE_SEG("INIT")
 NTSTATUS
 NTAPI
 MmInitSectionImplementation(VOID);
@@ -1349,6 +1384,16 @@ MmNotPresentFaultSectionView(
     BOOLEAN Locked
 );
 
+NTSTATUS
+NTAPI
+MmPageOutSectionView(
+    PMMSUPPORT AddressSpace,
+    PMEMORY_AREA MemoryArea,
+    PVOID Address,
+    ULONG_PTR Entry
+);
+
+CODE_SEG("INIT")
 NTSTATUS
 NTAPI
 MmCreatePhysicalMemorySection(VOID);
@@ -1397,7 +1442,7 @@ MmFlushSegment(
     _In_ PSECTION_OBJECT_POINTERS SectionObjectPointer,
     _In_opt_ PLARGE_INTEGER Offset,
     _In_ ULONG Length,
-    _In_opt_ PIO_STATUS_BLOCK Iosb);
+    _Out_opt_ PIO_STATUS_BLOCK Iosb);
 
 NTSTATUS
 NTAPI
@@ -1433,7 +1478,14 @@ MmUnsharePageEntrySectionSegment(PMEMORY_AREA MemoryArea,
 
 VOID
 NTAPI
-MmDereferenceSegment(PMM_SECTION_SEGMENT Segment);
+MmDereferenceSegmentWithLock(PMM_SECTION_SEGMENT Segment, KIRQL OldIrql);
+
+FORCEINLINE
+VOID
+MmDereferenceSegment(PMM_SECTION_SEGMENT Segment)
+{
+    MmDereferenceSegmentWithLock(Segment, MM_NOIRQL);
+}
 
 NTSTATUS
 NTAPI
@@ -1464,12 +1516,14 @@ _MmGetPageEntrySectionSegment(PMM_SECTION_SEGMENT Segment,
 
 /* sysldr.c ******************************************************************/
 
+CODE_SEG("INIT")
 VOID
 NTAPI
 MiReloadBootLoadedDrivers(
     IN PLOADER_PARAMETER_BLOCK LoaderBlock
 );
 
+CODE_SEG("INIT")
 BOOLEAN
 NTAPI
 MiInitializeLoadedModuleList(
@@ -1641,3 +1695,18 @@ MmCopyVirtualMemory(IN PEPROCESS SourceProcess,
                     IN KPROCESSOR_MODE PreviousMode,
                     OUT PSIZE_T ReturnSize);
 
+/* wslist.cpp ****************************************************************/
+_Requires_exclusive_lock_held_(WorkingSet->WorkingSetMutex)
+VOID
+NTAPI
+MiInitializeWorkingSetList(_Inout_ PMMSUPPORT WorkingSet);
+
+#ifdef __cplusplus
+} // extern "C"
+
+namespace ntoskrnl
+{
+using MiPfnLockGuard = const KiQueuedSpinLockGuard<LockQueuePfnLock>;
+} // namespace ntoskrnl
+
+#endif

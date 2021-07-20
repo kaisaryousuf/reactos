@@ -1096,7 +1096,7 @@ static MUI_ENTRY deDEChangeSystemPartition[] =
     {
         6,
         19,
-        "die Partition ändern, die derzeit als aktiv markiert ist.",
+        "die Partition \204ndern, die derzeit als aktiv markiert ist.",
         TEXT_STYLE_NORMAL,
         TEXT_ID_STATIC
     },
@@ -1537,7 +1537,7 @@ static MUI_ENTRY deDEBootLoaderInstallPageEntries[] =
     {
         0,
         0,
-        "Installing the bootloader onto the media, please wait...",
+        "Bootloader wird installiert. Bitte warten...",
         TEXT_TYPE_STATUS | TEXT_PADDING_BIG,
         TEXT_ID_STATIC
     },

@@ -19,7 +19,7 @@ extern ATOM gaGuiConsoleWndClass;
 extern ATOM AtomDDETrack;
 extern ATOM AtomQOS;
 
-NTSTATUS NTAPI InitUserImpl(VOID);
+CODE_SEG("INIT") NTSTATUS NTAPI InitUserImpl(VOID);
 VOID FASTCALL CleanupUserImpl(VOID);
 VOID FASTCALL UserEnterShared(VOID);
 VOID FASTCALL UserEnterExclusive(VOID);
@@ -47,5 +47,11 @@ RegWriteUserSetting(
     _In_ ULONG ulType,
     _In_reads_bytes_(cjDataSize) const VOID *pvData,
     _In_ ULONG cjDataSize);
+
+PGRAPHICS_DEVICE
+NTAPI
+InitDisplayDriver(
+    IN PWSTR pwszDeviceName,
+    IN PWSTR pwszRegKey);
 
 /* EOF */

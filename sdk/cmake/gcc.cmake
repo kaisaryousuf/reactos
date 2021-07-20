@@ -102,6 +102,7 @@ add_compile_options(-Wno-char-subscripts -Wno-multichar -Wno-unused-value)
 add_compile_options(-Wno-unused-const-variable)
 add_compile_options(-Wno-unused-local-typedefs)
 add_compile_options(-Wno-deprecated)
+add_compile_options(-Wno-unused-result) # FIXME To be removed when CORE-17637 is resolved
 
 if(NOT CMAKE_C_COMPILER_ID STREQUAL "Clang")
     add_compile_options(-Wno-maybe-uninitialized)
@@ -193,27 +194,34 @@ if(SEPARATE_DBG)
     else()
         set(SYMBOL_FILE <TARGET>)
     endif()
-    set(OBJCOPY ${CMAKE_OBJCOPY})
+
+    if (NOT NO_ROSSYM)
+        get_target_property(RSYM native-rsym IMPORTED_LOCATION)
+        set(strip_debug "${RSYM} -s ${REACTOS_SOURCE_DIR} <TARGET> <TARGET>")
+    else()
+        set(strip_debug "${CMAKE_STRIP} --strip-debug <TARGET>")
+    endif()
+
     set(CMAKE_C_LINK_EXECUTABLE
         "<CMAKE_C_COMPILER> <CMAKE_C_LINK_FLAGS> <LINK_FLAGS> <OBJECTS> -o <TARGET> <LINK_LIBRARIES>"
-        "${OBJCOPY} --only-keep-debug <TARGET> ${REACTOS_BINARY_DIR}/symbols/${SYMBOL_FILE}"
-        "${OBJCOPY} --strip-debug <TARGET>")
+        "${CMAKE_STRIP} --only-keep-debug <TARGET> -o ${REACTOS_BINARY_DIR}/symbols/${SYMBOL_FILE}"
+        ${strip_debug})
     set(CMAKE_CXX_LINK_EXECUTABLE
         "<CMAKE_CXX_COMPILER> <CMAKE_CXX_LINK_FLAGS> <LINK_FLAGS> <OBJECTS> -o <TARGET> <LINK_LIBRARIES>"
-        "${OBJCOPY} --only-keep-debug <TARGET> ${REACTOS_BINARY_DIR}/symbols/${SYMBOL_FILE}"
-        "${OBJCOPY} --strip-debug <TARGET>")
+        "${CMAKE_STRIP} --only-keep-debug <TARGET> -o ${REACTOS_BINARY_DIR}/symbols/${SYMBOL_FILE}"
+        ${strip_debug})
     set(CMAKE_C_CREATE_SHARED_LIBRARY
         "<CMAKE_C_COMPILER> <CMAKE_SHARED_LIBRARY_C_FLAGS> <LINK_FLAGS> <CMAKE_SHARED_LIBRARY_CREATE_C_FLAGS> -o <TARGET> <OBJECTS> <LINK_LIBRARIES>"
-        "${OBJCOPY} --only-keep-debug <TARGET> ${REACTOS_BINARY_DIR}/symbols/${SYMBOL_FILE}"
-        "${OBJCOPY} --strip-debug <TARGET>")
+        "${CMAKE_STRIP} --only-keep-debug <TARGET> -o ${REACTOS_BINARY_DIR}/symbols/${SYMBOL_FILE}"
+        ${strip_debug})
     set(CMAKE_CXX_CREATE_SHARED_LIBRARY
         "<CMAKE_CXX_COMPILER> <CMAKE_SHARED_LIBRARY_CXX_FLAGS> <LINK_FLAGS> <CMAKE_SHARED_LIBRARY_CREATE_CXX_FLAGS> -o <TARGET> <OBJECTS> <LINK_LIBRARIES>"
-        "${OBJCOPY} --only-keep-debug <TARGET> ${REACTOS_BINARY_DIR}/symbols/${SYMBOL_FILE}"
-        "${OBJCOPY} --strip-debug <TARGET>")
+        "${CMAKE_STRIP} --only-keep-debug <TARGET> -o ${REACTOS_BINARY_DIR}/symbols/${SYMBOL_FILE}"
+        ${strip_debug})
     set(CMAKE_RC_CREATE_SHARED_LIBRARY
         "<CMAKE_C_COMPILER> <CMAKE_SHARED_LIBRARY_C_FLAGS> <LINK_FLAGS> <CMAKE_SHARED_LIBRARY_CREATE_C_FLAGS> -o <TARGET> <OBJECTS> <LINK_LIBRARIES>"
-        "${OBJCOPY} --only-keep-debug <TARGET> ${REACTOS_BINARY_DIR}/symbols/${SYMBOL_FILE}"
-        "${OBJCOPY} --strip-debug <TARGET>")
+        "${CMAKE_STRIP} --only-keep-debug <TARGET> -o ${REACTOS_BINARY_DIR}/symbols/${SYMBOL_FILE}"
+        ${strip_debug})
 elseif(NO_ROSSYM)
     # Dwarf-based build
     message(STATUS "Generating a dwarf-based build (no rsym)")
@@ -256,13 +264,15 @@ set(CMAKE_CXX_COMPILE_OBJECT "<CMAKE_CXX_COMPILER> <DEFINES> <INCLUDES> <FLAGS> 
 set(CMAKE_ASM_COMPILE_OBJECT "<CMAKE_ASM_COMPILER> ${_compress_debug_sections_flag} -x assembler-with-cpp -o <OBJECT> -I${REACTOS_SOURCE_DIR}/sdk/include/asm -I${REACTOS_BINARY_DIR}/sdk/include/asm <INCLUDES> <FLAGS> <DEFINES> -D__ASM__ -c <SOURCE>")
 
 set(CMAKE_RC_COMPILE_OBJECT "<CMAKE_RC_COMPILER> -O coff <INCLUDES> <FLAGS> -DRC_INVOKED -D__WIN32__=1 -D__FLAT__=1 ${I18N_DEFS} <DEFINES> <SOURCE> <OBJECT>")
-if (CLANG)
-    set(GCC_EXECUTABLE ${CMAKE_C_COMPILER_TARGET}-gcc)
+
+if (CMAKE_C_COMPILER_ID STREQUAL "Clang")
+    set(RC_PREPROCESSOR_TARGET "--preprocessor-arg=--target=${CMAKE_C_COMPILER_TARGET}")
 else()
-    set(GCC_EXECUTABLE ${CMAKE_C_COMPILER})
+    set(RC_PREPROCESSOR_TARGET "")
 endif()
 
-set(CMAKE_DEPFILE_FLAGS_RC "--preprocessor \"${GCC_EXECUTABLE} -E -xc-header -MMD -MF <DEPFILE> -MT <OBJECT>\" ")
+# We have to pass args to windres. one... by... one...
+set(CMAKE_DEPFILE_FLAGS_RC "--preprocessor=\"${CMAKE_C_COMPILER}\" ${RC_PREPROCESSOR_TARGET} --preprocessor-arg=-E --preprocessor-arg=-nostdinc --preprocessor-arg=-xc-header --preprocessor-arg=-MMD --preprocessor-arg=-MF --preprocessor-arg=<DEPFILE> --preprocessor-arg=-MT --preprocessor-arg=<OBJECT>")
 
 # Optional 3rd parameter: stdcall stack bytes
 function(set_entrypoint MODULE ENTRYPOINT)
@@ -305,7 +315,7 @@ function(set_module_type_toolchain MODULE TYPE)
         # Fixup section characteristics
         #  - Remove flags that LD overzealously puts (alignment flag, Initialized flags for code sections)
         #  - INIT section is made discardable
-        #  - .rsrc is made read-only
+        #  - .rsrc is made read-only and discardable
         #  - PAGE & .edata sections are made pageable.
         add_custom_command(TARGET ${MODULE} POST_BUILD
             COMMAND native-pefixup --${TYPE} $<TARGET_FILE:${MODULE}>)
@@ -478,8 +488,8 @@ add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:$<IF:$<BOOL:$<TARGET_PROPERTY:WIT
 # We disable exceptions, unless said so
 add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:$<IF:$<BOOL:$<TARGET_PROPERTY:WITH_CXX_EXCEPTIONS>>,-fexceptions,-fno-exceptions>>")
 
-# G++ shipped with ROSBE uses sjlj exceptions. Tell Clang it is so
-if (CLANG)
+# G++ shipped with ROSBE uses sjlj exceptions on i386. Tell Clang it is so
+if (CLANG AND (ARCH STREQUAL "i386"))
     add_compile_options("$<$<AND:$<COMPILE_LANGUAGE:CXX>,$<BOOL:$<TARGET_PROPERTY:WITH_CXX_EXCEPTIONS>>>:-fsjlj-exceptions>")
 endif()
 

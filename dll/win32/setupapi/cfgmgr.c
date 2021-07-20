@@ -25,6 +25,8 @@
 #include <pnp_c.h>
 #include <winsvc.h>
 
+#include <pseh/pseh2.h>
+
 #include "rpc_private.h"
 
 DWORD
@@ -673,7 +675,7 @@ CMP_RegisterNotification(
                                        ((DEV_BROADCAST_HDR*)lpvNotificationFilter)->dbch_size,
                                        ulFlags,
                                        &pNotifyData->ulNotifyData,
-                                       0,            /* ??? */
+                                       GetCurrentProcessId(),
                                        &ulUnknown9); /* ??? */
     }
     RpcExcept(EXCEPTION_EXECUTE_HANDLER)

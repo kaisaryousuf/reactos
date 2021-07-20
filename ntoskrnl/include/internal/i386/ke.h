@@ -4,6 +4,11 @@
 
 #include "intrin_i.h"
 
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
 //
 // Thread Dispatcher Header DebugActive Mask
 //
@@ -18,25 +23,80 @@
 #define KD_BREAKPOINT_VALUE       0xCC
 
 //
-// Macros for getting and setting special purpose registers in portable code
+// One-liners for getting and setting special purpose registers in portable code
 //
-#define KeGetContextPc(Context) \
-    ((Context)->Eip)
+FORCEINLINE
+ULONG_PTR
+KeGetContextPc(PCONTEXT Context)
+{
+    return Context->Eip;
+}
 
-#define KeSetContextPc(Context, ProgramCounter) \
-    ((Context)->Eip = (ProgramCounter))
+FORCEINLINE
+VOID
+KeSetContextPc(PCONTEXT Context, ULONG_PTR ProgramCounter)
+{
+    Context->Eip = ProgramCounter;
+}
 
-#define KeGetTrapFramePc(TrapFrame) \
-    ((TrapFrame)->Eip)
+FORCEINLINE
+ULONG_PTR
+KeGetContextReturnRegister(PCONTEXT Context)
+{
+    return Context->Eax;
+}
 
-#define KiGetLinkedTrapFrame(x) \
-    (PKTRAP_FRAME)((x)->Edx)
+FORCEINLINE
+VOID
+KeSetContextReturnRegister(PCONTEXT Context, ULONG_PTR ReturnValue)
+{
+    Context->Eax = ReturnValue;
+}
 
-#define KeGetContextReturnRegister(Context) \
-    ((Context)->Eax)
+FORCEINLINE
+ULONG_PTR
+KeGetContextFrameRegister(PCONTEXT Context)
+{
+    return Context->Ebp;
+}
 
-#define KeSetContextReturnRegister(Context, ReturnValue) \
-    ((Context)->Eax = (ReturnValue))
+FORCEINLINE
+VOID
+KeSetContextFrameRegister(PCONTEXT Context, ULONG_PTR Frame)
+{
+    Context->Ebp = Frame;
+}
+
+FORCEINLINE
+ULONG_PTR
+KeGetTrapFramePc(PKTRAP_FRAME TrapFrame)
+{
+    return TrapFrame->Eip;
+}
+
+FORCEINLINE
+PKTRAP_FRAME
+KiGetLinkedTrapFrame(PKTRAP_FRAME TrapFrame)
+{
+    return (PKTRAP_FRAME)TrapFrame->Edx;
+}
+
+
+FORCEINLINE
+ULONG_PTR
+KeGetTrapFrameStackRegister(PKTRAP_FRAME TrapFrame)
+{
+    if (TrapFrame->PreviousPreviousMode == KernelMode)
+        return TrapFrame->TempEsp;
+    return TrapFrame->HardwareEsp;
+}
+
+FORCEINLINE
+ULONG_PTR
+KeGetTrapFrameFrameRegister(PKTRAP_FRAME TrapFrame)
+{
+    return TrapFrame->Ebp;
+}
 
 //
 // Macro to get trap and exception frame from a thread stack
@@ -321,6 +381,7 @@ KiSetTebBase(PKPCR Pcr, PNT_TIB TebAddress)
     Ke386SetGdtEntryBase(&Pcr->GDT[KGDT_R3_TEB / sizeof(KGDTENTRY)], TebAddress);
 }
 
+CODE_SEG("INIT")
 VOID
 FASTCALL
 Ki386InitializeTss(
@@ -329,30 +390,36 @@ Ki386InitializeTss(
     IN PKGDTENTRY Gdt
 );
 
+CODE_SEG("INIT")
 VOID
 NTAPI
 KiSetCR0Bits(VOID);
 
+CODE_SEG("INIT")
 VOID
 NTAPI
 KiGetCacheInformation(VOID);
 
+CODE_SEG("INIT")
 BOOLEAN
 NTAPI
 KiIsNpxPresent(
     VOID
 );
 
+CODE_SEG("INIT")
 BOOLEAN
 NTAPI
 KiIsNpxErrataPresent(
     VOID
 );
 
+CODE_SEG("INIT")
 VOID
 NTAPI
 KiSetProcessorType(VOID);
 
+CODE_SEG("INIT")
 ULONG
 NTAPI
 KiGetFeatureBits(VOID);
@@ -387,18 +454,21 @@ Ki386SetupAndExitToV86Mode(
     OUT PTEB VdmTeb
 );
 
+CODE_SEG("INIT")
 VOID
 NTAPI
 KeI386VdmInitialize(
     VOID
 );
 
+CODE_SEG("INIT")
 ULONG_PTR
 NTAPI
 Ki386EnableGlobalPage(
     IN ULONG_PTR Context
 );
 
+CODE_SEG("INIT")
 ULONG_PTR
 NTAPI
 Ki386EnableTargetLargePage(
@@ -426,48 +496,56 @@ Ki386EnableCurrentLargePage(
     IN ULONG Cr3
 );
 
+CODE_SEG("INIT")
 VOID
 NTAPI
 KiI386PentiumLockErrataFixup(
     VOID
 );
 
+CODE_SEG("INIT")
 VOID
 NTAPI
 KiInitializePAT(
     VOID
 );
 
+CODE_SEG("INIT")
 VOID
 NTAPI
 KiInitializeMTRR(
     IN BOOLEAN FinalCpu
 );
 
+CODE_SEG("INIT")
 VOID
 NTAPI
 KiAmdK6InitializeMTRR(
     VOID
 );
 
+CODE_SEG("INIT")
 VOID
 NTAPI
 KiRestoreFastSyscallReturnState(
     VOID
 );
 
+CODE_SEG("INIT")
 ULONG_PTR
 NTAPI
 Ki386EnableDE(
     IN ULONG_PTR Context
 );
 
+CODE_SEG("INIT")
 ULONG_PTR
 NTAPI
 Ki386EnableFxsr(
     IN ULONG_PTR Context
 );
 
+CODE_SEG("INIT")
 ULONG_PTR
 NTAPI
 Ki386EnableXMMIExceptions(
@@ -731,12 +809,13 @@ KiCheckForApcDelivery(IN PKTRAP_FRAME TrapFrame)
 //
 // Switches from boot loader to initial kernel stack
 //
+CODE_SEG("INIT")
 FORCEINLINE
 DECLSPEC_NORETURN
 VOID
 KiSwitchToBootStack(IN ULONG_PTR InitialStack)
 {
-    DECLSPEC_NORETURN VOID NTAPI KiSystemStartupBootStack(VOID);
+    CODE_SEG("INIT") DECLSPEC_NORETURN VOID NTAPI KiSystemStartupBootStack(VOID);
 
     /* We have to switch to a new stack before continuing kernel initialization */
 #ifdef __GNUC__
@@ -831,5 +910,9 @@ KiGetUserModeStackAddress(void)
 {
     return &(KeGetCurrentThread()->TrapFrame->HardwareEsp);
 }
+
+#ifdef __cplusplus
+} // extern "C"
+#endif
 
 #endif

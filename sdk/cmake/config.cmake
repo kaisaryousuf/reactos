@@ -71,7 +71,7 @@ elseif(CMAKE_C_COMPILER_ID STREQUAL "Clang")
         set(GCC TRUE CACHE BOOL "The compiler is GCC")
     endif()
     set(CLANG TRUE CACHE BOOL "The compiler is LLVM Clang")
-elseif(MSVC) # aka CMAKE_C_COMPILER_ID STEQUAL "MSVC"
+elseif(MSVC) # aka CMAKE_C_COMPILER_ID STREQUAL "MSVC"
     set(GCC FALSE CACHE BOOL "The compiler is GCC")
     set(CLANG FALSE CACHE BOOL "The compiler is LLVM Clang")
     # MSVC variable is already set by cmake
@@ -97,8 +97,10 @@ else()
     set(_WINKD_ FALSE CACHE BOOL "Whether to compile with the KD protocol.")
 endif()
 
-cmake_dependent_option(BUILD_MP "Whether to build the multiprocessor versions of NTOSKRNL and HAL." ON
-                       "ARCH STREQUAL i386" OFF)
+option(BUILD_MP "Whether to build the multiprocessor versions of NTOSKRNL and HAL." ON)
+
+cmake_dependent_option(ISAPNP_ENABLE "Whether to enable the ISA PnP support." ON
+                       "ARCH STREQUAL i386 AND NOT SARCH STREQUAL xbox" OFF)
 
 set(GENERATE_DEPENDENCY_GRAPH FALSE CACHE BOOL
 "Whether to create a GraphML dependency graph of DLLs.")

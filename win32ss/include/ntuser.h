@@ -726,6 +726,8 @@ typedef struct _WND
     PSBINFOEX pSBInfoex; // convert to PSBINFO
     /* Entry in the list of thread windows. */
     LIST_ENTRY ThreadListEntry;
+
+    PVOID DialogPointer;
 } WND, *PWND;
 
 #define PWND_BOTTOM ((PWND)1)
@@ -1177,6 +1179,7 @@ typedef struct tagIMEINFOEX
 typedef enum IMEINFOEXCLASS
 {
     ImeInfoExKeyboardLayout,
+    ImeInfoExImeWindow,
     ImeInfoExImeFileName
 } IMEINFOEXCLASS;
 
@@ -2461,7 +2464,8 @@ enum ThreadStateRoutines
     THREADSTATE_UPTIMELASTREAD,
     THREADSTATE_FOREGROUNDTHREAD,
     THREADSTATE_GETCURSOR,
-    THREADSTATE_GETMESSAGEEXTRAINFO
+    THREADSTATE_GETMESSAGEEXTRAINFO,
+    THREADSTATE_UNKNOWN13
 };
 
 DWORD_PTR
@@ -3442,9 +3446,9 @@ NtUserUnregisterUserApiHook(VOID);
 DWORD
 NTAPI
 NtUserUpdateInputContext(
-    DWORD Unknown0,
+    HIMC hIMC,
     DWORD Unknown1,
-    DWORD Unknown2);
+    LPVOID pClientImc);
 
 DWORD
 NTAPI
