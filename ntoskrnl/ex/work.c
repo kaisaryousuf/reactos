@@ -14,10 +14,9 @@
 
 /* DATA **********************************************************************/
 
-/* Number of worker threads for each Queue */
-#define EX_HYPERCRITICAL_WORK_THREADS               1
-#define EX_DELAYED_WORK_THREADS                     3
-#define EX_CRITICAL_WORK_THREADS                    5
+/* Number of worker threads for Delayed and Critical queues */
+#define EX_DELAYED_WORK_THREADS                     12
+#define EX_CRITICAL_WORK_THREADS                    8
 
 /* Magic flag for dynamic worker threads */
 #define EX_DYNAMIC_WORK_THREAD                      0x80000000
@@ -254,6 +253,7 @@ ExpCreateWorkerThread(WORK_QUEUE_TYPE WorkQueueType,
     HANDLE hThread;
     ULONG Context;
     KPRIORITY Priority;
+    NTSTATUS Status;
 
     /* Check if this is going to be a dynamic thread */
     Context = WorkQueueType;
@@ -262,13 +262,19 @@ ExpCreateWorkerThread(WORK_QUEUE_TYPE WorkQueueType,
     if (Dynamic) Context |= EX_DYNAMIC_WORK_THREAD;
 
     /* Create the System Thread */
-    PsCreateSystemThread(&hThread,
-                         THREAD_ALL_ACCESS,
-                         NULL,
-                         NULL,
-                         NULL,
-                         ExpWorkerThreadEntryPoint,
-                         UlongToPtr(Context));
+    Status = PsCreateSystemThread(&hThread,
+                                  THREAD_ALL_ACCESS,
+                                  NULL,
+                                  NULL,
+                                  NULL,
+                                  ExpWorkerThreadEntryPoint,
+                                  UlongToPtr(Context));
+    if (!NT_SUCCESS(Status))
+    {
+        /* Well... */
+        DPRINT1("Failed to create worker thread: 0x%08x\n", Status);
+        return;
+    }
 
     /* If the thread is dynamic */
     if (Dynamic)
@@ -519,21 +525,27 @@ ExpInitializeWorkerThreads(VOID)
     HANDLE ThreadHandle;
     PETHREAD Thread;
     ULONG i;
+    NTSTATUS Status;
 
     /* Setup the stack swap support */
     ExInitializeFastMutex(&ExpWorkerSwapinMutex);
     InitializeListHead(&ExpWorkerListHead);
     ExpWorkersCanSwap = TRUE;
 
-    /* Set the number of critical and delayed threads. We shouldn't hardcode */
+    /* Default the number of worker threads to be created */
     DelayedThreads = EX_DELAYED_WORK_THREADS;
     CriticalThreads = EX_CRITICAL_WORK_THREADS;
 
-    /* Protect against greedy registry modifications */
+    /*
+     * Get an additional number of worker threads from the Registry
+     * but make sure to NOT exceed the limit of 100. Windows XP
+     * and Server 2003 systems have a limit of 16, later versions
+     * of Windows like 7 and 8.1 have a limit of 100.
+     */
     ExpAdditionalDelayedWorkerThreads =
-        min(ExpAdditionalDelayedWorkerThreads, 16);
+        min(ExpAdditionalDelayedWorkerThreads, 100);
     ExpAdditionalCriticalWorkerThreads =
-        min(ExpAdditionalCriticalWorkerThreads, 16);
+        min(ExpAdditionalCriticalWorkerThreads, 100);
 
     /* Calculate final count */
     DelayedThreads += ExpAdditionalDelayedWorkerThreads;
@@ -576,13 +588,17 @@ ExpInitializeWorkerThreads(VOID)
     ExpCreateWorkerThread(HyperCriticalWorkQueue, FALSE);
 
     /* Create the balance set manager thread */
-    PsCreateSystemThread(&ThreadHandle,
-                         THREAD_ALL_ACCESS,
-                         NULL,
-                         0,
-                         NULL,
-                         ExpWorkerThreadBalanceManager,
-                         NULL);
+    Status = PsCreateSystemThread(&ThreadHandle,
+                                  THREAD_ALL_ACCESS,
+                                  NULL,
+                                  0,
+                                  NULL,
+                                  ExpWorkerThreadBalanceManager,
+                                  NULL);
+    if (!NT_SUCCESS(Status))
+    {
+        KeBugCheckEx(PHASE1_INITIALIZATION_FAILED, Status, 0, 0, 0);
+    }
 
     /* Get a pointer to it for the shutdown process */
     ObReferenceObjectByHandle(ThreadHandle,
@@ -609,7 +625,7 @@ ExpSetSwappingKernelApc(IN PKAPC Apc,
     PKEVENT Event = (PKEVENT)*SystemArgument1;
 
     /* Make sure it's an active worker */
-    if (PsGetCurrentThread()->ActiveExWorker) 
+    if (PsGetCurrentThread()->ActiveExWorker)
     {
         /* Read the setting from the context flag */
         AllowSwap = (PBOOLEAN)NormalContext;
@@ -670,7 +686,7 @@ ExSwapinWorkerThreads(IN BOOLEAN AllowSwap)
                 KeClearEvent(&Event);
             }
         }
-        
+
         /* Next thread */
 Next:
         Thread = PsGetNextProcessThread(Process, Thread);

@@ -1,10 +1,12 @@
 
 add_subdirectory(acppage)
+add_subdirectory(cabview)
 add_subdirectory(cryptext)
 add_subdirectory(deskadp)
 add_subdirectory(deskmon)
 add_subdirectory(devcpux)
 add_subdirectory(fontext)
+add_subdirectory(mmcshext)
 add_subdirectory(mydocs)
 add_subdirectory(netplwiz)
 add_subdirectory(netshell)

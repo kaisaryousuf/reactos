@@ -83,10 +83,10 @@ MonthCalNotifyControlParent(IN PMONTHCALWND infoPtr,
  */
 static WORD LeapYear(IN WORD Year)
 {
-	return 
+	return
 #ifdef WITH_1752
 		(Year <= 1752) ? !(Year % 4) :
-#endif	       
+#endif
 		!(Year % 4) && ((Year % 100) || !(Year % 400));
 }
 
@@ -541,9 +541,7 @@ MonthCalPaint(IN PMONTHCALWND infoPtr,
                     RECT rcText;
                     SIZE TextSize;
 
-                    szDayLen = swprintf(szDay,
-                                         L"%lu",
-                                         Day);
+                    szDayLen = _swprintf(szDay, L"%lu", Day);
 
                     if (GetTextExtentPoint32W(hDC,
                                               szDay,

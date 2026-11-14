@@ -18,9 +18,9 @@
 /* GLOBALS ********************************************************************/
 
 ULONG MmProcessColorSeed = 0x12345678;
-PMMWSL MmWorkingSetList;
 ULONG MmMaximumDeadKernelStacks = 5;
 SLIST_HEADER MmDeadStackSListHead;
+ULONG MmRotatingUniprocessorNumber = 0;
 
 /* PRIVATE FUNCTIONS **********************************************************/
 
@@ -35,10 +35,25 @@ MiCreatePebOrTeb(IN PEPROCESS Process,
     ULONG_PTR HighestAddress, RandomBase;
     ULONG AlignedSize;
     LARGE_INTEGER CurrentTime;
+#if defined(_WIN64) && defined(BUILD_WOW64_ENABLED)
+    BOOLEAN IsWow64;
+#endif
+    BOOLEAN IsPeb;
+
+    C_ASSERT(sizeof(TEB) != sizeof(PEB));
+    IsPeb = (Size == sizeof(PEB));
+
+    Status = PsChargeProcessNonPagedPoolQuota(Process, sizeof(MMVAD_LONG));
+    if (!NT_SUCCESS(Status))
+        return Status;
 
     /* Allocate a VAD */
     Vad = ExAllocatePoolWithTag(NonPagedPool, sizeof(MMVAD_LONG), 'ldaV');
-    if (!Vad) return STATUS_NO_MEMORY;
+    if (!Vad)
+    {
+        Status = STATUS_NO_MEMORY;
+        goto FailPath;
+    }
 
     /* Setup the primary flags with the size, and make it commited, private, RW */
     Vad->u.LongFlags = 0;
@@ -58,23 +73,52 @@ MiCreatePebOrTeb(IN PEPROCESS Process,
     Vad->ControlArea = NULL; // For Memory-Area hack
     Vad->FirstPrototypePte = NULL;
 
-    /* Check if this is a PEB creation */
-    ASSERT(sizeof(TEB) != sizeof(PEB));
-    if (Size == sizeof(PEB))
+    HighestAddress = (ULONG_PTR)MM_HIGHEST_VAD_ADDRESS;
+
+#if defined(_WIN64) && defined(BUILD_WOW64_ENABLED)
+    IsWow64 = FALSE;
+
+    if (Process->SectionBaseAddress != NULL)
     {
+        PIMAGE_NT_HEADERS NtHeader = RtlImageNtHeader(Process->SectionBaseAddress);
+
+        if (NtHeader != NULL && NtHeader->FileHeader.Machine != IMAGE_FILE_MACHINE_AMD64)
+        {
+            IsWow64 = TRUE;
+        }
+    }
+
+    if (IsWow64)
+    {
+        /* Make sure the structure resides in the 32-bit address space */
+        HighestAddress = MM_HIGHEST_USER_ADDRESS_WOW64;
+    }
+#endif
+
+    /* Check if this is a PEB creation */
+    if (IsPeb)
+    {
+#if defined(_WIN64) && defined(BUILD_WOW64_ENABLED)
+        /* If this is a WOW64 process, allocate enough space for the 32 bit PEB */
+        if (IsWow64)
+        {
+            Size = ROUND_TO_PAGES(Size) + ROUND_TO_PAGES(sizeof(PEB32));
+        }
+#endif
+
         /* Create a random value to select one page in a 64k region */
         KeQueryTickCount(&CurrentTime);
         CurrentTime.LowPart &= (_64K / PAGE_SIZE) - 1;
 
         /* Calculate a random base address */
-        RandomBase = (ULONG_PTR)MM_HIGHEST_VAD_ADDRESS + 1;
+        RandomBase = HighestAddress + 1;
         RandomBase -= CurrentTime.LowPart << PAGE_SHIFT;
 
         /* Make sure the base address is not too high */
         AlignedSize = ROUND_TO_PAGES(Size);
-        if ((RandomBase + AlignedSize) > (ULONG_PTR)MM_HIGHEST_VAD_ADDRESS + 1)
+        if ((RandomBase + AlignedSize) > HighestAddress + 1)
         {
-            RandomBase = (ULONG_PTR)MM_HIGHEST_VAD_ADDRESS + 1 - AlignedSize;
+            RandomBase = HighestAddress + 1 - AlignedSize;
         }
 
         /* Calculate the highest allowed address */
@@ -82,7 +126,13 @@ MiCreatePebOrTeb(IN PEPROCESS Process,
     }
     else
     {
-        HighestAddress = (ULONG_PTR)MM_HIGHEST_VAD_ADDRESS;
+#if defined(_WIN64) && defined(BUILD_WOW64_ENABLED)
+        /* If this is a WOW64 process, allocate enough space for the 32 bit TEB */
+        if (IsWow64)
+        {
+            Size = ROUND_TO_PAGES(Size) + ROUND_TO_PAGES(sizeof(TEB32));
+        }
+#endif
     }
 
     *BaseAddress = 0;
@@ -95,11 +145,24 @@ MiCreatePebOrTeb(IN PEPROCESS Process,
     if (!NT_SUCCESS(Status))
     {
         ExFreePoolWithTag(Vad, 'ldaV');
-        return STATUS_NO_MEMORY;
+        Status = STATUS_NO_MEMORY;
+        goto FailPath;
     }
+
+#if defined(_WIN64) && defined(BUILD_WOW64_ENABLED)
+    if (IsPeb && IsWow64)
+    {
+        Process->Wow64Process = UlongToPtr(1);
+    }
+#endif
 
     /* Success */
     return STATUS_SUCCESS;
+
+FailPath:
+    PsReturnProcessNonPagedPoolQuota(Process, sizeof(MMVAD_LONG));
+
+    return Status;
 }
 
 VOID
@@ -115,6 +178,14 @@ MmDeleteTeb(IN PEPROCESS Process,
 
     /* TEB is one page */
     TebEnd = (ULONG_PTR)Teb + ROUND_TO_PAGES(sizeof(TEB)) - 1;
+
+#if defined(_WIN64) && defined(BUILD_WOW64_ENABLED)
+    /* If this is a WOW64 process, the TEB is followed by a TEB32 */
+    if (Process->Wow64Process)
+    {
+        TebEnd += ROUND_TO_PAGES(sizeof(TEB32));
+    }
+#endif
 
     /* Attach to the process */
     KeAttachProcess(&Process->Pcb);
@@ -155,6 +226,9 @@ MmDeleteTeb(IN PEPROCESS Process,
 
         /* Remove the VAD */
         ExFreePool(Vad);
+
+        /* Return the quota the VAD used */
+        PsReturnProcessNonPagedPoolQuota(Process, sizeof(MMVAD_LONG));
     }
 
     /* Release the address space lock */
@@ -509,7 +583,6 @@ MmCreatePeb(IN PEPROCESS Process,
     PIMAGE_LOAD_CONFIG_DIRECTORY ImageConfigData;
     NTSTATUS Status;
     USHORT Characteristics;
-    KAFFINITY ProcessAffinityMask = 0;
     SectionOffset.QuadPart = (ULONGLONG)0;
     *BasePeb = NULL;
 
@@ -589,6 +662,7 @@ MmCreatePeb(IN PEPROCESS Process,
         // Heap and Debug Data
         //
         Peb->NumberOfProcessors = KeNumberProcessors;
+        Peb->ImageProcessAffinityMask = KeActiveProcessors;
         Peb->BeingDebugged = (BOOLEAN)(Process->DebugPort != NULL);
         Peb->NtGlobalFlag = NtGlobalFlag;
         Peb->HeapSegmentReserve = MmHeapSegmentReserve;
@@ -695,7 +769,7 @@ MmCreatePeb(IN PEPROCESS Process,
             if ((ImageConfigData) && (ImageConfigData->ProcessAffinityMask))
             {
                 /* Take the value from the image configuration directory */
-                ProcessAffinityMask = ImageConfigData->ProcessAffinityMask;
+                Peb->ImageProcessAffinityMask = ImageConfigData->ProcessAffinityMask;
             }
 
             //
@@ -703,17 +777,12 @@ MmCreatePeb(IN PEPROCESS Process,
             if (Characteristics & IMAGE_FILE_UP_SYSTEM_ONLY)
             {
                 //
-                // Force it to use CPU 0
+                // Set single processor rotating affinity.
+                // See https://www.microsoftpressstore.com/articles/article.aspx?p=2233328&seqNum=3
                 //
-                /* FIXME: this should use the MmRotatingUniprocessorNumber */
-                Peb->ImageProcessAffinityMask = 0;
-            }
-            else
-            {
-                //
-                // Whatever was configured
-                //
-                Peb->ImageProcessAffinityMask = ProcessAffinityMask;
+                Peb->ImageProcessAffinityMask = AFFINITY_MASK(MmRotatingUniprocessorNumber);
+                ASSERT(Peb->ImageProcessAffinityMask & KeActiveProcessors);
+                MmRotatingUniprocessorNumber = (MmRotatingUniprocessorNumber + 1) % KeNumberProcessors;
             }
         }
         _SEH2_EXCEPT(EXCEPTION_EXECUTE_HANDLER)
@@ -843,18 +912,30 @@ MmCreateTeb(IN PEPROCESS Process,
 #ifdef _M_AMD64
 static
 NTSTATUS
-MiInsertSharedUserPageVad(VOID)
+MiInsertSharedUserPageVad(
+    _In_ PEPROCESS Process)
 {
     PMMVAD_LONG Vad;
     ULONG_PTR BaseAddress;
     NTSTATUS Status;
+
+    if (Process->QuotaBlock != NULL)
+    {
+        Status = PsChargeProcessNonPagedPoolQuota(Process, sizeof(MMVAD_LONG));
+        if (!NT_SUCCESS(Status))
+        {
+            DPRINT1("Ran out of quota.\n");
+            return Status;
+        }
+    }
 
     /* Allocate a VAD */
     Vad = ExAllocatePoolWithTag(NonPagedPool, sizeof(MMVAD_LONG), 'ldaV');
     if (Vad == NULL)
     {
         DPRINT1("Failed to allocate VAD for shared user page\n");
-        return STATUS_INSUFFICIENT_RESOURCES;
+        Status = STATUS_INSUFFICIENT_RESOURCES;
+        goto FailPath;
     }
 
     /* Setup the primary flags with the size, and make it private, RO */
@@ -888,47 +969,19 @@ MiInsertSharedUserPageVad(VOID)
     {
         DPRINT1("Failed to insert shared user VAD\n");
         ExFreePoolWithTag(Vad, 'ldaV');
-        return Status;
+        goto FailPath;
     }
 
     /* Success */
     return STATUS_SUCCESS;
+
+FailPath:
+    if (Process->QuotaBlock != NULL)
+        PsReturnProcessNonPagedPoolQuota(Process, sizeof(MMVAD_LONG));
+
+    return Status;
 }
 #endif
-
-VOID
-NTAPI
-MiInitializeWorkingSetList(IN PEPROCESS CurrentProcess)
-{
-    PMMPFN Pfn1;
-    PMMPTE sysPte;
-    MMPTE tempPte;
-
-    /* Setup some bogus list data */
-    MmWorkingSetList->LastEntry = CurrentProcess->Vm.MinimumWorkingSetSize;
-    MmWorkingSetList->HashTable = NULL;
-    MmWorkingSetList->HashTableSize = 0;
-    MmWorkingSetList->NumberOfImageWaiters = 0;
-    MmWorkingSetList->Wsle = (PVOID)(ULONG_PTR)0xDEADBABEDEADBABEULL;
-    MmWorkingSetList->VadBitMapHint = 1;
-    MmWorkingSetList->HashTableStart = (PVOID)(ULONG_PTR)0xBADAB00BBADAB00BULL;
-    MmWorkingSetList->HighestPermittedHashAddress = (PVOID)(ULONG_PTR)0xCAFEBABECAFEBABEULL;
-    MmWorkingSetList->FirstFree = 1;
-    MmWorkingSetList->FirstDynamic = 2;
-    MmWorkingSetList->NextSlot = 3;
-    MmWorkingSetList->LastInitializedWsle = 4;
-
-    /* The rule is that the owner process is always in the FLINK of the PDE's PFN entry */
-    Pfn1 = MiGetPfnEntry(CurrentProcess->Pcb.DirectoryTableBase[0] >> PAGE_SHIFT);
-    ASSERT(Pfn1->u4.PteFrame == MiGetPfnEntryIndex(Pfn1));
-    Pfn1->u1.Event = (PKEVENT)CurrentProcess;
-
-    /* Map the process working set in kernel space */
-    sysPte = MiReserveSystemPtes(1, SystemPteSpace);
-    MI_MAKE_HARDWARE_PTE_KERNEL(&tempPte, sysPte, MM_READWRITE, CurrentProcess->WorkingSetPage);
-    MI_WRITE_VALID_PTE(sysPte, tempPte);
-    CurrentProcess->Vm.VmWorkingSetList = MiPteToAddress(sysPte);
-}
 
 NTSTATUS
 NTAPI
@@ -944,12 +997,13 @@ MmInitializeProcessAddressSpace(IN PEPROCESS Process,
     PMMPTE PointerPte;
     KIRQL OldIrql;
     PMMPDE PointerPde;
+    PMMPFN Pfn;
     PFN_NUMBER PageFrameNumber;
     UNICODE_STRING FileName;
     PWCHAR Source;
     PCHAR Destination;
     USHORT Length = 0;
-    MMPTE TempPte;
+
 #if (_MI_PAGING_LEVELS >= 3)
     PMMPPE PointerPpe;
 #endif
@@ -976,10 +1030,8 @@ MmInitializeProcessAddressSpace(IN PEPROCESS Process,
     ASSERT(Process->VadRoot.NumberGenericTableElements == 0);
     Process->VadRoot.BalancedRoot.u1.Parent = &Process->VadRoot.BalancedRoot;
 
-#ifdef _M_AMD64
-    /* On x64 the PFNs for the initial process are already set up */
-    if (Process != &KiInitialProcess) {
-#endif
+    /* Lock our working set */
+    MiLockProcessWorkingSet(Process, PsGetCurrentThread());
 
     /* Lock PFN database */
     OldIrql = MiAcquirePfnLock();
@@ -997,7 +1049,7 @@ MmInitializeProcessAddressSpace(IN PEPROCESS Process,
     MiInitializePfn(PageFrameNumber, PointerPte, TRUE);
 
     /* Do the same for hyperspace */
-    PointerPde = MiAddressToPde((PVOID)HYPER_SPACE);
+    PointerPde = MiAddressToPde(HYPER_SPACE);
     PageFrameNumber = PFN_FROM_PTE(PointerPde);
     MiInitializePfn(PageFrameNumber, (PMMPTE)PointerPde, TRUE);
 #if (_MI_PAGING_LEVELS == 2)
@@ -1019,32 +1071,36 @@ MmInitializeProcessAddressSpace(IN PEPROCESS Process,
     ASSERT(Process->Pcb.DirectoryTableBase[1] == PageFrameNumber * PAGE_SIZE);
 #endif
 
-    /* Setup the PFN for the PTE for the working set */
-    PointerPte = MiAddressToPte(MI_WORKING_SET_LIST);
-    MI_MAKE_HARDWARE_PTE(&TempPte, PointerPte, MM_READWRITE, 0);
-    ASSERT(PointerPte->u.Long != 0);
+    /* Do the same for the Working set list */
+    PointerPte = MiAddressToPte(MmWorkingSetList);
     PageFrameNumber = PFN_FROM_PTE(PointerPte);
-    MI_WRITE_INVALID_PTE(PointerPte, DemandZeroPte);
     MiInitializePfn(PageFrameNumber, PointerPte, TRUE);
-    TempPte.u.Hard.PageFrameNumber = PageFrameNumber;
-    MI_WRITE_VALID_PTE(PointerPte, TempPte);
+
+    /* All our pages are now active & valid. Release the lock. */
+    MiReleasePfnLock(OldIrql);
+
+    /* This should be in hyper space, but not in the mapping range */
+    Process->Vm.VmWorkingSetList = MmWorkingSetList;
+    ASSERT(((ULONG_PTR)MmWorkingSetList >= MI_MAPPING_RANGE_END) && ((ULONG_PTR)MmWorkingSetList <= HYPER_SPACE_END));
 
     /* Now initialize the working set list */
-    MiInitializeWorkingSetList(Process);
+    MiInitializeWorkingSetList(&Process->Vm);
+
+    /* The rule is that the owner process is always in the FLINK of the PDE's PFN entry */
+    Pfn = MiGetPfnEntry(Process->Pcb.DirectoryTableBase[0] >> PAGE_SHIFT);
+    ASSERT(Pfn->u4.PteFrame == MiGetPfnEntryIndex(Pfn));
+    ASSERT(Pfn->u1.WsIndex == 0);
+    Pfn->u1.Event = (PKEVENT)Process;
 
     /* Sanity check */
     ASSERT(Process->PhysicalVadRoot == NULL);
 
-    /* Release PFN lock */
-    MiReleasePfnLock(OldIrql);
-
-#ifdef _M_AMD64
-   } /* On x64 the PFNs for the initial process are already set up */
-#endif
+    /* Release the process working set */
+    MiUnlockProcessWorkingSet(Process, PsGetCurrentThread());
 
 #ifdef _M_AMD64
     /* On x64 we need a VAD for the shared user page */
-    Status = MiInsertSharedUserPageVad();
+    Status = MiInsertSharedUserPageVad(Process);
     if (!NT_SUCCESS(Status))
     {
         DPRINT1("MiCreateSharedUserPageVad() failed: 0x%lx\n", Status);
@@ -1106,7 +1162,7 @@ MmInitializeProcessAddressSpace(IN PEPROCESS Process,
                                     0,
                                     NULL,
                                     &ViewSize,
-                                    0,
+                                    ViewUnmap,
                                     MEM_COMMIT,
                                     PAGE_READWRITE);
 
@@ -1140,6 +1196,7 @@ MmInitializeHandBuiltProcess(IN PEPROCESS Process,
 
     /* Use idle process Working set */
     Process->Vm.VmWorkingSetList = PsGetCurrentProcess()->Vm.VmWorkingSetList;
+    Process->WorkingSetPage = PsGetCurrentProcess()->WorkingSetPage;
 
     /* Done */
     Process->HasAddressSpace = TRUE;//??
@@ -1265,11 +1322,16 @@ MmCleanProcessAddressSpace(IN PEPROCESS Process)
     PMM_AVL_TABLE VadTree;
     PETHREAD Thread = PsGetCurrentThread();
 
-    /* Only support this */
-    ASSERT(Process->AddressSpaceInitialized == 2);
-
     /* Remove from the session */
     MiSessionRemoveProcess();
+
+    /* Abort early, when the address space wasn't fully initialized */
+    if (Process->AddressSpaceInitialized < 2)
+    {
+        DPRINT1("Incomplete address space for Process %p. Might leak resources.\n",
+                Process);
+        return;
+    }
 
     /* Lock the process address space from changes */
     MmLockAddressSpace(&Process->Vm);
@@ -1287,8 +1349,11 @@ MmCleanProcessAddressSpace(IN PEPROCESS Process)
         Vad = (PMMVAD)VadTree->BalancedRoot.RightChild;
 
         /* Check for old-style memory areas */
-        if (Vad->u.VadFlags.Spare == 1)
+        if (MI_IS_MEMORY_AREA_VAD(Vad))
         {
+            /* We do not expect ARM3 memory areas here, those are kernel only */
+            ASSERT(MI_IS_ROSMM_VAD(Vad));
+
             /* Let RosMm handle this */
             MiRosCleanupMemoryArea(Process, Vad);
             continue;
@@ -1321,16 +1386,11 @@ MmCleanProcessAddressSpace(IN PEPROCESS Process)
             MiUnlockProcessWorkingSetUnsafe(Process, Thread);
         }
 
-         /* Skip ARM3 fake VADs, they'll be freed by MmDeleteProcessAddresSpace */
-        if (Vad->u.VadFlags.Spare == 1)
-        {
-            /* Set a flag so MmDeleteMemoryArea knows to free, but not to remove */
-            Vad->u.VadFlags.Spare = 2;
-            continue;
-        }
-
         /* Free the VAD memory */
         ExFreePool(Vad);
+
+        /* Return the quota the VAD used */
+        PsReturnProcessNonPagedPoolQuota(Process, sizeof(MMVAD_LONG));
     }
 
     /* Lock the working set */
@@ -1350,13 +1410,25 @@ MmCleanProcessAddressSpace(IN PEPROCESS Process)
 
 VOID
 NTAPI
-MmDeleteProcessAddressSpace2(IN PEPROCESS Process)
+MmDeleteProcessAddressSpace(IN PEPROCESS Process)
 {
     PMMPFN Pfn1, Pfn2;
     KIRQL OldIrql;
     PFN_NUMBER PageFrameIndex;
 
+#ifndef _M_AMD64
+    OldIrql = MiAcquireExpansionLock();
+    RemoveEntryList(&Process->MmProcessLinks);
+    MiReleaseExpansionLock(OldIrql);
+#endif
+
     //ASSERT(Process->CommitCharge == 0);
+
+    /* Remove us from the list */
+    OldIrql = MiAcquireExpansionLock();
+    if (Process->Vm.WorkingSetExpansionLinks.Flink != NULL)
+        RemoveEntryList(&Process->Vm.WorkingSetExpansionLinks);
+    MiReleaseExpansionLock(OldIrql);
 
     /* Acquire the PFN lock */
     OldIrql = MiAcquirePfnLock();
@@ -1373,7 +1445,6 @@ MmDeleteProcessAddressSpace2(IN PEPROCESS Process)
         MiDecrementShareCount(Pfn2, Pfn1->u4.PteFrame);
         MiDecrementShareCount(Pfn1, Process->WorkingSetPage);
         ASSERT((Pfn1->u3.e2.ReferenceCount == 0) || (Pfn1->u3.e1.WriteInProgress));
-        MiReleaseSystemPtes(MiAddressToPte(Process->Vm.VmWorkingSetList), 1, SystemPteSpace);
 
         /* Now map hyperspace and its page table */
         PageFrameIndex = Process->Pcb.DirectoryTableBase[1] >> PAGE_SHIFT;
@@ -1398,8 +1469,8 @@ MmDeleteProcessAddressSpace2(IN PEPROCESS Process)
     }
     else
     {
-        /* A partly-initialized process should never exit through here */
-        ASSERT(FALSE);
+        DPRINT1("Deleting partially initialized address space of Process %p. Might leak resources.\n",
+                Process);
     }
 
     /* Release the PFN lock */

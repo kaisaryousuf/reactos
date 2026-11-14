@@ -179,7 +179,7 @@ BOOL CheckAgainstNTFS(PNTFSBootSector Sector)
 
     /* Check cluster size */
     ClusterSize = Sector->BytesPerSector * Sector->SectorsPerCluster;
-    if (ClusterSize != 512 && ClusterSize != 1024 && 
+    if (ClusterSize != 512 && ClusterSize != 1024 &&
         ClusterSize != 2048 && ClusterSize != 4096 &&
         ClusterSize != 8192 && ClusterSize != 16384 &&
         ClusterSize != 32768 && ClusterSize != 65536)
@@ -218,7 +218,7 @@ int main(int argc, char ** argv)
     }
 
     /* We first open disk */
-    swprintf(Buffer, DiskFormat, 0, 0);
+    _swprintf(Buffer, DiskFormat, 0, 0);
     RtlInitUnicodeString(&Name, Buffer);
     InitializeObjectAttributes(&ObjectAttributes,
                                &Name,
@@ -279,7 +279,7 @@ int main(int argc, char ** argv)
     }
 
     /* Redo it with first partition */
-    swprintf(Buffer, DiskFormat, 0, 1);
+    _swprintf(Buffer, DiskFormat, 0, 1);
     RtlInitUnicodeString(&Name, Buffer);
     InitializeObjectAttributes(&ObjectAttributes,
                                &Name,

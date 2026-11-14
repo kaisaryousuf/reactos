@@ -2,7 +2,7 @@
  *                         Runtime Library Functions                          *
  ******************************************************************************/
 
-$if (_WDMDDK_)
+$if (_WDMDDK_ || _WINNT_)
 #define FAST_FAIL_LEGACY_GS_VIOLATION           0
 #define FAST_FAIL_VTGUARD_CHECK_FAILURE         1
 #define FAST_FAIL_STACK_COOKIE_CHECK_FAILURE    2
@@ -21,6 +21,9 @@ $if (_WDMDDK_)
 #define FAST_FAIL_INVALID_JUMP_BUFFER           18
 #define FAST_FAIL_MRDATA_MODIFIED               19
 #define FAST_FAIL_INVALID_FAST_FAIL_CODE        0xFFFFFFFF
+
+$endif(_WDMDDK_ || _WINNT_)
+$if (_WDMDDK_)
 
 DECLSPEC_NORETURN
 FORCEINLINE
@@ -564,7 +567,7 @@ RtlEqualUnicodeString(
   _In_ CONST UNICODE_STRING *String2,
   _In_ BOOLEAN CaseInSensitive);
 
-#if !defined(_AMD64_) && !defined(_IA64_)
+#if !defined(_AMD64_) && !defined(_IA64_) && !defined(_ARM64_)
 NTSYSAPI
 LARGE_INTEGER
 NTAPI
@@ -669,6 +672,14 @@ NTSYSAPI
 ULONG
 NTAPI
 RtlFindNextForwardRunClear(
+  _In_ PRTL_BITMAP BitMapHeader,
+  _In_ ULONG FromIndex,
+  _Out_ PULONG StartingRunIndex);
+
+NTSYSAPI
+ULONG
+NTAPI
+RtlFindNextForwardRunSet(
   _In_ PRTL_BITMAP BitMapHeader,
   _In_ ULONG FromIndex,
   _Out_ PULONG StartingRunIndex);
@@ -821,7 +832,13 @@ RtlSetDaclSecurityDescriptor(
   _In_opt_ PACL Dacl,
   _In_opt_ BOOLEAN DaclDefaulted);
 
-#if defined(_AMD64_)
+//
+// These functions are really bad and shouldn't be used.
+// They have no type checking and can easily overwrite the target
+// variable or only set half of it.
+// Use Read/WriteUnalignedU16/U32/U64 from reactos/unaligned.h instead.
+//
+#if defined(_AMD64_) || defined(_M_AMD64) || defined(_X86) || defined(_M_IX86)
 
 /* VOID
  * RtlStoreUlong(
@@ -853,7 +870,7 @@ RtlSetDaclSecurityDescriptor(
  *    PUSHORT SourceAddress);
  */
 #define RtlRetrieveUshort(DestAddress,SrcAddress) \
-    *(USHORT UNALIGNED *)(DestAddress) = *(USHORT)(SrcAddress)
+    *(USHORT*)(DestAddress) = *(USHORT UNALIGNED *)(SrcAddress)
 
 /* VOID
  * RtlRetrieveUlong(
@@ -861,7 +878,7 @@ RtlSetDaclSecurityDescriptor(
  *    PULONG SourceAddress);
  */
 #define RtlRetrieveUlong(DestAddress,SrcAddress) \
-    *(ULONG UNALIGNED *)(DestAddress) = *(PULONG)(SrcAddress)
+    *(ULONG*)(DestAddress) = *(ULONG UNALIGNED *)(SrcAddress)
 
 #else
 
@@ -919,7 +936,7 @@ RtlSetDaclSecurityDescriptor(
         *((PULONG)(DestAddress))=*((PULONG)(SrcAddress)); \
     }
 
-#endif /* defined(_AMD64_) */
+#endif /* defined(_AMD64_) || defined(_M_AMD64) || defined(_X86) || defined(_M_IX86) */
 
 #ifdef _WIN64
 /* VOID
@@ -932,8 +949,7 @@ RtlSetDaclSecurityDescriptor(
 #define RtlStoreUlongPtr(Address,Value) RtlStoreUlong(Address,Value)
 #endif /* _WIN64 */
 
-_Success_(return!=FALSE)
-_Must_inspect_result_
+_Success_(return != FALSE)
 NTSYSAPI
 BOOLEAN
 NTAPI
@@ -1716,7 +1732,6 @@ RtlSecondsSince1980ToTime(
   _Out_ PLARGE_INTEGER Time);
 
 _Success_(return != 0)
-_Must_inspect_result_
 NTSYSAPI
 BOOLEAN
 NTAPI
@@ -2472,49 +2487,6 @@ NTAPI
 RtlNumberOfSetBitsUlongPtr(
   _In_ ULONG_PTR Target);
 
-NTSYSAPI
-ULONGLONG
-NTAPI
-RtlIoDecodeMemIoResource(
-  _In_ struct _IO_RESOURCE_DESCRIPTOR *Descriptor,
-  _Out_opt_ PULONGLONG Alignment,
-  _Out_opt_ PULONGLONG MinimumAddress,
-  _Out_opt_ PULONGLONG MaximumAddress);
-
-NTSYSAPI
-NTSTATUS
-NTAPI
-RtlIoEncodeMemIoResource(
-  _In_ struct _IO_RESOURCE_DESCRIPTOR *Descriptor,
-  _In_ UCHAR Type,
-  _In_ ULONGLONG Length,
-  _In_ ULONGLONG Alignment,
-  _In_ ULONGLONG MinimumAddress,
-  _In_ ULONGLONG MaximumAddress);
-
-NTSYSAPI
-ULONGLONG
-NTAPI
-RtlCmDecodeMemIoResource(
-  _In_ struct _CM_PARTIAL_RESOURCE_DESCRIPTOR *Descriptor,
-  _Out_opt_ PULONGLONG Start);
-
-NTSYSAPI
-NTSTATUS
-NTAPI
-RtlFindClosestEncodableLength(
-  _In_ ULONGLONG SourceLength,
-  _Out_ PULONGLONG TargetLength);
-
-NTSYSAPI
-NTSTATUS
-NTAPI
-RtlCmEncodeMemIoResource(
-  _In_ PCM_PARTIAL_RESOURCE_DESCRIPTOR Descriptor,
-  _In_ UCHAR Type,
-  _In_ ULONGLONG Length,
-  _In_ ULONGLONG Start);
-
 $endif (_WDMDDK_)
 $if (_NTDDK_)
 
@@ -2634,6 +2606,56 @@ RtlCompareAltitudes(
 $endif (_NTIFS_)
 
 #endif /* (NTDDI_VERSION >= NTDDI_VISTA) */
+
+#if (NTDDI_VERSION >= NTDDI_VISTA) || defined(__REACTOS__)
+
+$if (_WDMDDK_)
+NTSYSAPI
+ULONGLONG
+NTAPI
+RtlCmDecodeMemIoResource(
+  _In_ struct _CM_PARTIAL_RESOURCE_DESCRIPTOR *Descriptor,
+  _Out_opt_ PULONGLONG Start);
+
+NTSYSAPI
+NTSTATUS
+NTAPI
+RtlCmEncodeMemIoResource(
+  _In_ PCM_PARTIAL_RESOURCE_DESCRIPTOR Descriptor,
+  _In_ UCHAR Type,
+  _In_ ULONGLONG Length,
+  _In_ ULONGLONG Start);
+
+NTSYSAPI
+ULONGLONG
+NTAPI
+RtlIoDecodeMemIoResource(
+  _In_ struct _IO_RESOURCE_DESCRIPTOR *Descriptor,
+  _Out_opt_ PULONGLONG Alignment,
+  _Out_opt_ PULONGLONG MinimumAddress,
+  _Out_opt_ PULONGLONG MaximumAddress);
+
+NTSYSAPI
+NTSTATUS
+NTAPI
+RtlIoEncodeMemIoResource(
+  _In_ struct _IO_RESOURCE_DESCRIPTOR *Descriptor,
+  _In_ UCHAR Type,
+  _In_ ULONGLONG Length,
+  _In_ ULONGLONG Alignment,
+  _In_ ULONGLONG MinimumAddress,
+  _In_ ULONGLONG MaximumAddress);
+
+NTSYSAPI
+NTSTATUS
+NTAPI
+RtlFindClosestEncodableLength(
+  _In_ ULONGLONG SourceLength,
+  _Out_ PULONGLONG TargetLength);
+
+$endif (_WDMDDK_)
+
+#endif /* (NTDDI_VERSION >= NTDDI_VISTA) || defined(__REACTOS__) */
 
 #if (NTDDI_VERSION >= NTDDI_WIN7)
 
@@ -2984,7 +3006,7 @@ RtlInitEmptyUnicodeString(
 }
 $endif (_WDMDDK_)
 
-#if defined(_AMD64_) || defined(_IA64_)
+#if defined(_AMD64_) || defined(_IA64_) || defined(_ARM64_)
 
 $if (_WDMDDK_)
 

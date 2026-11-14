@@ -186,7 +186,7 @@ KiTimerExpiration(IN PKDPC Dpc,
                 if (TimerDpc)
                 {
 #ifdef CONFIG_SMP
-                    /* 
+                    /*
                      * If the DPC is targeted to another processor,
                      * then insert it into that processor's DPC queue
                      * instead of delivering it now.
@@ -350,26 +350,26 @@ KiTimerListExpire(IN PLIST_ENTRY ExpiredListHead,
 
     /* Query system */
     KeQuerySystemTime((PLARGE_INTEGER)&SystemTime);
-    
+
     /* Loop expired list */
     while (ExpiredListHead->Flink != ExpiredListHead)
     {
         /* Get the current timer */
         Timer = CONTAINING_RECORD(ExpiredListHead->Flink, KTIMER, TimerListEntry);
-        
+
         /* Remove it */
         RemoveEntryList(&Timer->TimerListEntry);
-        
+
         /* Not inserted */
         Timer->Header.Inserted = FALSE;
-        
+
         /* Signal it */
         Timer->Header.SignalState = 1;
-        
+
         /* Get the DPC and period */
         TimerDpc = Timer->Dpc;
         Period = Timer->Period;
-        
+
         /* Check if there's any waiters */
         if (!IsListEmpty(&Timer->Header.WaitListHead))
         {
@@ -385,7 +385,7 @@ KiTimerListExpire(IN PLIST_ENTRY ExpiredListHead,
                 KxUnwaitThreadForEvent((PKEVENT)Timer, IO_NO_INCREMENT);
             }
         }
-        
+
         /* Check if we have a period */
         if (Period)
         {
@@ -398,7 +398,7 @@ KiTimerListExpire(IN PLIST_ENTRY ExpiredListHead,
         if (TimerDpc)
         {
 #ifdef CONFIG_SMP
-            /* 
+            /*
              * If the DPC is targeted to another processor,
              * then insert it into that processor's DPC queue
              * instead of delivering it now.
@@ -428,13 +428,13 @@ KiTimerListExpire(IN PLIST_ENTRY ExpiredListHead,
             }
         }
     }
-    
+
     /* Check if we still have DPC entries */
     if (DpcCalls)
     {
         /* Release the dispatcher while doing DPCs */
         KiReleaseDispatcherLock(DISPATCH_LEVEL);
-        
+
         /* Start looping all DPC Entries */
         for (i = 0; DpcCalls; DpcCalls--, i++)
         {
@@ -449,7 +449,7 @@ KiTimerListExpire(IN PLIST_ENTRY ExpiredListHead,
                                 UlongToPtr(SystemTime.LowPart),
                                 UlongToPtr(SystemTime.HighPart));
         }
-        
+
         /* Lower IRQL */
         KeLowerIrql(OldIrql);
     }
@@ -460,6 +460,7 @@ KiTimerListExpire(IN PLIST_ENTRY ExpiredListHead,
     }
 }
 
+_Requires_lock_not_held_(Prcb->PrcbLock)
 VOID
 NTAPI
 KiQuantumEnd(VOID)
@@ -587,7 +588,7 @@ KiRetireDpcList(IN PKPRCB Prcb)
             TimerHand = Prcb->TimerHand;
             Prcb->TimerRequest = 0;
 
-            /* Expire timers with interrups enabled */
+            /* Expire timers with interrupts enabled */
             _enable();
             KiTimerExpiration(NULL, NULL, (PVOID)TimerHand, NULL);
             _disable();
@@ -877,7 +878,7 @@ NTAPI
 KeRemoveQueueDpc(IN PKDPC Dpc)
 {
     PKDPC_DATA DpcData;
-    BOOLEAN Enable;
+    BOOLEAN Enable, Removed = FALSE;
     ASSERT_DPC(Dpc);
 
     /* Disable interrupts */
@@ -897,6 +898,7 @@ KeRemoveQueueDpc(IN PKDPC Dpc)
             DpcData->DpcQueueDepth--;
             RemoveEntryList(&Dpc->DpcListEntry);
             Dpc->DpcData = NULL;
+            Removed = TRUE;
         }
 
         /* Release the lock */
@@ -904,37 +906,55 @@ KeRemoveQueueDpc(IN PKDPC Dpc)
     }
 
     /* Re-enable interrupts */
-    if (Enable) _enable();
+    KeRestoreInterrupts(Enable);
 
-    /* Return if the DPC was in the queue or not */
-    return DpcData ? TRUE : FALSE;
+    /* Another processor may have dequeued it before the lock was taken */
+    return Removed;
 }
 
 /*
  * @implemented
  */
+_IRQL_requires_max_(APC_LEVEL)
 VOID
 NTAPI
 KeFlushQueuedDpcs(VOID)
 {
-    PKPRCB CurrentPrcb = KeGetCurrentPrcb();
-    PAGED_CODE();
+    ULONG ProcessorIndex;
+    PKPRCB TargetPrcb;
 
-    /* Check if this is an UP machine */
-    if (KeActiveProcessors == 1)
+    PAGED_CODE();
+    ASSERT(KeGetCurrentThread()->SystemAffinityActive == FALSE);
+
+    /* Loop all processors */
+    for (ProcessorIndex = 0; ProcessorIndex < KeNumberProcessors; ProcessorIndex++)
     {
+        /* Get the target processor's PRCB */
+        TargetPrcb = KiProcessorBlock[ProcessorIndex];
+
         /* Check if there are DPCs on either queues */
-        if ((CurrentPrcb->DpcData[DPC_NORMAL].DpcQueueDepth > 0) ||
-            (CurrentPrcb->DpcData[DPC_THREADED].DpcQueueDepth > 0))
+        if ((TargetPrcb->DpcData[DPC_NORMAL].DpcQueueDepth > 0) ||
+            (TargetPrcb->DpcData[DPC_THREADED].DpcQueueDepth > 0))
         {
-            /* Request an interrupt */
-            HalRequestSoftwareInterrupt(DISPATCH_LEVEL);
+            /* Check if this is the current processor */
+            if (TargetPrcb == KeGetCurrentPrcb())
+            {
+                /* Request a DPC interrupt */
+                HalRequestSoftwareInterrupt(DISPATCH_LEVEL);
+            }
+            else
+            {
+                /* Attach to the target processor. This will cause a DPC
+                   interrupt on the target processor and flush all DPCs. */
+                KeSetSystemAffinityThread(TargetPrcb->SetMember);
+            }
         }
     }
-    else
+
+    /* Revert back to user affinity */
+    if (KeGetCurrentThread()->SystemAffinityActive)
     {
-        /* FIXME: SMP support required */
-        ASSERT(FALSE);
+        KeRevertToUserAffinityThread();
     }
 }
 

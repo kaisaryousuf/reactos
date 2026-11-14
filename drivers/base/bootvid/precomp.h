@@ -1,27 +1,26 @@
-#ifndef _BOOTVID_PCH_
-#define _BOOTVID_PCH_
+/*
+ * PROJECT:     ReactOS Boot Video Driver
+ * LICENSE:     GPL-2.0-or-later (https://spdx.org/licenses/GPL-2.0-or-later)
+ * PURPOSE:     Precompiled header
+ * COPYRIGHT:   Copyright 2007 Alex Ionescu <alex.ionescu@reactos.org>
+ *              Copyright 2020 Dmitry Borisov <di.sean@protonmail.com>
+ *              Copyright 2020 Stanislav Motylkov <x86corez@gmail.com>
+ */
+
+#pragma once
 
 #include <ntifs.h>
 #include <ndk/halfuncs.h>
 #include <drivers/bootvid/bootvid.h>
 
-/* Arch specific includes */
-#if defined(_M_IX86) || defined(_M_AMD64)
-#if defined(SARCH_PC98)
-#include "i386/pc98/pc98.h"
-#elif defined(SARCH_XBOX)
-#include "i386/xbox/xbox.h"
-#else
-#include "i386/pc/vga.h"
-#include "i386/pc/pc.h"
-#endif
-#elif defined(_M_ARM)
-#include "arm/arm.h"
-#else
-#error Unknown architecture
+/* Module-specific header */
+#ifdef MODULE_HEADER
+#include MODULE_HEADER
 #endif
 
-/* Define if FontData has upside down characters */
+#ifndef NO_VIDEO_GRAPHICS
+
+/* Define if FontData has upside-down characters */
 #undef CHAR_GEN_UPSIDE_DOWN
 
 #define BOOTCHAR_HEIGHT 13
@@ -49,30 +48,82 @@ typedef struct tagBITMAPINFOHEADER
 
 typedef ULONG RGBQUAD;
 
+#else // NO_VIDEO_GRAPHICS
+
+/*
+ * So that:
+ * TEXT_WIDTH == (SCREEN_WIDTH / BOOTCHAR_WIDTH) == 80
+ * TEXT_HEIGHT == (SCREEN_HEIGHT / BOOTCHAR_HEIGHT) == 25
+ */
+#ifndef BOOTCHAR_HEIGHT
+#define BOOTCHAR_HEIGHT 19
+#endif
+#ifndef BOOTCHAR_WIDTH
+#define BOOTCHAR_WIDTH  8
+#endif
+
+#endif // !NO_VIDEO_GRAPHICS
+
+typedef struct _URECT
+{
+    ULONG Left;
+    ULONG Top;
+    ULONG Right;
+    ULONG Bottom;
+} URECT;
+
 /*
  * Globals
  */
 extern UCHAR VidpTextColor;
 extern ULONG VidpCurrentX;
 extern ULONG VidpCurrentY;
-extern ULONG VidpScrollRegion[4];
-extern UCHAR VidpFontData[256 * BOOTCHAR_HEIGHT];
+extern URECT VidpScrollRegion;
+
+#ifndef NO_VIDEO_GRAPHICS
+
+extern const UCHAR VidpFontData[256 * BOOTCHAR_HEIGHT];
 extern const RGBQUAD VidpDefaultPalette[BV_MAX_COLORS];
 
 #define RGB(r, g, b)    ((RGBQUAD)(((UCHAR)(b) | ((USHORT)((UCHAR)(g))<<8)) | (((ULONG)(UCHAR)(r))<<16)))
 
-#define GetRValue(quad)    ((UCHAR)(((quad)>>16) & 0xFF))
-#define GetGValue(quad)    ((UCHAR)(((quad)>>8) & 0xFF))
-#define GetBValue(quad)    ((UCHAR)((quad) & 0xFF))
+#define GetRValue(quad)     ((UCHAR)(((quad)>>16) & 0xFF))
+#define GetGValue(quad)     ((UCHAR)(((quad)>>8) & 0xFF))
+#define GetBValue(quad)     ((UCHAR)((quad) & 0xFF))
 
-#define InitializePalette()    InitPaletteWithTable((PULONG)VidpDefaultPalette, BV_MAX_COLORS)
-
-#ifdef CHAR_GEN_UPSIDE_DOWN
-# define GetFontPtr(_Char) &VidpFontData[_Char * BOOTCHAR_HEIGHT] + BOOTCHAR_HEIGHT - 1;
-# define FONT_PTR_DELTA (-1)
-#else
-# define GetFontPtr(_Char) &VidpFontData[_Char * BOOTCHAR_HEIGHT];
-# define FONT_PTR_DELTA (1)
+#ifndef InitializePalette
+#define InitializePalette() InitPaletteWithTable(VidpDefaultPalette, BV_MAX_COLORS)
 #endif
 
-#endif /* _BOOTVID_PCH_ */
+#ifdef CHAR_GEN_UPSIDE_DOWN
+# define GetFontPtr(_Char)  (&VidpFontData[(_Char) * BOOTCHAR_HEIGHT] + BOOTCHAR_HEIGHT - 1)
+# define FONT_PTR_DELTA     (-1)
+#else
+# define GetFontPtr(_Char)  (&VidpFontData[(_Char) * BOOTCHAR_HEIGHT])
+# define FONT_PTR_DELTA     (1)
+#endif
+
+#endif // !NO_VIDEO_GRAPHICS
+
+
+VOID
+PreserveRow(
+    _In_ ULONG CurrentTop,
+    _In_ ULONG Height,
+    _In_ BOOLEAN Restore);
+
+VOID
+DoScroll(
+    _In_ ULONG Scroll);
+
+VOID
+DisplayCharacter(
+    _In_ CHAR Character,
+    _In_ ULONG Left,
+    _In_ ULONG Top,
+    _In_ ULONG TextColor,
+    _In_ ULONG BackColor);
+
+VOID
+ResetDisplay(
+    _In_ BOOLEAN SetMode);

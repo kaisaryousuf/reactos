@@ -54,7 +54,7 @@ Beep(IN DWORD dwFreq,
     IO_STATUS_BLOCK IoStatusBlock;
     BEEP_SET_PARAMETERS BeepSetParameters;
     NTSTATUS Status;
-    
+
     //
     // On TS systems, we need to Load Winsta.dll and call WinstationBeepOpen
     // after doing a GetProcAddress for it
@@ -264,13 +264,16 @@ DeviceIoControl(IN HANDLE hDevice,
         /* Check for success */
         if (NT_SUCCESS(Status))
         {
-            /* Return the byte count */
-            *lpBytesReturned = Iosb.Information;
+             /* Windows 2003 and Vista do not check for lpBytesReturned == NULL,
+              * but Windows 8+ does. Avoid crashing. */
+            if (lpBytesReturned != NULL)
+                *lpBytesReturned = Iosb.Information;
         }
         else
         {
             /* Check for informational or warning failure */
-            if (!NT_ERROR(Status)) *lpBytesReturned = Iosb.Information;
+            if (!NT_ERROR(Status) && (lpBytesReturned != NULL))
+                *lpBytesReturned = Iosb.Information;
 
             /* Return a failure */
             BaseSetLastNTError(Status);

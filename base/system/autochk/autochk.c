@@ -31,8 +31,6 @@
 #include <fslib/ntfslib.h>
 #include <fslib/btrfslib.h>
 #include <fslib/ext2lib.h>
-#include <fslib/ffslib.h>
-#include <fslib/reiserfslib.h>
 #include <fslib/cdfslib.h>
 
 #define NDEBUG
@@ -56,8 +54,6 @@ FILESYSTEM_CHKDSK FileSystems[] =
     { L"EXT2", Ext2Chkdsk },
     { L"EXT3", Ext2Chkdsk },
     { L"EXT4", Ext2Chkdsk },
-    { L"FFS", FfsChkdsk },
-    { L"RFSD", ReiserfsChkdsk },
     { L"CDFS", CdfsChkdsk },
 };
 
@@ -662,7 +658,7 @@ _main(
             if ((DeviceMap.Query.DriveMap & (1 << i)) &&
                 (DeviceMap.Query.DriveType[i] == DOSDEVICE_DRIVE_FIXED))
             {
-                swprintf(VolumePath, L"\\??\\%c:", L'A' + i);
+                _swprintf(VolumePath, L"\\??\\%c:", L'A' + i);
                 CheckVolume(VolumePath, TimeOut, CheckOnlyIfDirty);
             }
         }

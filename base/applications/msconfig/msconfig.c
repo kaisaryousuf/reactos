@@ -31,7 +31,7 @@ void MsConfig_OnTabWndSelChange(void);
 // http://www.catch22.net/software/winspy
 // Copyright (c) 2002 by J Brown
 //
- 
+
 //
 //	Copied from uxtheme.h
 //  If you have this new header, then delete these and
@@ -42,7 +42,7 @@ void MsConfig_OnTabWndSelChange(void);
 #define ETDT_USETABTEXTURE  0x00000004
 #define ETDT_ENABLETAB      (ETDT_ENABLE  | ETDT_USETABTEXTURE)
 
-// 
+//
 typedef HRESULT (WINAPI * ETDTProc) (HWND, DWORD);
 
 //
@@ -57,7 +57,7 @@ BOOL EnableDialogTheme(HWND hwnd)
 
     if(hUXTheme)
     {
-        fnEnableThemeDialogTexture = 
+        fnEnableThemeDialogTexture =
             (ETDTProc)GetProcAddress(hUXTheme, "EnableThemeDialogTexture");
 
         if(fnEnableThemeDialogTexture)
@@ -80,6 +80,20 @@ BOOL EnableDialogTheme(HWND hwnd)
         return FALSE;
     }
 }
+
+VOID DisableAllExcept(HWND hTabDlg, UINT idExcept)
+{
+    HWND hSkip = GetDlgItem(hTabDlg, idExcept);
+    for (HWND hWnd = NULL; (hWnd = FindWindowExW(hTabDlg, hWnd, NULL, NULL)) != NULL;)
+        EnableWindow(hWnd, hWnd == hSkip);
+    if (idExcept == IDC_SYSTEM_TREE && hSkip)
+    {
+        LONG_PTR style = GetWindowLongPtrW(hSkip, GWL_STYLE);
+        style &= ~TVS_EDITLABELS;
+        SetWindowLongPtrW(hSkip, GWL_STYLE, style);
+    }
+}
+
 BOOL OnCreate(HWND hWnd)
 {
     TCHAR   szTemp[256];
@@ -135,6 +149,10 @@ BOOL OnCreate(HWND hWnd)
 
     MsConfig_OnTabWndSelChange();
 
+    // FIXME: We don't support applying anything
+    EnableWindow(GetDlgItem(hWnd, IDOK), FALSE);
+    EnableWindow(GetDlgItem(hWnd, IDC_BTN_APPLY), FALSE);
+    EnableWindow(GetDlgItem(hWnd, IDC_BTN_HELP), FALSE);
     return TRUE;
 }
 
@@ -259,7 +277,7 @@ MsConfigWndProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
 
         case WM_COMMAND:
 
-            if (LOWORD(wParam) == IDOK) 
+            if (LOWORD(wParam) == IDOK)
             {
                 //MsConfig_OnSaveChanges();
             }
@@ -327,9 +345,9 @@ int APIENTRY _tWinMain(HINSTANCE hInstance,
     InitCommonControlsEx(&InitControls);
 
     hInst = hInstance;
- 
+
     DialogBox(hInst, (LPCTSTR)IDD_MSCONFIG_DIALOG, NULL,  MsConfigWndProc);
-  
+
     return 0;
 }
 

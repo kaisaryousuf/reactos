@@ -1,13 +1,15 @@
 /*
- * PROJECT:         ReactOS crt library
- * LICENSE:         GPLv2+ - See COPYING in the top level directory
- * PURPOSE:         Compiler support for COM
- * PROGRAMMER:      Thomas Faber (thomas.faber@reactos.org)
+ * PROJECT:     ReactOS crt library
+ * LICENSE:     BSD-2-Clause (https://spdx.org/licenses/BSD-2-Clause)
+ * PURPOSE:     Compiler support for COM
+ * COPYRIGHT:   Copyright 2013 Thomas Faber (thomas.faber@reactos.org)
+ *              Copyright 2015 Hermès Bélusca-Maïto (hermes.belusca-maito@reactos.org)
  */
 
 #include <stdarg.h>
 
 #define WIN32_NO_STATUS
+#define WIN32_LEAN_AND_MEAN
 #define _INC_WINDOWS
 
 #include <windef.h>

@@ -1,8 +1,9 @@
 /*
- * PROJECT:         ReactOS kernel-mode tests
- * LICENSE:         GPLv2+ - See COPYING in the top level directory
- * PURPOSE:         Kernel-Mode Test Suite Spin lock test
- * PROGRAMMER:      Thomas Faber <thomas.faber@reactos.org>
+ * PROJECT:     ReactOS kernel-mode tests
+ * LICENSE:     GPL-2.0-or-later (https://spdx.org/licenses/GPL-2.0-or-later)
+ * PURPOSE:     Kernel-Mode Test Suite Spin lock test
+ * COPYRIGHT:   Copyright 2011-2023 Thomas Faber (thomas.faber@reactos.org)
+ * COPYRIGHT:   Copyright 2021 Jérôme Gardou (jerome.gardou@reactos.org)
  */
 
 #ifndef _WIN64
@@ -167,12 +168,16 @@ BOOLEAN TryNoRaise(PKSPIN_LOCK SpinLock, PCHECK_DATA CheckData) {
 {                                                                                   \
     PKTHREAD Thread = KeGetCurrentThread();                                         \
     (VOID)Thread;                                                                   \
-    if (KmtIsMultiProcessorBuild)                                                   \
+    if (KmtIsMultiProcessorBuild || KmtIsCheckedBuild)                              \
     {                                                                               \
         ok_eq_bool(Ret, (Value) == 0);                                              \
         if (SpinLock)                                                               \
-            ok_eq_ulongptr(*(SpinLock),                                             \
-                        (Value) ? (ULONG_PTR)Thread | 1 : 0);                       \
+        {                                                                           \
+            if (KmtIsCheckedBuild)                                                  \
+                ok_eq_ulongptr(*(SpinLock), (Value) ? (ULONG_PTR)Thread | 1 : 0);   \
+            else                                                                    \
+                ok_eq_ulongptr(*(SpinLock), (Value) ? 1 : 0);                       \
+        }                                                                           \
     }                                                                               \
     else                                                                            \
     {                                                                               \
@@ -192,7 +197,7 @@ BOOLEAN TryNoRaise(PKSPIN_LOCK SpinLock, PCHECK_DATA CheckData) {
 
 #define CheckSpinLockQueueHandle(SpinLock, CheckData, Value) do                     \
 {                                                                                   \
-    if (KmtIsMultiProcessorBuild)                                                   \
+    if (KmtIsMultiProcessorBuild || KmtIsCheckedBuild)                              \
     {                                                                               \
         ok_eq_bool(Ret, (Value) == 0);                                              \
         if (SpinLock)                                                               \
@@ -233,8 +238,10 @@ BOOLEAN TryNoRaise(PKSPIN_LOCK SpinLock, PCHECK_DATA CheckData) {
                                                                                     \
     if ((CheckData)->IsAcquired)                                                    \
         ExpectedIrql = (CheckData)->IrqlWhenAcquired;                               \
-    ok_irql(ExpectedIrql);                                                          \
-    ok_bool_false(KeAreApcsDisabled(), "KeAreApcsDisabled returned");               \
+    if (GetNTVersion() < _WIN32_WINNT_WIN8)                                         \
+        ok_irql(ExpectedIrql);                                                      \
+    if (GetNTVersion() == _WIN32_WINNT_WS03)                                        \
+        ok_bool_false(KeAreApcsDisabled(), "KeAreApcsDisabled returned");           \
     ok_bool_true(KmtAreInterruptsEnabled(), "Interrupts enabled:");                 \
 } while (0)
 
@@ -252,22 +259,36 @@ TestSpinLock(
     if (SpinLock)
         ok_eq_ulongptr(*SpinLock, 0);
     CheckData->Acquire(SpinLock, CheckData);
-    CheckSpinLock(SpinLock, CheckData, 1);
+#ifdef _M_IX86
+    if (GetNTVersion() < _WIN32_WINNT_WIN8)
+        CheckSpinLock(SpinLock, CheckData, 1);
+#endif
     CheckData->Release(SpinLock, CheckData);
-    CheckSpinLock(SpinLock, CheckData, 0);
+#ifdef _M_IX86
+    if (GetNTVersion() < _WIN32_WINNT_WIN8)
+        CheckSpinLock(SpinLock, CheckData, 0);
+#endif
 
     if (CheckData->TryAcquire)
     {
         CheckSpinLock(SpinLock, CheckData, 0);
         ok_bool_true(CheckData->TryAcquire(SpinLock, CheckData), "TryAcquire returned");
         CheckSpinLock(SpinLock, CheckData, 1);
+        /* A second TryToAcquire results in SPINLOCK_ALREADY_OWNED on checked builds */
         if (!KmtIsCheckedBuild)
         {
-            /* SPINLOCK_ALREADY_OWNED on checked build */
-            ok_bool_true(CheckData->TryAcquire(SpinLock, CheckData), "TryAcquire returned");
-            /* even a failing acquire sets irql */
-            ok_eq_uint(CheckData->Irql, CheckData->IrqlWhenAcquired);
-            CheckData->Irql = CheckData->OriginalIrql;
+            if (KmtIsMultiProcessorBuild)
+            {
+                /* In MP, this fails as you would expect */
+                ok_bool_false(CheckData->TryAcquire(SpinLock, CheckData), "TryAcquire returned");
+            }
+            else
+            {
+                /* In UP, this always succeeds: recursive acquires are illegal and parallel processors don't exist */
+                ok_bool_true(CheckData->TryAcquire(SpinLock, CheckData), "TryAcquire returned");
+                ok_eq_uint(CheckData->Irql, CheckData->IrqlWhenAcquired);
+                CheckData->Irql = CheckData->OriginalIrql;
+            }
             CheckSpinLock(SpinLock, CheckData, 1);
         }
         CheckData->Release(SpinLock, CheckData);
@@ -282,19 +303,31 @@ TestSpinLock(
     {
         /* acquire/release without irql change */
         CheckData->AcquireNoRaise(SpinLock, CheckData);
-        CheckSpinLock(SpinLock, CheckData, 1);
+#ifdef _M_IX86
+        // Fails on x64 and Windows 8+
+        if (GetNTVersion() < _WIN32_WINNT_WIN8)
+            CheckSpinLock(SpinLock, CheckData, 1);
+#endif
         CheckData->ReleaseNoLower(SpinLock, CheckData);
         CheckSpinLock(SpinLock, CheckData, 0);
 
         /* acquire without raise, but normal release */
         CheckData->AcquireNoRaise(SpinLock, CheckData);
-        CheckSpinLock(SpinLock, CheckData, 1);
+#ifdef _M_IX86
+        // Fails on x64 and Windows 8+
+        if (GetNTVersion() < _WIN32_WINNT_WIN8)
+            CheckSpinLock(SpinLock, CheckData, 1);
+#endif
         CheckData->Release(SpinLock, CheckData);
         CheckSpinLock(SpinLock, CheckData, 0);
 
         /* acquire normally but release without lower */
         CheckData->Acquire(SpinLock, CheckData);
-        CheckSpinLock(SpinLock, CheckData, 1);
+#ifdef _M_IX86
+        // Fails on x64 and Windows 8+
+        if (GetNTVersion() < _WIN32_WINNT_WIN8)
+            CheckSpinLock(SpinLock, CheckData, 1);
+#endif
         CheckData->ReleaseNoLower(SpinLock, CheckData);
         CheckSpinLock(SpinLock, CheckData, 0);
         CheckData->IsAcquired = FALSE;
@@ -308,7 +341,16 @@ TestSpinLock(
             CheckSpinLock(SpinLock, CheckData, 1);
             if (!KmtIsCheckedBuild)
             {
-                ok_bool_true(CheckData->TryAcquireNoRaise(SpinLock, CheckData), "TryAcquireNoRaise returned");
+                if (KmtIsMultiProcessorBuild)
+                {
+                    /* In MP, this fails as you would expect */
+                    ok_bool_false(CheckData->TryAcquireNoRaise(SpinLock, CheckData), "TryAcquireNoRaise returned");
+                }
+                else
+                {
+                    /* In UP, this always succeeds: recursive acquires are illegal and parallel processors don't exist */
+                    ok_bool_true(CheckData->TryAcquireNoRaise(SpinLock, CheckData), "TryAcquireNoRaise returned");
+                }
                 CheckSpinLock(SpinLock, CheckData, 1);
             }
             CheckData->ReleaseNoLower(SpinLock, CheckData);
@@ -327,7 +369,7 @@ START_TEST(KeSpinLock)
     PKSPIN_LOCK pSpinLock = &SpinLock;
     KIRQL Irql, SynchIrql = KmtIsMultiProcessorBuild ? IPI_LEVEL - 2 : DISPATCH_LEVEL;
     KIRQL OriginalIrqls[] = { PASSIVE_LEVEL, APC_LEVEL, DISPATCH_LEVEL, HIGH_LEVEL };
-    CHECK_DATA TestData[] =
+    CHECK_DATA TestDataWS03[] =
     {
         { CheckLock,        DISPATCH_LEVEL, AcquireNormal,        ReleaseNormal,        NULL,           AcquireNoRaise,        ReleaseNoLower,        TryNoRaise },
         { CheckLock,        DISPATCH_LEVEL, AcquireExp,           ReleaseExp,           NULL,           AcquireExpNoRaise,     ReleaseExpNoLower,     NULL },
@@ -341,6 +383,18 @@ START_TEST(KeSpinLock)
         { CheckQueue,       DISPATCH_LEVEL, AcquireQueued,        ReleaseQueued,        TryQueued,      NULL,                  NULL,                  NULL,       LockQueuePfnLock },
         { CheckQueue,       SynchIrql,      AcquireQueuedSynch,   ReleaseQueued,        TryQueuedSynch, NULL,                  NULL,                  NULL,       LockQueuePfnLock },
     };
+    CHECK_DATA TestDataWin7[] = 
+    {
+        { CheckLock,        DISPATCH_LEVEL, AcquireNormal,        ReleaseNormal,        NULL,           AcquireNoRaise,        ReleaseNoLower,        TryNoRaise },
+        { CheckLock,        DISPATCH_LEVEL, AcquireExp,           ReleaseExp,           NULL,           AcquireExpNoRaise,     ReleaseExpNoLower,     NULL },
+        { CheckLock,        DISPATCH_LEVEL, AcquireNormal,        ReleaseNormal,        NULL,           AcquireInt,            ReleaseInt,            NULL },
+        { CheckLock,        SynchIrql,      AcquireSynch,         ReleaseNormal,        NULL,           NULL,                  NULL,                  NULL },
+        { CheckQueueHandle, DISPATCH_LEVEL, AcquireInStackQueued, ReleaseInStackQueued, NULL,           AcquireInStackNoRaise, ReleaseInStackNoRaise, NULL },
+        { CheckQueueHandle, SynchIrql,      AcquireInStackSynch,  ReleaseInStackQueued, NULL,           NULL,                  NULL,                  NULL },
+        { CheckQueueHandle, DISPATCH_LEVEL, AcquireInStackQueued, ReleaseInStackQueued, NULL,           AcquireInStackForDpc,  ReleaseInStackForDpc,  NULL },
+    };
+    CHECK_DATA *TestData;
+    ULONG TestElements;
     int i, iIrql;
     PKPRCB Prcb;
 
@@ -376,7 +430,30 @@ START_TEST(KeSpinLock)
     if (!KmtIsMultiProcessorBuild && !KmtIsCheckedBuild)
         pSpinLock = NULL;
 
-    for (i = 0; i < sizeof TestData / sizeof TestData[0]; ++i)
+    switch (GetNTVersion())
+    {
+        case _WIN32_WINNT_VISTA:
+#ifdef _M_X64
+            skip(FALSE, "This test is broken on Vista x64.\n");
+            goto done;
+#endif
+        case _WIN32_WINNT_WS03:
+            TestData = TestDataWS03;
+            TestElements = RTL_NUMBER_OF(TestDataWS03);
+            break;
+        case _WIN32_WINNT_WIN7:
+        case _WIN32_WINNT_WIN8:
+        case _WIN32_WINNT_WINBLUE:
+        case _WIN32_WINNT_WIN10:
+            TestData = TestDataWin7;
+            TestElements = RTL_NUMBER_OF(TestDataWin7);
+            break;
+        default:
+            skip(FALSE, "Unknown NT version (0x%X).\n", GetNTVersion());
+            goto done;
+    }
+
+    for (i = 0; i < TestElements; ++i)
     {
         memset(&SpinLock, 0x55, sizeof SpinLock);
         KeInitializeSpinLock(&SpinLock);
@@ -401,6 +478,6 @@ START_TEST(KeSpinLock)
             KeLowerIrql(Irql);
         }
     }
-
+done:
     KmtSetIrql(PASSIVE_LEVEL);
 }

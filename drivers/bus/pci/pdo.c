@@ -283,6 +283,7 @@ PdoGetRangeLength(PPDO_DEVICE_EXTENSION DeviceExtension,
         ULONGLONG Bar;
     } NewValue;
     ULONG Offset;
+    ULONGLONG Size;
 
     /* Compute the offset of this BAR in PCI config space */
     Offset = 0x10 + Bar * 4;
@@ -359,9 +360,10 @@ PdoGetRangeLength(PPDO_DEVICE_EXTENSION DeviceExtension,
              ? (OriginalValue.Bar & PCI_ADDRESS_IO_ADDRESS_MASK_64)
              : (OriginalValue.Bar & PCI_ADDRESS_MEMORY_ADDRESS_MASK_64));
 
-    *Length = ~((NewValue.Bar & PCI_ADDRESS_IO_SPACE)
-                ? (NewValue.Bar & PCI_ADDRESS_IO_ADDRESS_MASK_64)
-                : (NewValue.Bar & PCI_ADDRESS_MEMORY_ADDRESS_MASK_64)) + 1;
+    Size = (NewValue.Bar & PCI_ADDRESS_IO_SPACE)
+           ? (NewValue.Bar & PCI_ADDRESS_IO_ADDRESS_MASK_64)
+           : (NewValue.Bar & PCI_ADDRESS_MEMORY_ADDRESS_MASK_64);
+    *Length = Size & ~(Size - 1);
 
     *Flags = (NewValue.Bar & PCI_ADDRESS_IO_SPACE)
              ? (NewValue.Bar & ~PCI_ADDRESS_IO_ADDRESS_MASK_64)
@@ -1034,7 +1036,7 @@ InterfaceBusSetBusData(
     DPRINT("InterfaceBusSetBusData(%p 0x%lx %p 0x%lx 0x%lx)\n",
            Context, DataType, Buffer, Offset, Length);
 
-    if (DataType != PCI_WHICHSPACE_CONFIG)
+    if (DataType != PCI_WHICHSPACE_CONFIG && DataType != PCIConfiguration)
     {
         DPRINT("Unknown DataType %lu\n", DataType);
         return 0;
@@ -1070,7 +1072,7 @@ InterfaceBusGetBusData(
     DPRINT("InterfaceBusGetBusData(%p 0x%lx %p 0x%lx 0x%lx) called\n",
            Context, DataType, Buffer, Offset, Length);
 
-    if (DataType != PCI_WHICHSPACE_CONFIG)
+    if (DataType != PCI_WHICHSPACE_CONFIG && DataType != PCIConfiguration)
     {
         DPRINT("Unknown DataType %lu\n", DataType);
         return 0;

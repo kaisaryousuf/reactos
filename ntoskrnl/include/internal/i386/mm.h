@@ -3,6 +3,8 @@
  */
 #pragma once
 
+#include <internal/x86x64/mm.h>
+
 #ifdef _X86PAE_
 #define _MI_PAGING_LEVELS 3
 #define _MI_HAS_NO_EXECUTE 1
@@ -85,9 +87,6 @@
 #define MI_MAKE_DIRTY_PAGE(x)      ((x)->u.Hard.Dirty = 1)
 #define MI_MAKE_CLEAN_PAGE(x)      ((x)->u.Hard.Dirty = 0)
 #define MI_MAKE_ACCESSED_PAGE(x)   ((x)->u.Hard.Accessed = 1)
-#define MI_PAGE_DISABLE_CACHE(x)   ((x)->u.Hard.CacheDisable = 1)
-#define MI_PAGE_WRITE_THROUGH(x)   ((x)->u.Hard.WriteThrough = 1)
-#define MI_PAGE_WRITE_COMBINED(x)  ((x)->u.Hard.WriteThrough = 0)
 #define MI_IS_PAGE_LARGE(x)        ((x)->u.Hard.LargePage == 1)
 #if !defined(CONFIG_SMP)
 #define MI_IS_PAGE_WRITEABLE(x)    ((x)->u.Hard.Write == 1)
@@ -110,15 +109,22 @@
 
 
 /* Macros to identify the page fault reason from the error code */
-#define MI_IS_NOT_PRESENT_FAULT(FaultCode) !BooleanFlagOn(FaultCode, 0x1)
-#define MI_IS_WRITE_ACCESS(FaultCode) BooleanFlagOn(FaultCode, 0x2)
-#define MI_IS_INSTRUCTION_FETCH(FaultCode) BooleanFlagOn(FaultCode, 0x10)
+#define MI_IS_NOT_PRESENT_FAULT(FaultCode)  !BooleanFlagOn(FaultCode, 0x00000001)
+#define MI_IS_WRITE_ACCESS(FaultCode)        BooleanFlagOn(FaultCode, 0x00000002)
+// 0x00000004: user-mode access.
+// 0x00000008: reserved bit violation.
+#define MI_IS_INSTRUCTION_FETCH(FaultCode)   BooleanFlagOn(FaultCode, 0x00000010)
+// 0x00000020: protection-key violation.
+// 0x00000040: shadow-stack access.
+// Bits 7-14: reserved.
+// 0x00008000: violation of SGX-specific access-control requirements.
+// Bits 16-31: reserved.
 
 /* On x86, these two are the same */
 #define MI_WRITE_VALID_PPE MI_WRITE_VALID_PTE
 
 /*  Translating virtual addresses to physical addresses
-        (See: "Intel® 64 and IA-32 Architectures Software Developer’s Manual
+        (See: "IntelÂ® 64 and IA-32 Architectures Software Developerâ€™s Manual
               Volume 3A: System Programming Guide, Part 1, CHAPTER 4 PAGING")
     Page directory (PD) and Page table (PT) definitions
     Page directory entry (PDE) and Page table entry (PTE) definitions
@@ -192,7 +198,7 @@ C_ASSERT(PD_COUNT == 1);
 
 /* Check P*E boundaries */
 #define MiIsPteOnPdeBoundary(PointerPte) \
-    ((((ULONG_PTR)PointerPte) & (PAGE_SIZE - 1)) == 0)
+    ((((ULONG_PTR)(PointerPte)) & (PAGE_SIZE - 1)) == 0)
 
 //
 // Decodes a Prototype PTE into the underlying PTE

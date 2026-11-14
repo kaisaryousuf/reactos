@@ -1,11 +1,10 @@
 /*
  * PROJECT:     ReactOS system libraries
- * LICENSE:     GPL - See COPYING in the top level directory
- * FILE:        dll/shellext/stobject/csystray.h
+ * LICENSE:     GPL-2.0-or-later (https://spdx.org/licenses/GPL-2.0-or-later)
  * PURPOSE:     Systray shell service object
- * PROGRAMMERS: Robert Naumann
- *              David Quintana <gigaherz@gmail.com>
- *              Shriraj Sawant a.k.a SR13 <sr.official@hotmail.com>
+ * COPYRIGHT:   Copyright 2014 Robert Naumann <gonzomdx@gmail.com>
+ *              Copyright 2014-2015 David Quintana <gigaherz@gmail.com>
+ *              Copyright 2017 Shriraj Sawant a.k.a SR13 <sr.official@hotmail.com>
  */
 
 #pragma once
@@ -29,7 +28,8 @@ class CSysTray :
     // TODO: keep icon handlers here
 
     DWORD dwServicesEnabled;
-    HWND hwndSysTray;
+    UINT wm_SHELLHOOK;
+    UINT wm_DESTROYWINDOW;
 
     static DWORD WINAPI s_SysTrayThreadProc(PVOID param);
     HRESULT SysTrayMessageLoop();
@@ -54,6 +54,10 @@ public:
 
     VOID EnableService(DWORD dwServiceFlag, BOOL bEnable);
     BOOL IsServiceEnabled(DWORD dwServiceFlag);
+    void ConfigurePollTimer();
+
+    static void RunDll(PCSTR Dll, PCSTR Parameters);
+    static void RunAccessCpl(PCSTR Parameters);
 
 protected:
     BOOL ProcessWindowMessage(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam, LRESULT &lResult, DWORD dwMsgMapID = 0);

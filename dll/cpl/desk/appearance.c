@@ -119,11 +119,11 @@ AppearancePage_OnInit(HWND hwndDlg)
     {
         BOOL bLoadedTheme = FALSE;
 
-        if (g_GlobalData.pwszAction && 
-            g_GlobalData.pwszFile && 
+        if (g_GlobalData.pwszAction &&
+            g_GlobalData.pwszFile &&
             wcscmp(g_GlobalData.pwszAction, L"OpenMSTheme") == 0)
         {
-            bLoadedTheme = FindOrAppendTheme(g->pThemes, 
+            bLoadedTheme = FindOrAppendTheme(g->pThemes,
                                              g_GlobalData.pwszFile,
                                              NULL,
                                              NULL,
@@ -242,6 +242,8 @@ AppearancePageProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
                         PropSheet_Changed(GetParent(hwndDlg), hwndDlg);
                         g->Scheme = g->SchemeAdv;
                         g->bSchemeChanged = TRUE;
+
+                        AppearancePage_UpdateThemePreview(hwndDlg, g);
                     }
                     break;
 

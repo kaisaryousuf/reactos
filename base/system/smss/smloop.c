@@ -17,19 +17,18 @@
 
 typedef struct _SMP_CLIENT_CONTEXT
 {
-    PVOID Subsystem;
+    PSMP_SUBSYSTEM Subsystem;
     HANDLE ProcessHandle;
     HANDLE PortHandle;
-    ULONG dword10;
+    PVOID Reserved;
 } SMP_CLIENT_CONTEXT, *PSMP_CLIENT_CONTEXT;
 
 typedef
 NTSTATUS
 (NTAPI *PSM_API_HANDLER)(
-     IN PSM_API_MSG SmApiMsg,
-     IN PSMP_CLIENT_CONTEXT ClientContext,
-     IN HANDLE SmApiPort
-);
+    _In_ PSM_API_MSG SmApiMsg,
+    _In_ PSMP_CLIENT_CONTEXT ClientContext,
+    _In_ HANDLE SmApiPort);
 
 volatile LONG SmTotalApiThreads;
 HANDLE SmUniqueProcessId;
@@ -139,12 +138,65 @@ SmpExecPgm(IN PSM_API_MSG SmApiMsg,
 
 NTSTATUS
 NTAPI
-SmpLoadDeferedSubsystem(IN PSM_API_MSG SmApiMsg,
-                        IN PSMP_CLIENT_CONTEXT ClientContext,
-                        IN HANDLE SmApiPort)
+SmpLoadDeferedSubsystem(
+    _In_ PSM_API_MSG SmApiMsg,
+    _In_ PSMP_CLIENT_CONTEXT ClientContext,
+    _In_ HANDLE SmApiPort)
 {
-    DPRINT1("%s is not yet implemented\n", __FUNCTION__);
-    return STATUS_NOT_IMPLEMENTED;
+    NTSTATUS Status = STATUS_OBJECT_NAME_NOT_FOUND;
+    PSM_LOAD_DEFERED_SUBSYSTEM_MSG SmLoadDefered = &SmApiMsg->u.LoadDefered;
+    UNICODE_STRING DeferedSubsystem;
+    ULONG MuSessionId;
+    PLIST_ENTRY NextEntry;
+    PSMP_REGISTRY_VALUE RegEntry;
+
+    /* Validate DeferedSubsystem's length */
+    if ((SmLoadDefered->Length <= 0) ||
+        (SmLoadDefered->Length > sizeof(SmLoadDefered->Buffer)))
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    /* Get the name of the subsystem to start */
+    DeferedSubsystem.Length = (USHORT)SmLoadDefered->Length;
+    DeferedSubsystem.MaximumLength = DeferedSubsystem.Length;
+    DeferedSubsystem.Buffer = SmLoadDefered->Buffer;
+
+    /* Find a subsystem responsible for this session */
+    SmpGetProcessMuSessionId(ClientContext->ProcessHandle, &MuSessionId);
+    if (!SmpCheckDuplicateMuSessionId(MuSessionId))
+    {
+        DPRINT1("SMSS: Deferred subsystem load (%wZ) for MuSessionId %u, status=0x%x\n",
+                &DeferedSubsystem, MuSessionId, Status);
+        return Status;
+    }
+
+    /* Now process the deferred subsystems list */
+    for (NextEntry = SmpSubSystemsToDefer.Flink;
+         NextEntry != &SmpSubSystemsToDefer;
+         NextEntry = NextEntry->Flink)
+    {
+        /* Get each entry and check if it's the subsystem we are looking for */
+        RegEntry = CONTAINING_RECORD(NextEntry, SMP_REGISTRY_VALUE, Entry);
+        if (RtlEqualUnicodeString(&RegEntry->Name, &DeferedSubsystem, TRUE))
+        {
+            // TODO: One may want to extra-flag the command for
+            // specific POSIX or OS2 processing...
+
+            /* Load the deferred subsystem */
+            Status = SmpExecuteCommand(&RegEntry->Value,
+                                       MuSessionId,
+                                       NULL,
+                                       SMP_SUBSYSTEM_FLAG);
+            if (!NT_SUCCESS(Status))
+                DPRINT1("SMSS: Subsystem execute failed (%wZ)\n", &RegEntry->Value);
+
+            break;
+        }
+    }
+
+    /* Return status */
+    return Status;
 }
 
 NTSTATUS
@@ -153,8 +205,44 @@ SmpStartCsr(IN PSM_API_MSG SmApiMsg,
             IN PSMP_CLIENT_CONTEXT ClientContext,
             IN HANDLE SmApiPort)
 {
-    DPRINT1("%s is not yet implemented\n", __FUNCTION__);
-    return STATUS_NOT_IMPLEMENTED;
+    PSM_START_CSR_MSG SmStartCsr = &SmApiMsg->u.StartCsr;
+    UNICODE_STRING InitialCommand;
+    HANDLE InitialCommandProcess, InitialCommandProcessId, WindowsSubSysProcessId;
+    NTSTATUS Status;
+
+    Status = SmpLoadSubSystemsForMuSession(&SmStartCsr->MuSessionId,
+                                           &WindowsSubSysProcessId,
+                                           &InitialCommand);
+    if (!NT_SUCCESS(Status))
+    {
+        DPRINT1("SMSS: SmpLoadSubSystemsForMuSession failed with status 0x%08x\n", Status);
+        return Status;
+    }
+
+    if (SmStartCsr->Length)
+    {
+        InitialCommand.Length = InitialCommand.MaximumLength = SmStartCsr->Length;
+        InitialCommand.Buffer = SmStartCsr->Buffer;
+    }
+
+    Status = SmpExecuteInitialCommand(SmStartCsr->MuSessionId,
+                                      &InitialCommand,
+                                      &InitialCommandProcess,
+                                      &InitialCommandProcessId);
+    if (!NT_SUCCESS(Status))
+    {
+        DPRINT1("SMSS: SmpExecuteInitialCommand failed with status 0x%08x\n", Status);
+        /* FIXME: undo effects of SmpLoadSubSystemsForMuSession */
+        ASSERT(FALSE);
+        return Status;
+    }
+
+    NtClose(InitialCommandProcess);
+
+    SmStartCsr->WindowsSubSysProcessId = WindowsSubSysProcessId;
+    SmStartCsr->SmpInitialCommandProcessId = InitialCommandProcessId;
+
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS
@@ -167,7 +255,7 @@ SmpStopCsr(IN PSM_API_MSG SmApiMsg,
     return STATUS_NOT_IMPLEMENTED;
 }
 
-PSM_API_HANDLER SmpApiDispatch[SmpMaxApiNumber - SmpCreateForeignSessionApi] =
+const PSM_API_HANDLER SmpApiDispatch[SmpMaxApiNumber - SmpCreateForeignSessionApi] =
 {
     SmpCreateForeignSession,
     SmpSessionComplete,
@@ -177,6 +265,20 @@ PSM_API_HANDLER SmpApiDispatch[SmpMaxApiNumber - SmpCreateForeignSessionApi] =
     SmpStartCsr,
     SmpStopCsr
 };
+
+#if DBG
+const PCSTR SmpApiName[SmpMaxApiNumber - SmpCreateForeignSessionApi + 1] =
+{
+    "SmCreateForeignSession",
+    "SmSessionComplete",
+    "SmTerminateForeignSession",
+    "SmExecPgm",
+    "SmLoadDeferedSubsystem",
+    "SmStartCsr",
+    "SmStopCsr",
+    "Unknown Sm Api Number"
+};
+#endif
 
 /* FUNCTIONS ******************************************************************/
 
@@ -189,7 +291,7 @@ SmpHandleConnectionRequest(IN HANDLE SmApiPort,
     HANDLE PortHandle, ProcessHandle;
     ULONG SessionId;
     UNICODE_STRING SubsystemPort;
-    SMP_CLIENT_CONTEXT *ClientContext;
+    PSMP_CLIENT_CONTEXT ClientContext;
     NTSTATUS Status;
     OBJECT_ATTRIBUTES ObjectAttributes;
     REMOTE_PORT_VIEW PortView;
@@ -255,13 +357,13 @@ SmpHandleConnectionRequest(IN HANDLE SmApiPort,
         {
             ClientContext->ProcessHandle = ProcessHandle;
             ClientContext->Subsystem = CidSubsystem;
-            ClientContext->dword10 = 0;
+            ClientContext->Reserved = NULL;
             ClientContext->PortHandle = NULL;
         }
         else
         {
             /* Failed to allocate a client context, so reject the connection */
-            DPRINT1("Rejecting connectiond due to lack of memory\n");
+            DPRINT1("Rejecting connection due to lack of memory\n");
             Accept = FALSE;
         }
     }
@@ -332,7 +434,8 @@ SmpHandleConnectionRequest(IN HANDLE SmApiPort,
 
 ULONG
 NTAPI
-SmpApiLoop(IN PVOID Parameter)
+SmpApiLoop(
+    _In_ PVOID Parameter)
 {
     HANDLE SmApiPort = (HANDLE)Parameter;
     NTSTATUS Status;
@@ -393,11 +496,19 @@ SmpApiLoop(IN PVOID Parameter)
 
             /* An actual API message */
             default:
+            {
                 if (!ClientContext)
                 {
                     ReplyMsg = NULL;
                     break;
                 }
+
+#if DBG
+                DPRINT("SMSS: %s Api Request received from %lx.%lx\n",
+                       SmpApiName[min(RequestMsg.ApiNumber, SmpMaxApiNumber)],
+                       RequestMsg.h.ClientId.UniqueProcess,
+                       RequestMsg.h.ClientId.UniqueThread);
+#endif
 
                 RequestMsg.ReturnValue = STATUS_PENDING;
 
@@ -405,29 +516,41 @@ SmpApiLoop(IN PVOID Parameter)
                 if (RequestMsg.ApiNumber >= SmpMaxApiNumber)
                 {
                     /* It isn't, fail */
-                    DPRINT1("Invalid API: %lx\n", RequestMsg.ApiNumber);
+                    DPRINT1("SMSS: Invalid Sm Api Number %lx\n", RequestMsg.ApiNumber);
                     Status = STATUS_NOT_IMPLEMENTED;
                 }
                 else if ((RequestMsg.ApiNumber <= SmpTerminateForeignSessionApi) &&
                          !(ClientContext->Subsystem))
                 {
                     /* It's valid, but doesn't have a subsystem with it */
-                    DPRINT1("Invalid session API\n");
+                    DPRINT1("SMSS: Invalid session API\n");
                     Status = STATUS_INVALID_PARAMETER;
                 }
                 else
                 {
                     /* It's totally okay, so call the dispatcher for it */
-                    Status = SmpApiDispatch[RequestMsg.ApiNumber](&RequestMsg,
-                                                                  ClientContext,
-                                                                  SmApiPort);
+                    _SEH2_TRY
+                    {
+                        Status = SmpApiDispatch[RequestMsg.ApiNumber](&RequestMsg,
+                                                                      ClientContext,
+                                                                      SmApiPort);
+                    }
+                    _SEH2_EXCEPT(SmpUnhandledExceptionFilter(_SEH2_GetExceptionInformation()))
+                    {
+                        ReplyMsg = NULL;
+                        _SEH2_YIELD(break);
+                    }
+                    _SEH2_END;
                 }
 
                 /* Write the result value and return the message back */
                 RequestMsg.ReturnValue = Status;
                 ReplyMsg = &RequestMsg;
                 break;
+            }
         }
     }
-    return STATUS_SUCCESS;
+
+    UNREACHABLE;
+    return STATUS_UNSUCCESSFUL;
 }

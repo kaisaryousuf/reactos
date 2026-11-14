@@ -81,6 +81,14 @@ extern "C" {
 #define RTL_RANGE_LIST_ADD_IF_CONFLICT                      0x00000001
 #define RTL_RANGE_LIST_ADD_SHARED                           0x00000002
 
+//
+// Flags for RtlIsRangeAvailable
+//
+// Both are viewable through PCI.sys's behaviors on ROM space and Shared IRQs.
+//
+#define RTL_RANGE_LIST_SHARED_OK                           0x00000001
+#define RTL_RANGE_LIST_NULL_CONFLICT_OK                    0x00000002
+
 #define RTL_RANGE_SHARED                                    0x01
 #define RTL_RANGE_CONFLICT                                  0x02
 
@@ -196,6 +204,8 @@ C_ASSERT(HEAP_CREATE_VALID_MASK == 0x0007F0FF);
 #define IMAGE_FILE_MACHINE_NATIVE IMAGE_FILE_MACHINE_ARM
 #elif defined(_M_AMD64)
 #define IMAGE_FILE_MACHINE_NATIVE IMAGE_FILE_MACHINE_AMD64
+#elif defined(_M_ARM64)
+#define IMAGE_FILE_MACHINE_NATIVE IMAGE_FILE_MACHINE_ARM64
 #else
 #error Define these please!
 #endif
@@ -342,13 +352,7 @@ C_ASSERT(HEAP_CREATE_VALID_MASK == 0x0007F0FF);
 #define RTL_INIT_OBJECT_ATTRIBUTES(n, a)                        \
     RTL_CONSTANT_OBJECT_ATTRIBUTES(n, a)
 
-#else /* NTOS_MODE_USER */
-//
-// Message Resource Flag
-//
-#define MESSAGE_RESOURCE_UNICODE                            0x0001
-
-#endif /* !NTOS_MODE_USER */
+#endif /* NTOS_MODE_USER */
 
 //
 // RtlImageNtHeaderEx Flags
@@ -437,6 +441,9 @@ typedef enum _RTL_BSD_ITEM_TYPE
     RtlBsdItemErrorInfo,
     RtlBsdItemPowerButtonPressInfo,
     RtlBsdItemChecksum,
+    RtlBsdPowerTransitionExtension,
+    RtlBsdItemFeatureConfigurationState,
+    RtlBsdItemRevocationListInfo,
     RtlBsdItemMax
 } RTL_BSD_ITEM_TYPE, *PRTL_BSD_ITEM_TYPE;
 
@@ -544,7 +551,7 @@ extern const PRTL_REALLOCATE_STRING_ROUTINE RtlReallocateStringRoutine;
 // Unhandled Exception Filter
 //
 typedef ULONG
-(NTAPI *RTLP_UNHANDLED_EXCEPTION_FILTER)(
+(NTAPI RTLP_UNHANDLED_EXCEPTION_FILTER)(
     _In_ struct _EXCEPTION_POINTERS *ExceptionInfo
 );
 typedef RTLP_UNHANDLED_EXCEPTION_FILTER *PRTLP_UNHANDLED_EXCEPTION_FILTER;
@@ -1192,9 +1199,9 @@ typedef struct _RTL_DEBUG_INFORMATION
     HANDLE TargetProcessId;
     HANDLE TargetThreadHandle;
     ULONG Flags;
-    ULONG OffsetFree;
-    ULONG CommitSize;
-    ULONG ViewSize;
+    ULONG_PTR OffsetFree;
+    SIZE_T CommitSize;
+    SIZE_T ViewSize;
     union
     {
         PRTL_PROCESS_MODULES Modules;
@@ -1324,27 +1331,44 @@ typedef struct _RTL_BSD_POWER_BUTTON_PRESS_INFO
     ULONG TransitionLatestCheckpointSequenceNumber;
 } RTL_BSD_POWER_BUTTON_PRESS_INFO, *PRTL_BSD_POWER_BUTTON_PRESS_INFO;
 
+typedef struct _RTL_BSD_DATA_POWER_TRANSITION_EXTENSION
+{
+    UCHAR SystemIdleTransition : 1;
+    UCHAR FanError : 1;
+    UCHAR ThermalShutdown : 1;
+    UCHAR Reserved : 5;
+} RTL_BSD_DATA_POWER_TRANSITION_EXTENSION, *PRTL_BSD_DATA_POWER_TRANSITION_EXTENSION;
+
+typedef struct _RTL_BSD_ITEM_REVOCATION_LIST
+{
+    /* FIXME: We currently have no idea of what fields does this structure have yet */
+    PVOID Dummy;
+} RTL_BSD_ITEM_REVOCATION_LIST, *PRTL_BSD_ITEM_REVOCATION_LIST;
+
 //
 // Main Structure for "bootstat.dat" RTL Data File
 //
 typedef struct _RTL_BSD_DATA
 {
-    ULONG Version;                                          // RtlBsdItemVersionNumber
-    ULONG ProductType;                                      // RtlBsdItemProductType
-    BOOLEAN AabEnabled;                                     // RtlBsdItemAabEnabled
-    UCHAR AabTimeout;                                       // RtlBsdItemAabTimeout
-    BOOLEAN LastBootSucceeded;                              // RtlBsdItemBootGood
-    BOOLEAN LastBootShutdown;                               // RtlBsdItemBootShutdown
-    BOOLEAN SleepInProgress;                                // RtlBsdSleepInProgress
-    RTL_BSD_DATA_POWER_TRANSITION PowerTransition;          // RtlBsdPowerTransition
-    UCHAR BootAttemptCount;                                 // RtlBsdItemBootAttemptCount
-    UCHAR LastBootCheckpoint;                               // RtlBsdItemBootCheckpoint
-    UCHAR Checksum;                                         // RtlBsdItemChecksum
-    ULONG LastBootId;                                       // RtlBsdItemBootId
-    ULONG LastSuccessfulShutdownBootId;                     // RtlBsdItemShutdownBootId
-    ULONG LastReportedAbnormalShutdownBootId;               // RtlBsdItemReportedAbnormalShutdownBootId
-    RTL_BSD_DATA_ERROR_INFO ErrorInfo;                      // RtlBsdItemErrorInfo
-    RTL_BSD_POWER_BUTTON_PRESS_INFO PowerButtonPressInfo;   // RtlBsdItemPowerButtonPressInfo
+    ULONG Version;                                                     // RtlBsdItemVersionNumber
+    ULONG ProductType;                                                 // RtlBsdItemProductType
+    BOOLEAN AabEnabled;                                                // RtlBsdItemAabEnabled
+    UCHAR AabTimeout;                                                  // RtlBsdItemAabTimeout
+    BOOLEAN LastBootSucceeded;                                         // RtlBsdItemBootGood
+    BOOLEAN LastBootShutdown;                                          // RtlBsdItemBootShutdown
+    BOOLEAN SleepInProgress;                                           // RtlBsdSleepInProgress
+    RTL_BSD_DATA_POWER_TRANSITION PowerTransition;                     // RtlBsdPowerTransition
+    UCHAR BootAttemptCount;                                            // RtlBsdItemBootAttemptCount
+    UCHAR LastBootCheckpoint;                                          // RtlBsdItemBootCheckpoint
+    UCHAR Checksum;                                                    // RtlBsdItemChecksum
+    ULONG LastBootId;                                                  // RtlBsdItemBootId
+    ULONG LastSuccessfulShutdownBootId;                                // RtlBsdItemShutdownBootId
+    ULONG LastReportedAbnormalShutdownBootId;                          // RtlBsdItemReportedAbnormalShutdownBootId
+    ULONG ItemFeatureConfigState;                                      // RtlBsdItemFeatureConfigurationState
+    RTL_BSD_DATA_ERROR_INFO ErrorInfo;                                 // RtlBsdItemErrorInfo
+    RTL_BSD_POWER_BUTTON_PRESS_INFO PowerButtonPressInfo;              // RtlBsdItemPowerButtonPressInfo
+    RTL_BSD_DATA_POWER_TRANSITION_EXTENSION PowerTransitionExtension;  // RtlBsdPowerTransitionExtension
+    RTL_BSD_ITEM_REVOCATION_LIST ItemRevocationList;                   // RtlBsdItemRevocationListInfo
 } RTL_BSD_DATA, *PRTL_BSD_DATA;
 
 #ifdef NTOS_MODE_USER
@@ -1395,6 +1419,15 @@ typedef struct _RTL_PERTHREAD_CURDIR
     PVOID Environment;
 } RTL_PERTHREAD_CURDIR, *PRTL_PERTHREAD_CURDIR;
 
+typedef struct _RTL_ACE_DATA
+{
+    UCHAR AceType;
+    UCHAR InheritFlags;
+    UCHAR AceFlags;
+    ACCESS_MASK Mask;
+    PSID *Sid;
+} RTL_ACE_DATA, *PRTL_ACE_DATA;
+
 //
 // Private State structure for RtlAcquirePrivilege/RtlReleasePrivilege
 //
@@ -1421,8 +1454,24 @@ typedef struct _RTL_CRITICAL_SECTION_DEBUG
     LIST_ENTRY ProcessLocksList;
     ULONG EntryCount;
     ULONG ContentionCount;
-    ULONG Spare[2];
+    union
+    {
+        ULONG_PTR WineDebugString;
+        ULONG_PTR Spare[1];
+        struct
+        {
+            ULONG Flags;
+            USHORT CreatorBackTraceIndexHigh;
+            USHORT SpareWORD;
+        };
+    };
 } RTL_CRITICAL_SECTION_DEBUG, *PRTL_CRITICAL_SECTION_DEBUG, RTL_RESOURCE_DEBUG, *PRTL_RESOURCE_DEBUG;
+
+#ifdef _WIN64
+C_ASSERT(sizeof(RTL_CRITICAL_SECTION_DEBUG) == 0x30);
+#else
+C_ASSERT(sizeof(RTL_CRITICAL_SECTION_DEBUG) == 0x20);
+#endif
 
 typedef struct _RTL_CRITICAL_SECTION
 {
@@ -1554,7 +1603,7 @@ typedef struct _RTL_USER_PROCESS_PARAMETERS
     UNICODE_STRING ShellInfo;
     UNICODE_STRING RuntimeData;
     RTL_DRIVE_LETTER_CURDIR CurrentDirectories[RTL_MAX_DRIVE_LETTERS];
-#if (NTDDI_VERSION >= NTDDI_LONGHORN)
+#if (NTDDI_VERSION >= NTDDI_LONGHORN) || defined(__REACTOS__)
     SIZE_T EnvironmentSize;
 #endif
 #if (NTDDI_VERSION >= NTDDI_WIN7)
@@ -1767,7 +1816,7 @@ typedef struct _STACK_TRACE_DATABASE
         PVOID Lock;
 
         /* Padding for ERESOURCE */
-#if defined(_M_AMD64)
+#ifdef _WIN64
         UCHAR Padding[0x68];
 #else
         UCHAR Padding[56];
@@ -1793,7 +1842,7 @@ typedef struct _STACK_TRACE_DATABASE
 
 // Validate that our padding is big enough:
 #ifndef NTOS_MODE_USER
-#if defined(_M_AMD64)
+#ifdef _WIN64
 C_ASSERT(sizeof(ERESOURCE) <= 0x68);
 #else
 C_ASSERT(sizeof(ERESOURCE) <= 56);
@@ -1885,6 +1934,23 @@ typedef struct _RTL_UNICODE_STRING_BUFFER
 
 #ifndef NTOS_MODE_USER
 
+#ifndef MAKEINTRESOURCE
+#define MAKEINTRESOURCE(i)  ((ULONG_PTR)(USHORT)(i))
+#endif
+
+/* Predefined Resource Types */
+#ifndef RT_STRING
+#define RT_STRING       MAKEINTRESOURCE(6)
+#endif
+#ifndef RT_MESSAGETABLE
+#define RT_MESSAGETABLE MAKEINTRESOURCE(11)
+#endif
+
+//
+// Message Resource Flag
+//
+#define MESSAGE_RESOURCE_UNICODE    0x0001
+
 //
 // Message Resource Entry, Block and Data
 //
@@ -1907,6 +1973,90 @@ typedef struct _MESSAGE_RESOURCE_DATA
     ULONG NumberOfBlocks;
     MESSAGE_RESOURCE_BLOCK Blocks[ANYSIZE_ARRAY];
 } MESSAGE_RESOURCE_DATA, *PMESSAGE_RESOURCE_DATA;
+
+#ifdef _M_AMD64
+
+typedef struct _KNONVOLATILE_CONTEXT_POINTERS {
+    union {
+        PM128A FloatingContext[16];
+        struct {
+            PM128A Xmm0;
+            PM128A Xmm1;
+            PM128A Xmm2;
+            PM128A Xmm3;
+            PM128A Xmm4;
+            PM128A Xmm5;
+            PM128A Xmm6;
+            PM128A Xmm7;
+            PM128A Xmm8;
+            PM128A Xmm9;
+            PM128A Xmm10;
+            PM128A Xmm11;
+            PM128A Xmm12;
+            PM128A Xmm13;
+            PM128A Xmm14;
+            PM128A Xmm15;
+        } DUMMYSTRUCTNAME;
+    } DUMMYUNIONNAME;
+
+    union {
+        PULONG64 IntegerContext[16];
+        struct {
+            PULONG64 Rax;
+            PULONG64 Rcx;
+            PULONG64 Rdx;
+            PULONG64 Rbx;
+            PULONG64 Rsp;
+            PULONG64 Rbp;
+            PULONG64 Rsi;
+            PULONG64 Rdi;
+            PULONG64 R8;
+            PULONG64 R9;
+            PULONG64 R10;
+            PULONG64 R11;
+            PULONG64 R12;
+            PULONG64 R13;
+            PULONG64 R14;
+            PULONG64 R15;
+        } DUMMYSTRUCTNAME;
+    } DUMMYUNIONNAME2;
+} KNONVOLATILE_CONTEXT_POINTERS, *PKNONVOLATILE_CONTEXT_POINTERS;
+
+#define UNW_FLAG_NHANDLER 0x0
+#define UNW_FLAG_EHANDLER 0x1
+#define UNW_FLAG_UHANDLER 0x2
+#define UNW_FLAG_CHAININFO 0x4
+#define UNW_FLAG_NO_EPILOGUE  0x80000000UL
+
+#define RUNTIME_FUNCTION_INDIRECT 0x1
+
+typedef struct _RUNTIME_FUNCTION {
+    ULONG BeginAddress;
+    ULONG EndAddress;
+    ULONG UnwindData;
+} RUNTIME_FUNCTION, *PRUNTIME_FUNCTION;
+
+#define UNWIND_HISTORY_TABLE_SIZE 12
+
+typedef struct _UNWIND_HISTORY_TABLE_ENTRY
+{
+    ULONG64 ImageBase;
+    PRUNTIME_FUNCTION FunctionEntry;
+} UNWIND_HISTORY_TABLE_ENTRY, *PUNWIND_HISTORY_TABLE_ENTRY;
+
+typedef struct _UNWIND_HISTORY_TABLE
+{
+    ULONG Count;
+    UCHAR  LocalHint;
+    UCHAR  GlobalHint;
+    UCHAR  Search;
+    UCHAR  Once;
+    ULONG64 LowAddress;
+    ULONG64 HighAddress;
+    UNWIND_HISTORY_TABLE_ENTRY Entry[UNWIND_HISTORY_TABLE_SIZE];
+} UNWIND_HISTORY_TABLE, *PUNWIND_HISTORY_TABLE;
+
+#endif /* _M_AMD64 */
 
 #endif /* !NTOS_MODE_USER */
 

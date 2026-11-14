@@ -22,14 +22,24 @@ extern "C" {
 #define LOCALE_RETURN_NUMBER	0x20000000
 #endif
 #define LOCALE_RETURN_GENITIVE_NAMES  0x10000000
+#define LOCALE_ALLOW_NEUTRAL_NAMES    0x08000000
+#define LOCALE_SLOCALIZEDDISPLAYNAME  0x00000002
+#if (WINVER >= _WIN32_WINNT_VISTA)
+#define LOCALE_SLOCALIZEDLANGUAGENAME 0x0000006f
+#endif
 #define LOCALE_ILANGUAGE	1
 #define LOCALE_SLANGUAGE	2
 #define LOCALE_SENGLANGUAGE	0x1001
+#define LOCALE_SENGLISHLANGUAGENAME 0x1001
+#define LOCALE_SNATIVELANGUAGENAME 0x00000004
+#define LOCALE_SLOCALIZEDCOUNTRYNAME 0x00000006
+#define LOCALE_SNATIVECOUNTRYNAME 0x00000008
 #define LOCALE_SABBREVLANGNAME	3
 #define LOCALE_SNATIVELANGNAME	4
 #define LOCALE_ICOUNTRY	5
 #define LOCALE_SCOUNTRY	6
 #define LOCALE_SENGCOUNTRY	0x1002
+#define LOCALE_SENGLISHCOUNTRYNAME  0x1002
 #define LOCALE_SABBREVCTRYNAME	7
 #define LOCALE_SNATIVECTRYNAME	8
 #define LOCALE_IDEFAULTLANGUAGE	9
@@ -116,42 +126,46 @@ extern "C" {
 #define LOCALE_SABBREVMONTHNAME13	0x100F
 #define LOCALE_SPOSITIVESIGN	80
 #define LOCALE_SNEGATIVESIGN	81
-#define LOCALE_SSCRIPTS         108 // FIXME
-#define LOCALE_IPOSSIGNPOSN	82
-#define LOCALE_INEGSIGNPOSN	83
-#define LOCALE_IPOSSYMPRECEDES	84
-#define LOCALE_IPOSSEPBYSPACE	85
-#define LOCALE_INEGSYMPRECEDES	86
-#define LOCALE_INEGSEPBYSPACE	87
-#define LOCALE_FONTSIGNATURE    88
-#define LOCALE_SISO639LANGNAME  89
-#define LOCALE_SISO3166CTRYNAME 90
-#define LOCALE_SNAME            92 // FIXME
+#define LOCALE_IPOSSIGNPOSN         82
+#define LOCALE_INEGSIGNPOSN         83
+#define LOCALE_IPOSSYMPRECEDES      84
+#define LOCALE_IPOSSEPBYSPACE       85
+#define LOCALE_INEGSYMPRECEDES      86
+#define LOCALE_INEGSEPBYSPACE       87
+#define LOCALE_FONTSIGNATURE        88
+#define LOCALE_SISO639LANGNAME      89
+#define LOCALE_SISO3166CTRYNAME     90
 
-#if (WINVER >= 0x0600)
-#define LOCALE_SNAME            92
-#define LOCALE_SDURATION        93
-#define LOCALE_SKEYBOARDSTOINSTALL 94
-#define LOCALE_SSHORTESTDAYNAME1 96
-#define LOCALE_SSHORTESTDAYNAME2 97
-#define LOCALE_SSHORTESTDAYNAME3 98
-#define LOCALE_SSHORTESTDAYNAME4 99
-#define LOCALE_SSHORTESTDAYNAME5 100
-#define LOCALE_SSHORTESTDAYNAME6 101
-#define LOCALE_SSHORTESTDAYNAME7 102
-#define LOCALE_SISO639LANGNAME2  103
-#define LOCALE_SISO3166CTRYNAME2 104
-#define LOCALE_SNAN              105
-#define LOCALE_SPOSINFINITY      106
-#define LOCALE_SNEGINFINITY      107
-#define LOCALE_SSCRIPTS 108
-#define LOCALE_SPARENT  109
+/* FIXME: This value should be in the guarded block below */
+#define LOCALE_SNAME                92
+
+#if (WINVER >= 0x0600) || (defined(__REACTOS__) && defined(_KERNEL32_))
+#define LOCALE_IGEOID               91
+#define LOCALE_SNAME                92
+#define LOCALE_SDURATION            93
+#define LOCALE_SKEYBOARDSTOINSTALL  94
+#define LOCALE_SSHORTESTDAYNAME1    96
+#define LOCALE_SSHORTESTDAYNAME2    97
+#define LOCALE_SSHORTESTDAYNAME3    98
+#define LOCALE_SSHORTESTDAYNAME4    99
+#define LOCALE_SSHORTESTDAYNAME5    100
+#define LOCALE_SSHORTESTDAYNAME6    101
+#define LOCALE_SSHORTESTDAYNAME7    102
+#define LOCALE_SISO639LANGNAME2     103
+#define LOCALE_SISO3166CTRYNAME2    104
+#define LOCALE_SNAN                 105
+#define LOCALE_SPOSINFINITY         106
+#define LOCALE_SNEGINFINITY         107
+#define LOCALE_SSCRIPTS             108
+#define LOCALE_SPARENT              109
 #define LOCALE_SCONSOLEFALLBACKNAME 110
 #endif /* (WINVER >= 0x0600) */
 
 //#if (WINVER >= _WIN32_WINNT_WIN7)
 #define LOCALE_IREADINGLAYOUT       0x0070
 #define LOCALE_INEUTRAL             0x0071
+#define LOCALE_SENGLISHDISPLAYNAME  0x0072
+#define LOCALE_SNATIVEDISPLAYNAME   0x0073
 #define LOCALE_INEGATIVEPERCENT     0x0074
 #define LOCALE_IPOSITIVEPERCENT     0x0075
 #define LOCALE_SPERCENT             0x0076
@@ -161,6 +175,10 @@ extern "C" {
 #define LOCALE_SOPENTYPELANGUAGETAG 0x007a
 #define LOCALE_SSORTLOCALE          0x007b
 //#endif /* (WINVER >= _WIN32_WINNT_WIN7) */
+#define LOCALE_SRELATIVELONGDATE    0x007C // Win8
+#define LOCALE_SSHORTESTAM          0x007E
+#define LOCALE_SSHORTESTPM          0x007F
+
 
 #if (WINVER >= 0x0600)
 #define LOCALE_NAME_USER_DEFAULT    NULL
@@ -175,13 +193,17 @@ extern "C" {
 #define NORM_IGNORENONSPACE	2
 #define NORM_IGNORESYMBOLS	4
 #define NORM_IGNOREWIDTH	131072
-#define LINGUISTIC_IGNORECASE 0x00000010
+#define LINGUISTIC_IGNORECASE      0x00000010
+#define LINGUISTIC_IGNOREDIACRITIC 0x00000020
 #define NORM_LINGUISTIC_CASING 0x08000000
 #define SORT_STRINGSORT	4096
+#define SORT_DIGITSASNUMBERS 0x00000008 // _WIN32_WINNT_WIN7
 #define LCMAP_LOWERCASE 0x00000100
 #define LCMAP_UPPERCASE 0x00000200
+#define LCMAP_TITLECASE 0x00000300
 #define LCMAP_SORTKEY 0x00000400
 #define LCMAP_BYTEREV 0x00000800
+#define LCMAP_HASH 0x00040000
 #define LCMAP_HIRAGANA 0x00100000
 #define LCMAP_KATAKANA 0x00200000
 #define LCMAP_HALFWIDTH 0x00400000
@@ -189,15 +211,24 @@ extern "C" {
 #define LCMAP_LINGUISTIC_CASING 0x01000000
 #define LCMAP_SIMPLIFIED_CHINESE 0x02000000
 #define LCMAP_TRADITIONAL_CHINESE 0x04000000
+#define LCMAP_SORTHANDLE 0x20000000
 #define ENUM_ALL_CALENDARS (-1)
-#define DATE_SHORTDATE 1
-#define DATE_LONGDATE 2
-#define DATE_USE_ALT_CALENDAR 4
+#define DATE_SHORTDATE 0x01
+#define DATE_LONGDATE 0x02
+#define DATE_USE_ALT_CALENDAR 0x04
+#define DATE_AUTOLAYOUT 0x40
+#define DATE_MONTHDAY 0x80
+
 #define CP_INSTALLED 1
 #define CP_SUPPORTED 2
 #define LCID_INSTALLED 1
 #define LCID_SUPPORTED 2
 #define LCID_ALTERNATE_SORTS 4
+
+#define FIND_STARTSWITH 0x00100000
+#define FIND_ENDSWITH   0x00200000
+#define FIND_FROMSTART  0x00400000
+#define FIND_FROMEND    0x00800000
 
 #define LOCALE_ALL                  0x00
 #define LOCALE_WINDOWS              0x01
@@ -437,6 +468,28 @@ extern "C" {
 #define CAL_SABBREVMONTHNAME11 44
 #define CAL_SABBREVMONTHNAME12 45
 #define CAL_SABBREVMONTHNAME13 46
+#if (WINVER >= _WIN32_WINNT_WIN2K)
+#define CAL_SYEARMONTH 47
+#define CAL_ITWODIGITYEARMAX 48
+#endif //(WINVER >= _WIN32_WINNT_WIN2K)
+#if (WINVER >= _WIN32_WINNT_VISTA)
+#define CAL_SSHORTESTDAYNAME1 49
+#define CAL_SSHORTESTDAYNAME2 50
+#define CAL_SSHORTESTDAYNAME3 51
+#define CAL_SSHORTESTDAYNAME4 52
+#define CAL_SSHORTESTDAYNAME5 53
+#define CAL_SSHORTESTDAYNAME6 54
+#define CAL_SSHORTESTDAYNAME7 55
+#endif //(WINVER >= _WIN32_WINNT_VISTA)
+#if (WINVER >= _WIN32_WINNT_WIN7)
+#define CAL_SMONTHDAY 56
+#define CAL_SABBREVERASTRING 57
+#endif //(WINVER >= _WIN32_WINNT_WIN7)
+#if (WINVER >= _WIN32_WINNT_WIN8) || defined(_KERNELBASE_)
+#define CAL_SRELATIVELONGDATE 58
+#define CAL_SENGLISHERANAME 59
+#define CAL_SENGLISHABBREVERANAME 60
+#endif /* WIN8+ or kernelbase Wine build */
 #define CAL_GREGORIAN 1
 #define CAL_GREGORIAN_US 2
 #define CAL_JAPAN 3
@@ -449,6 +502,8 @@ extern "C" {
 #define CAL_GREGORIAN_ARABIC 10
 #define CAL_GREGORIAN_XLIT_ENGLISH 11
 #define CAL_GREGORIAN_XLIT_FRENCH 12
+#define CAL_PERSIAN 22
+#define CAL_UMALQURA 23
 #define CSTR_LESS_THAN 1
 #define CSTR_EQUAL 2
 #define CSTR_GREATER_THAN 3
@@ -484,11 +539,12 @@ extern "C" {
 #define DATE_LTRREADING 16
 #define DATE_RTLREADING 32
 #define MAP_EXPAND_LIGATURES   0x2000
-#define CAL_SYEARMONTH 47
-#define CAL_ITWODIGITYEARMAX 48
 #define CAL_NOUSEROVERRIDE LOCALE_NOUSEROVERRIDE
 #define CAL_RETURN_NUMBER LOCALE_RETURN_NUMBER
+#define CAL_RETURN_GENITIVE_NAMES LOCALE_RETURN_GENITIVE_NAMES
 #define CAL_USE_CP_ACP LOCALE_USE_CP_ACP
+#define CAL_RETURN_GENITIVE_NAMES LOCALE_RETURN_GENITIVE_NAMES
+
 #endif /* (WINVER >= 0x0500) */
 #if WINVER >= 0x0600
 #define IDN_ALLOW_UNASSIGNED 0x1
@@ -501,13 +557,35 @@ typedef long LONG_PTR;
 #endif
 
 #if (WINVER >= 0x0600)
-#define MUI_FULL_LANGUAGE             0x01
-#define MUI_LANGUAGE_ID               0x04
-#define MUI_LANGUAGE_NAME             0x08
-#define MUI_MERGE_SYSTEM_FALLBACK     0x10
-#define MUI_MERGE_USER_FALLBACK       0x20
-#define MUI_UI_FALLBACK               MUI_MERGE_SYSTEM_FALLBACK | MUI_MERGE_USER_FALLBACK
-#define MUI_MACHINE_LANGUAGE_SETTINGS 0x400
+#define MUI_FULL_LANGUAGE                   0x0001
+#define MUI_LANGUAGE_ID                     0x0004
+#define MUI_LANGUAGE_NAME                   0x0008
+#define MUI_MERGE_SYSTEM_FALLBACK           0x0010
+#define MUI_MERGE_USER_FALLBACK             0x0020
+#define MUI_UI_FALLBACK                     MUI_MERGE_SYSTEM_FALLBACK | MUI_MERGE_USER_FALLBACK
+#define MUI_THREAD_LANGUAGES                0x0040
+#define MUI_CONSOLE_FILTER                  0x0100
+#define MUI_COMPLEX_SCRIPT_FILTER           0x0200
+#define MUI_RESET_FILTERS                   0x0001
+#define MUI_USER_PREFERRED_UI_LANGUAGES     0x0010
+#define MUI_USE_INSTALLED_LANGUAGES         0x0020
+#define MUI_USE_SEARCH_ALL_LANGUAGES        0x0040
+#define MUI_LANG_NEUTRAL_PE_FILE            0x0100
+#define MUI_NON_LANG_NEUTRAL_FILE           0x0200
+#define MUI_MACHINE_LANGUAGE_SETTINGS       0x0400
+#define MUI_FILETYPE_NOT_LANGUAGE_NEUTRAL   0x0001
+#define MUI_FILETYPE_LANGUAGE_NEUTRAL_MAIN  0x0002
+#define MUI_FILETYPE_LANGUAGE_NEUTRAL_MUI   0x0004
+#define MUI_QUERY_TYPE                      0x0001
+#define MUI_QUERY_CHECKSUM                  0x0002
+#define MUI_QUERY_LANGUAGE_NAME             0x0004
+#define MUI_QUERY_RESOURCE_TYPES            0x0008
+#define MUI_FILEINFO_VERSION                0x0001
+#define MUI_FULL_LANGUAGE                   0x0001
+#define MUI_PARTIAL_LANGUAGE                0x0002
+#define MUI_LIP_LANGUAGE                    0x0004
+#define MUI_LANGUAGE_INSTALLED              0x0020
+#define MUI_LANGUAGE_LICENSED               0x0040
 #endif /* (WINVER >= 0x0600) */
 
 #ifndef RC_INVOKED
@@ -549,8 +627,9 @@ enum NLS_FUNCTION {
 };
 typedef enum NLS_FUNCTION NLS_FUNCTION;
 enum SYSGEOCLASS {
-	GEOCLASS_NATION = 16,
-	GEOCLASS_REGION = 14
+    GEOCLASS_ALL = 0,
+    GEOCLASS_REGION = 14,
+    GEOCLASS_NATION = 16
 };
 
 /* Geographic Information types */
@@ -571,7 +650,11 @@ enum SYSGEOTYPE
     GEO_PARENT,
     GEO_DIALINGCODE,
     GEO_CURRENCYCODE,
-    GEO_CURRENCYSYMBOL
+    GEO_CURRENCYSYMBOL,
+#if (NTDDI_VERSION >= NTDDI_WIN10_RS3) || defined(_KERNELBASE_)
+    GEO_NAME,
+    GEO_ID
+#endif
 };
 
 typedef struct _cpinfo {
@@ -615,10 +698,14 @@ typedef struct _currencyfmtW {
 	UINT PositiveOrder;
 	LPWSTR lpCurrencySymbol;
 } CURRENCYFMTW,*LPCURRENCYFMTW;
-typedef struct nlsversioninfo {
+typedef struct _nlsversioninfo {
 	DWORD dwNLSVersionInfoSize;
 	DWORD dwNLSVersion;
 	DWORD dwDefinedVersion;
+#if (WINVER >= _WIN32_WINNT_WIN8) || defined(_KERNELBASE_)
+  DWORD dwEffectiveId;
+  GUID  guidCustomVersion;
+#endif
 } NLSVERSIONINFO,*LPNLSVERSIONINFO;
 typedef struct _nlsversioninfoex {
     DWORD dwNLSVersionInfoSize;
@@ -643,7 +730,7 @@ typedef struct _numberfmtW {
 	LPWSTR lpThousandSep;
 	UINT NegativeOrder;
 } NUMBERFMTW,*LPNUMBERFMTW;
-#if (WINVER >= 0x0600)
+#if 1//(WINVER >= 0x0600)
 typedef enum _NORM_FORM {
 	NormalizationOther = 0,
 	NormalizationC = 0x1,
@@ -707,8 +794,47 @@ BOOL WINAPI EnumSystemCodePagesW(_In_ CODEPAGE_ENUMPROCW, _In_ DWORD);
 BOOL WINAPI EnumSystemGeoID(_In_ GEOCLASS, _In_ GEOID, _In_ GEO_ENUMPROC);
 BOOL WINAPI EnumSystemLocalesA(_In_ LOCALE_ENUMPROCA, _In_ DWORD);
 BOOL WINAPI EnumSystemLocalesW(_In_ LOCALE_ENUMPROCW, _In_ DWORD);
+
+typedef BOOL (CALLBACK* LOCALE_ENUMPROCEX)(LPWSTR, DWORD, LPARAM);
+
+WINBASEAPI
+BOOL
+WINAPI
+EnumSystemLocalesEx(
+  _In_ LOCALE_ENUMPROCEX lpLocaleEnumProcEx,
+  _In_ DWORD dwFlags,
+  _In_ LPARAM lParam,
+  _In_opt_ LPVOID lpReserved);
+
 BOOL WINAPI EnumTimeFormatsA(_In_ TIMEFMT_ENUMPROCA, _In_ LCID, _In_ DWORD);
 BOOL WINAPI EnumTimeFormatsW(_In_ TIMEFMT_ENUMPROCW, _In_ LCID, _In_ DWORD);
+
+WINBASEAPI
+int
+WINAPI
+FindNLSString(
+    _In_ LCID Locale,
+    _In_ DWORD dwFindNLSStringFlags,
+    _In_reads_(cchSource) LPCWSTR lpStringSource,
+    _In_ int cchSource,
+    _In_reads_(cchValue) LPCWSTR lpStringValue,
+    _In_ int cchValue,
+    _Out_opt_ LPINT pcchFound);
+
+WINBASEAPI
+int
+WINAPI
+FindNLSStringEx(
+    _In_opt_ LPCWSTR lpLocaleName,
+    _In_ DWORD dwFindNLSStringFlags,
+    _In_reads_(cchSource) LPCWSTR lpStringSource,
+    _In_ int cchSource,
+    _In_reads_(cchValue) LPCWSTR lpStringValue,
+    _In_ int cchValue,
+    _Out_opt_ LPINT pcchFound,
+    _In_opt_ LPNLSVERSIONINFO lpVersionInformation,
+    _In_opt_ LPVOID lpReserved,
+    _In_opt_ LPARAM sortHandle);
 
 int
 WINAPI
@@ -885,10 +1011,18 @@ int WINAPI GetTimeFormatA(LCID,DWORD,const SYSTEMTIME*,LPCSTR,LPSTR,int);
 int WINAPI GetTimeFormatW(LCID,DWORD,const SYSTEMTIME*,LPCWSTR,LPWSTR,int);
 int WINAPI GetTimeFormatEx(LPCWSTR,DWORD,const SYSTEMTIME*,LPCWSTR,LPWSTR,int);
 LANGID WINAPI GetUserDefaultLangID(void);
+
+WINBASEAPI
+int
+WINAPI
+GetUserDefaultLocaleName(
+    _Out_writes_(cchLocaleName) LPWSTR lpLocaleName,
+    _In_ int cchLocaleName);
+
 LCID WINAPI GetUserDefaultLCID(void);
 GEOID WINAPI GetUserGeoID(_In_ GEOCLASS);
 
-#if (WINVER >= 0x0600)
+#if (WINVER >= 0x0600) || defined(__REACTOS__)
 
 int
 WINAPI
@@ -907,6 +1041,22 @@ IdnToUnicode(
   _In_ int cchASCIIChar,
   _Out_writes_opt_(cchUnicodeChar) LPWSTR lpUnicodeCharStr,
   _In_ int cchUnicodeChar);
+
+WINBASEAPI
+int
+WINAPI
+GetSystemDefaultLocaleName(
+  _Out_writes_(cchLocaleName) LPWSTR lpLocaleName,
+  _In_ int cchLocaleName);
+
+WINBASEAPI
+BOOL
+WINAPI
+EnumDateFormatsExEx(
+    _In_ DATEFMT_ENUMPROCEXEX lpDateFmtEnumProcExEx,
+    _In_opt_ LPCWSTR lpLocaleName,
+    _In_ DWORD dwFlags,
+    _In_ LPARAM lParam);
 
 #endif /* WINVER >= 0x0600 */
 
@@ -972,7 +1122,7 @@ LANGID WINAPI GetUserDefaultUILanguage(void);
 BOOL WINAPI IsValidLanguageGroup(_In_ LGRPID, _In_ DWORD);
 #endif /* (WINVER >= 0x0500) */
 
-#if (WINVER >= 0x0600)
+#if 1//(WINVER >= 0x0600) 
 
 _Success_(return != FALSE)
 BOOL
@@ -1003,7 +1153,11 @@ GetLocaleInfoEx(
   _Out_writes_opt_(cchData) LPWSTR lpLCData,
   _In_ int cchData);
 
-BOOL WINAPI IsValidLocaleName(_In_ LPCWSTR lpLocaleName);
+WINBASEAPI
+BOOL
+WINAPI
+IsValidLocaleName(
+  _In_ LPCWSTR lpLocaleName);
 
 BOOL
 WINAPI
@@ -1103,10 +1257,42 @@ GetStringScripts(
 BOOL WINAPI SetProcessPreferredUILanguages(_In_ DWORD, _In_opt_ PCZZWSTR, _Out_opt_ PULONG);
 BOOL WINAPI SetThreadPreferredUILanguages(_In_ DWORD, _In_opt_ PCZZWSTR, _Out_opt_ PULONG);
 BOOL WINAPI VerifyScripts(_In_ DWORD, _In_ LPCWSTR, _In_ int, _In_ LPCWSTR, _In_ int);
-INT  WINAPI LCMapStringEx(_In_ LPCWSTR, _In_ DWORD, _In_ LPCWSTR, _In_ INT, _Out_opt_ LPWSTR, _In_ INT, _In_ LPNLSVERSIONINFO, _In_ LPVOID, _In_ LPARAM);
+
+#if (WINVER >= _WIN32_WINNT_WIN8)
+_When_((dwMapFlags & (LCMAP_SORTKEY | LCMAP_BYTEREV | LCMAP_HASH | LCMAP_SORTHANDLE)) != 0, _At_((LPBYTE) lpDestStr, _Out_writes_bytes_opt_(cchDest)))
+#else
+_When_((dwMapFlags & (LCMAP_SORTKEY | LCMAP_BYTEREV)) != 0, _At_((LPBYTE) lpDestStr, _Out_writes_bytes_opt_(cchDest)))
+#endif
+_When_(cchSrc != -1,  _At_((WCHAR *) lpSrcStr, _Out_writes_opt_(cchSrc)))
+_When_(cchDest != -1, _At_((WCHAR *) lpDestStr, _Out_writes_opt_(cchDest)))
+WINBASEAPI
+int
+WINAPI
+LCMapStringEx(
+    _In_opt_ LPCWSTR lpLocaleName,
+    _In_ DWORD dwMapFlags,
+    _In_reads_(cchSrc) LPCWSTR lpSrcStr,
+    _In_ int cchSrc,
+    _Out_writes_opt_(cchDest) LPWSTR lpDestStr,
+    _In_ int cchDest,
+    _In_opt_ LPNLSVERSIONINFO lpVersionInformation,
+    _In_opt_ LPVOID lpReserved,
+    _In_opt_ LPARAM sortHandle);
+
 LCID WINAPI LocaleNameToLCID(_In_ LPCWSTR, _In_ DWORD);
 
+WINBASEAPI INT WINAPI CompareStringOrdinal(const WCHAR *,INT,const WCHAR *,INT,BOOL);
+
 #endif /* (WINVER >= 0x0600) */
+
+WINBASEAPI
+int
+WINAPI
+LCIDToLocaleName(
+    _In_ LCID Locale,
+    _Out_writes_opt_(cchName) LPWSTR  lpName,
+    _In_ int cchName,
+    _In_ DWORD dwFlags);
 
 #ifdef UNICODE
 #define CALINFO_ENUMPROC CALINFO_ENUMPROCW
@@ -1204,4 +1390,9 @@ typedef LPNUMBERFMTA LPNUMBERFMT;
 #ifdef __cplusplus
 }
 #endif
+
+#ifndef NOAPISET
+#include <stringapiset.h>
+#endif
+
 #endif

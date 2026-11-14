@@ -28,6 +28,19 @@ KSPIN_LOCK HalpSystemHardwareLock;
 
 #ifdef _M_IX86
 
+#ifdef _MINIHAL_
+VOID
+FASTCALL
+KefAcquireSpinLockAtDpcLevel(
+    IN PKSPIN_LOCK SpinLock)
+{
+#if DBG
+    /* To be on par with HAL/NTOSKRNL */
+    *SpinLock = (KSPIN_LOCK)KeGetCurrentThread() | 1;
+#endif
+}
+#endif // _MINIHAL_
+
 /*
  * @implemented
  */
@@ -73,6 +86,7 @@ KfReleaseSpinLock(PKSPIN_LOCK SpinLock,
     KeLowerIrql(OldIrql);
 }
 
+#ifndef _MINIHAL_
 /*
  * @implemented
  */
@@ -180,20 +194,12 @@ FASTCALL
 KeTryToAcquireQueuedSpinLockRaiseToSynch(IN KSPIN_LOCK_QUEUE_NUMBER LockNumber,
                                          IN PKIRQL OldIrql)
 {
-#ifdef CONFIG_SMP
-    ERROR_DBGBREAK("FIXME: Unused\n"); // FIXME: Unused
-    return FALSE;
-#endif
+    PKSPIN_LOCK Lock = KeGetCurrentPrcb()->LockQueue[LockNumber].Lock;
 
-    /* Simply raise to synch */
+    /* KM tests demonstrate that this raises IRQL even if locking fails */
     KeRaiseIrql(SYNCH_LEVEL, OldIrql);
-
-    /* Add an explicit memory barrier to prevent the compiler from reordering
-       memory accesses across the borders of spinlocks */
-    KeMemoryBarrierWithoutFence();
-
-    /* Always return true on UP Machines */
-    return TRUE;
+    /* HACK */
+    return KeTryToAcquireSpinLockAtDpcLevel(Lock);
 }
 
 /*
@@ -204,23 +210,16 @@ FASTCALL
 KeTryToAcquireQueuedSpinLock(IN KSPIN_LOCK_QUEUE_NUMBER LockNumber,
                              OUT PKIRQL OldIrql)
 {
-#ifdef CONFIG_SMP
-    ERROR_DBGBREAK("FIXME: Unused\n"); // FIXME: Unused
-    return FALSE;
-#endif
+    PKSPIN_LOCK Lock = KeGetCurrentPrcb()->LockQueue[LockNumber].Lock;
 
-    /* Simply raise to dispatch */
+    /* KM tests demonstrate that this raises IRQL even if locking fails */
     KeRaiseIrql(DISPATCH_LEVEL, OldIrql);
-
-    /* Add an explicit memory barrier to prevent the compiler from reordering
-       memory accesses across the borders of spinlocks */
-    KeMemoryBarrierWithoutFence();
-
-    /* Always return true on UP Machines */
-    return TRUE;
+    /* HACK */
+    return KeTryToAcquireSpinLockAtDpcLevel(Lock);
 }
+#endif // !_MINIHAL_
 
-#endif
+#endif // _M_IX86
 
 VOID
 NTAPI
@@ -254,4 +253,3 @@ HalpReleaseCmosSpinLock(VOID)
     /* Restore the flags */
     __writeeflags(Flags);
 }
-

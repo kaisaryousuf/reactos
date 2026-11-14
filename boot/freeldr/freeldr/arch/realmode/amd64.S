@@ -29,14 +29,17 @@ Startup:
     mov byte ptr ds:[BSS_BootPartition], dh
 
     /* Setup a real mode stack */
-    mov sp, word ptr ds:[stack16]
+    mov sp, STACK16ADDR
+
+    /* Enable A20 address line */
+    call EnableA20
+
+    /* Relocate FreeLdr if necessary */
+    call RelocateFreeLdr
 
     /* Output first status */
     mov si, offset Msg_Starting
     call writestr
-
-    /* Enable A20 address line */
-    call EnableA20
 
     /* Check the CPU */
     call CheckFor64BitSupport
@@ -48,6 +51,7 @@ Startup:
     call writestr
 
     /* Wait for a keypress */
+    xor ah, ah
     int HEX(16)
     jmp Reboot
 
@@ -58,20 +62,16 @@ Msg_Unsupported:
 Msg_Starting:
     .ascii "Starting FreeLoader...", CR, LF, NUL
 
-Msg_LongModeSupported:
-    .ascii "Long mode support detected.", CR, LF, NUL
+//Msg_LongModeSupported:
+//    .ascii "Long mode support detected.", CR, LF, NUL
 
 .LongModeSupported:
-    /* Output status */
-    mov si, offset Msg_LongModeSupported
-    call writestr
+//    /* Output status */
+//    mov si, offset Msg_LongModeSupported
+//    call writestr
 
     /* Load the GDT */
-#ifdef _USE_ML
-    lgdt fword ptr [gdtptr]
-#else
-    lgdt cs:[gdtptr]
-#endif
+    lgdt lXdtPrefix ds:[gdtptr]
 
     /* Build the startup page tables */
     call BuildPageTables
@@ -98,14 +98,14 @@ Msg_LongModeSupported:
     xor ax, ax
     mov es, ax
 
-    /* Output status */
-    mov si, offset Msg_SwitchToLongMode
-    call writestr
+//    /* Output status */
+//    mov si, offset Msg_SwitchToLongMode
+//    call writestr
 
     jmp ExitToLongMode
 
-Msg_SwitchToLongMode:
-    .ascii "Switching to long mode....", CR, LF, NUL
+//Msg_SwitchToLongMode:
+//    .ascii "Switching to long mode....", CR, LF, NUL
 
 .align 8
 gdt:
@@ -120,11 +120,7 @@ gdt:
 /* GDT table pointer */
 gdtptr:
     .word HEX(37)       /* Limit */
-#ifdef _USE_ML
-    .long offset gdt    /* Base Address */
-#else
-    .long gdt           /* Base Address */
-#endif
+    .long OFF(gdt)      /* Base Address */
 
 
 CheckFor64BitSupport:
@@ -322,9 +318,8 @@ ExitToLongMode:
     mov word ptr ds:[stack16], sp
 
     /* Set PAE and PGE: 10100000b */
-    // mov eax, cr4
-    // or eax, HEX(00A0)
-    mov eax, HEX(00A0)
+    mov eax, cr4
+    or eax, HEX(00A0)
     mov cr4, eax
 
     /* Point cr3 at the PML4 */
@@ -357,9 +352,12 @@ InLongMode:
 LongModeEntryPoint:
     .long 0, 0
 
+    /* Wait for a keypress */
+    xor ah, ah
     int HEX(16)
     jmp Reboot
 
+/* FNID_* functions */
 CallbackTable:
     .word Int386
     .word Reboot
@@ -367,13 +365,15 @@ CallbackTable:
     .word PxeCallApi
     .word PnpBiosGetDeviceNodeCount
     .word PnpBiosGetDeviceNode
+    .word PnpBiosGetDockStationInformation
 
-    /* 16-bit stack pointer */
+    /* 16-bit stack pointer (the code must change it to the current stack pointer later) */
 stack16:
-    .word STACK16ADDR
+    .word 0
 
 
 #include "int386.inc"
+#include "relocator.inc"
 #include "helpers.inc"
 #include "pxe.inc"
 #include "pnp.inc"

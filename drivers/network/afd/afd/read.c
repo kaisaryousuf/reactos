@@ -175,23 +175,16 @@ static NTSTATUS ReceiveActivity( PAFD_FCB FCB, PIRP Irp ) {
                                     TotalBytesCopied));
             UnlockBuffers( RecvReq->BufferArray,
                            RecvReq->BufferCount, FALSE );
-            if (FCB->Overread && FCB->LastReceiveStatus == STATUS_SUCCESS)
-            {
-                /* Overread after a graceful disconnect so complete with an error */
-                Status = STATUS_FILE_CLOSED;
-            }
-            else
-            {
-                /* Unexpected disconnect by the remote host or initial read after a graceful disconnect */
-                Status = FCB->LastReceiveStatus;
-            }
+
+            /* Unexpected disconnect by the remote host or graceful disconnect */
+            Status = FCB->LastReceiveStatus;
+
             NextIrp->IoStatus.Status = Status;
             NextIrp->IoStatus.Information = 0;
             if( NextIrp == Irp ) RetStatus = Status;
             if( NextIrp->MdlAddress ) UnlockRequest( NextIrp, IoGetCurrentIrpStackLocation( NextIrp ) );
             (void)IoSetCancelRoutine(NextIrp, NULL);
             IoCompleteRequest( NextIrp, IO_NETWORK_INCREMENT );
-            FCB->Overread = TRUE;
         }
     } else {
         /* Kick the user that receive would be possible now */
@@ -266,6 +259,37 @@ static NTSTATUS ReceiveActivity( PAFD_FCB FCB, PIRP Irp ) {
     return RetStatus;
 }
 
+NTSTATUS NTAPI
+AcceptExReceiveComplete(PDEVICE_OBJECT DeviceObject, PIRP Irp, PVOID Context)
+{
+    PAFD_FCB FCB = (PAFD_FCB)Context;
+
+    if (!SocketAcquireStateLock(FCB))
+        return STATUS_FILE_CLOSED;
+
+    ASSERT(FCB->ReceiveIrp.InFlightRequest == Irp);
+    ASSERT(FCB->AcceptIrp != NULL);
+    FCB->ReceiveIrp.InFlightRequest = NULL;
+    FCB->SharedData.State = SOCKET_STATE_CONNECTED;
+
+    /* Complete the AcceptEx IRP as the data has been received */
+    MmUnlockPages((PMDL)FCB->AcceptIrp->Tail.Overlay.DriverContext[3]);
+    IoFreeMdl((PMDL)FCB->AcceptIrp->Tail.Overlay.DriverContext[3]);
+    FCB->AcceptIrp->IoStatus.Information = Irp->IoStatus.Information;
+    FCB->AcceptIrp->IoStatus.Status = Irp->IoStatus.Status;
+    if (FCB->AcceptIrp->MdlAddress)
+        UnlockRequest(FCB->AcceptIrp, IoGetCurrentIrpStackLocation(FCB->AcceptIrp));
+    (void)IoSetCancelRoutine(FCB->AcceptIrp, NULL);
+    IoCompleteRequest(FCB->AcceptIrp, IO_NETWORK_INCREMENT);
+    FCB->AcceptIrp = NULL;
+
+    /* Continue receive activity */
+    ReceiveActivity(FCB, NULL);
+
+    SocketStateUnlock(FCB);
+    return STATUS_SUCCESS;
+}
+
 NTSTATUS NTAPI ReceiveComplete
 ( PDEVICE_OBJECT DeviceObject,
   PIRP Irp,
@@ -286,7 +310,7 @@ NTSTATUS NTAPI ReceiveComplete
     ASSERT(FCB->ReceiveIrp.InFlightRequest == Irp);
     FCB->ReceiveIrp.InFlightRequest = NULL;
 
-    if( FCB->State == SOCKET_STATE_CLOSED ) {
+    if( FCB->SharedData.State == SOCKET_STATE_CLOSED ) {
         /* Cleanup our IRP queue because the FCB is being destroyed */
         while( !IsListEmpty( &FCB->PendingIrpList[FUNCTION_RECV] ) ) {
             NextIrpEntry = RemoveHeadList(&FCB->PendingIrpList[FUNCTION_RECV]);
@@ -302,7 +326,7 @@ NTSTATUS NTAPI ReceiveComplete
         }
         SocketStateUnlock( FCB );
         return STATUS_FILE_CLOSED;
-    } else if( FCB->State == SOCKET_STATE_LISTENING ) {
+    } else if( FCB->SharedData.State == SOCKET_STATE_LISTENING ) {
         AFD_DbgPrint(MIN_TRACE,("!!! LISTENER GOT A RECEIVE COMPLETE !!!\n"));
         SocketStateUnlock( FCB );
         return STATUS_INVALID_PARAMETER;
@@ -440,10 +464,10 @@ AfdConnectedSocketReadData(PDEVICE_OBJECT DeviceObject, PIRP Irp,
     FCB->EventSelectDisabled &= ~AFD_EVENT_RECEIVE;
 
     if( !(FCB->Flags & AFD_ENDPOINT_CONNECTIONLESS) &&
-        FCB->State != SOCKET_STATE_CONNECTED &&
-        FCB->State != SOCKET_STATE_CONNECTING ) {
+        FCB->SharedData.State != SOCKET_STATE_CONNECTED &&
+        FCB->SharedData.State != SOCKET_STATE_CONNECTING ) {
         AFD_DbgPrint(MIN_TRACE,("Called recv on wrong kind of socket (s%x)\n",
-                                FCB->State));
+                                FCB->SharedData.State));
         return UnlockAndMaybeComplete( FCB, STATUS_INVALID_PARAMETER,
                                        Irp, 0 );
     }
@@ -492,7 +516,7 @@ AfdConnectedSocketReadData(PDEVICE_OBJECT DeviceObject, PIRP Irp,
 
             return UnlockAndMaybeComplete(FCB, Status, Irp, Irp->IoStatus.Information);
         }
-        else if (!(RecvReq->AfdFlags & AFD_OVERLAPPED) && 
+        else if (!(RecvReq->AfdFlags & AFD_OVERLAPPED) &&
                 ((RecvReq->AfdFlags & AFD_IMMEDIATE) || (FCB->NonBlocking)))
         {
             AFD_DbgPrint(MID_TRACE,("Nonblocking\n"));
@@ -519,7 +543,7 @@ AfdConnectedSocketReadData(PDEVICE_OBJECT DeviceObject, PIRP Irp,
     Status = ReceiveActivity( FCB, Irp );
 
     if( Status == STATUS_PENDING &&
-        !(RecvReq->AfdFlags & AFD_OVERLAPPED) && 
+        !(RecvReq->AfdFlags & AFD_OVERLAPPED) &&
         ((RecvReq->AfdFlags & AFD_IMMEDIATE) || (FCB->NonBlocking))) {
         AFD_DbgPrint(MID_TRACE,("Nonblocking\n"));
         Status = STATUS_CANT_WAIT;
@@ -565,7 +589,7 @@ PacketSocketRecvComplete(
     ASSERT(FCB->ReceiveIrp.InFlightRequest == Irp);
     FCB->ReceiveIrp.InFlightRequest = NULL;
 
-    if( FCB->State == SOCKET_STATE_CLOSED ) {
+    if( FCB->SharedData.State == SOCKET_STATE_CLOSED ) {
         /* Cleanup our IRP queue because the FCB is being destroyed */
         while( !IsListEmpty( &FCB->PendingIrpList[FUNCTION_RECV] ) ) {
             NextIrpEntry = RemoveHeadList(&FCB->PendingIrpList[FUNCTION_RECV]);
@@ -719,7 +743,7 @@ AfdPacketSocketReadData(PDEVICE_OBJECT DeviceObject, PIRP Irp,
     FCB->EventSelectDisabled &= ~AFD_EVENT_RECEIVE;
 
     /* Check that the socket is bound */
-    if( FCB->State != SOCKET_STATE_BOUND )
+    if( FCB->SharedData.State != SOCKET_STATE_BOUND )
     {
         AFD_DbgPrint(MIN_TRACE,("Invalid socket state\n"));
         return UnlockAndMaybeComplete(FCB, STATUS_INVALID_PARAMETER, Irp, 0);
@@ -772,7 +796,7 @@ AfdPacketSocketReadData(PDEVICE_OBJECT DeviceObject, PIRP Irp,
 
         return UnlockAndMaybeComplete(FCB, Status, Irp, Irp->IoStatus.Information);
     }
-    else if (!(RecvReq->AfdFlags & AFD_OVERLAPPED) && 
+    else if (!(RecvReq->AfdFlags & AFD_OVERLAPPED) &&
             ((RecvReq->AfdFlags & AFD_IMMEDIATE) || (FCB->NonBlocking)))
     {
         AFD_DbgPrint(MID_TRACE,("Nonblocking\n"));

@@ -257,7 +257,7 @@ VOID
 PrintLogonHours(
     DWORD dwUnitsPerWeek,
     PBYTE pLogonHours,
-    INT nPaddedLength)
+    DWORD nPaddedLength)
 {
     DWORD dwUnitsPerDay, dwBitNumber, dwSecondsPerUnit;
     DWORD dwStartTime, dwEndTime, dwStartDay, dwEndDay, dwBias;
@@ -352,7 +352,7 @@ DisplayUser(LPWSTR lpUserName)
     DWORD dwLastSet;
     DWORD i;
     WCHAR szCountry[40];
-    INT nPaddedLength = 36;
+    const DWORD nPaddedLength = 36;
     NET_API_STATUS Status;
 
     /* Modify the user */
@@ -584,7 +584,7 @@ GenerateRandomPassword(
     LPBOOL lpAllocated)
 {
     LPWSTR pPassword = NULL;
-    INT nCharsLen, i, nLength = 8;
+    size_t nCharsLen, i, nLength = 8;
 
     srand(GetTickCount());
 
@@ -613,11 +613,11 @@ BuildWorkstationsList(
     _In_ PWSTR pRaw)
 {
     BOOL isLastSep, isSep;
-    INT i, j;
     WCHAR c;
-    INT nLength = 0;
-    INT nArgs = 0;
-    INT nRawLength;
+    size_t i, j;
+    size_t nLength = 0;
+    size_t nRawLength;
+    UINT nArgs = 0;
     PWSTR pList;
 
     /* Check for invalid characters in the raw string */
@@ -962,7 +962,7 @@ ParseLogonHours(
         goto done;
     }
 
-    if (wcsicmp(pszParams, L"all") == 0)
+    if (_wcsicmp(pszParams, L"all") == 0)
     {
         FillMemory(pLogonBitmap, UNITS_PER_WEEK / 8, 0xFF);
         goto done;
@@ -1218,13 +1218,13 @@ cmdUser(
     if (lpUserName == NULL && lpPassword == NULL)
     {
         Status = EnumerateUsers();
-        ConPrintf(StdOut, L"Status: %lu\n", Status);
+        PrintMessageString(TranslateAppMessage(Status));
         return 0;
     }
     else if (lpUserName != NULL && lpPassword == NULL && argc == 3)
     {
         Status = DisplayUser(lpUserName);
-        ConPrintf(StdOut, L"Status: %lu\n", Status);
+        PrintMessageString(TranslateAppMessage(Status));
         return 0;
     }
 
@@ -1250,12 +1250,12 @@ cmdUser(
                                 (LPBYTE*)&pUserInfo);
         if (Status != NERR_Success)
         {
-            ConPrintf(StdOut, L"Status: %lu\n", Status);
+            PrintMessageString(TranslateAppMessage(Status));
             result = 1;
             goto done;
         }
     }
-    else if (bAdd && !bDelete)
+    else if (bAdd)
     {
         /* Add the user */
         ZeroMemory(&UserInfo, sizeof(USER_INFO_4));
@@ -1410,7 +1410,7 @@ cmdUser(
                 }
                 else
                 {
-                    ConPrintf(StdOut, L"Status %lu\n\n", Status);
+                    PrintMessageString(TranslateAppMessage(Status));
                     result = 1;
                     goto done;
                 }
@@ -1426,24 +1426,23 @@ cmdUser(
                                 4,
                                 (LPBYTE)pUserInfo,
                                 NULL);
-        ConPrintf(StdOut, L"Status: %lu\n", Status);
     }
-    else if (bAdd && !bDelete)
+    else if (bAdd)
     {
         /* Add the user */
         Status = NetUserAdd(NULL,
                             4,
                             (LPBYTE)pUserInfo,
                             NULL);
-        ConPrintf(StdOut, L"Status: %lu\n", Status);
     }
-    else if (!bAdd && bDelete)
+    else if (bDelete)
     {
         /* Delete the user */
         Status = NetUserDel(NULL,
                             lpUserName);
-        ConPrintf(StdOut, L"Status: %lu\n", Status);
     }
+
+    PrintMessageString(TranslateAppMessage(Status));
 
     if (Status == NERR_Success &&
         lpPassword != NULL &&

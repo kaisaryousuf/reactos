@@ -1,5 +1,11 @@
 
 list(APPEND _keyboard_layouts
+    kbd101
+    kbd101a
+    kbd101b
+    kbd103
+    kbd106
+    kbd106n
     kbda1
     kbda2
     kbda3
@@ -10,30 +16,39 @@ list(APPEND _keyboard_layouts
     kbdazel
     kbdbe
     kbdbga
-    kbdbgm
     kbdbgt
     kbdblr
     kbdbr
+    kbdbu
     kbdbur
     kbdcan
+    kbdcmk
     kbdcr
     kbdcz
     kbdcz1
     kbdda
     kbddv
     kbdeo
-    kbdes
     kbdest
+    kbdfa
+    kbdfar
     kbdfc
     kbdfi
+    kbdfo
     kbdfr
     kbdgeo
     kbdgerg
+    kbdgkl
     kbdgneo
     kbdgr
+    kbdgr1
+    kbdgre1
     kbdgrist
     kbdhe
+    kbdhe220
     kbdheb
+    kbdhela2
+    kbdhela3
     kbdhu
     kbdic
     kbdinasa
@@ -43,14 +58,22 @@ list(APPEND _keyboard_layouts
     kbdinmal
     kbdir
     kbdit
-    kbdja
+    kbdit142
+    kbdjpn
     kbdkaz
-    kbdko
+    kbdkor
+    kbdkyr
     kbdla
+    kbdlt
     kbdlt1
     kbdlv
     kbdmac
+    kbdmaori
     kbdne
+    kbdnec
+    kbdnec95
+    kbdnecat
+    kbdnecnt
     kbdno
     kbdpl
     kbdpl1
@@ -61,8 +84,10 @@ list(APPEND _keyboard_layouts
     kbdru1
     kbdsf
     kbdsg
-    kbdsk
-    kbdsk1
+    kbdsl
+    kbdsl1
+    kbdsmsno
+    kbdsp
     kbdsw
     kbdtat
     kbdth0
@@ -92,20 +117,21 @@ foreach(_keyboard_layout ${_keyboard_layouts})
         ${_keyboard_layout}/${_keyboard_layout}.rc
         ${CMAKE_CURRENT_BINARY_DIR}/${_keyboard_layout}.def)
 
-    target_include_directories(${_keyboard_layout} PRIVATE ${REACTOS_SOURCE_DIR}/ntoskrnl/include)
     set_entrypoint(${_keyboard_layout} 0)
-    set_image_base(${_keyboard_layout} 0x5FFF0000)
+    if(ARCH STREQUAL "arm64")
+        # ARM64 images must be based above 4GB
+        set_image_base(${_keyboard_layout} 0x180000000)
+    else()
+        set_image_base(${_keyboard_layout} 0x5FFF0000)
+    endif()
     set_subsystem(${_keyboard_layout} native)
 
     if(MSVC)
         # Merge the .text and .rdata section into the .data section
-        add_target_link_flags(${_keyboard_layout} "/ignore:4254 /SECTION:.data,ER /MERGE:.text=.data /MERGE:.rdata=.data /MERGE:.bss=.data /MERGE:.edata=.data")
+        target_link_options(${_keyboard_layout} PRIVATE "/ignore:4254;/SECTION:.data,ER;/MERGE:.text=.data;/MERGE:.rdata=.data;/MERGE:.bss=.data;/MERGE:.edata=.data")
     else()
         # Use a custom linker script
-        add_target_link_flags(${_keyboard_layout} "-Wl,-T,${CMAKE_CURRENT_SOURCE_DIR}/kbdlayout.lds")
-
-        # Avoid "universal character names are only valid in C++ and C99" error.
-        set_property(TARGET ${_keyboard_layout} PROPERTY C_STANDARD 99)
+        target_link_options(${_keyboard_layout} PRIVATE "-Wl,-T,${CMAKE_CURRENT_SOURCE_DIR}/kbdlayout.lds")
     endif()
 
     # dynamic analysis switches
@@ -117,6 +143,6 @@ foreach(_keyboard_layout ${_keyboard_layouts})
         target_link_libraries(${_keyboard_layout} runtmchk)
     endif()
 
-    add_dependencies(${_keyboard_layout} psdk)
+    add_dependencies(${_keyboard_layout} xdk)
     add_cd_file(TARGET ${_keyboard_layout} DESTINATION reactos/system32 FOR all)
 endforeach()

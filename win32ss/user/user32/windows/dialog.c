@@ -36,9 +36,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(user32);
 
 #define DF_END  0x0001
 #define DF_DIALOGACTIVE 0x4000 // ReactOS
-#define DWLP_ROS_DIALOGINFO (DWLP_USER+sizeof(ULONG_PTR))
 #define GETDLGINFO(hwnd) DIALOG_get_info(hwnd, FALSE)
-#define SETDLGINFO(hwnd, info) SetWindowLongPtrW((hwnd), DWLP_ROS_DIALOGINFO, (LONG_PTR)(info))
 #define GET_WORD(ptr)  (*(WORD *)(ptr))
 #define GET_DWORD(ptr) (*(DWORD *)(ptr))
 #define GET_LONG(ptr) (*(const LONG *)(ptr))
@@ -112,8 +110,8 @@ const struct builtin_class_descr DIALOG_builtin_class =
 {
     WC_DIALOG,       /* name */
     CS_SAVEBITS | CS_DBLCLKS, /* style  */
-    DefDlgProcA,              /* procA */
-    DefDlgProcW,              /* procW */
+    &pfnClientA.pfnDialogWndProc, /* procA */
+    &pfnClientW.pfnDialogWndProc, /* procW */
     DLGWINDOWEXTRA,           /* extra */
     (LPCWSTR) IDC_ARROW,      /* cursor */
     0                         /* brush */
@@ -141,7 +139,7 @@ DIALOGINFO *DIALOG_get_info( HWND hWnd, BOOL create )
        return NULL;
     }
 
-    dlgInfo = (DIALOGINFO *)GetWindowLongPtrW( hWnd, DWLP_ROS_DIALOGINFO );
+    dlgInfo = pWindow->DialogPointer;
 
     if (!dlgInfo && create)
     {
@@ -151,7 +149,7 @@ DIALOGINFO *DIALOG_get_info( HWND hWnd, BOOL create )
                 return NULL;
 
             dlgInfo->idResult = IDOK;
-            SETDLGINFO( hWnd, dlgInfo );
+            NtUserxSetDialogPointer( hWnd, dlgInfo );
        }
        else
        {
@@ -159,13 +157,6 @@ DIALOGINFO *DIALOG_get_info( HWND hWnd, BOOL create )
        }
     }
 
-    if (dlgInfo)
-    {
-        if (!(pWindow->state & WNDS_DIALOGWINDOW))
-        {
-           NtUserxSetDialogPointer( hWnd, dlgInfo );
-        }
-    }
     return dlgInfo;
 }
 
@@ -995,7 +986,7 @@ static HWND DIALOG_CreateIndirect( HINSTANCE hInst, LPCVOID dlgTemplate,
     will be valid only after WM_CREATE message has been handled in DefDlgProc
     All the members of the structure get filled here using temp variables */
     dlgInfo = DIALOG_get_info( hwnd, TRUE );
-    // ReactOS
+#ifdef __REACTOS__
     if (dlgInfo == NULL)
     {
         if (hUserFont) DeleteObject( hUserFont );
@@ -1003,7 +994,7 @@ static HWND DIALOG_CreateIndirect( HINSTANCE hInst, LPCVOID dlgTemplate,
         if (disabled_owner) EnableWindow( disabled_owner, TRUE );
         return 0;
     }
-    //
+#endif
     dlgInfo->hwndFocus   = 0;
     dlgInfo->hUserFont   = hUserFont;
     dlgInfo->hMenu       = hMenu;
@@ -1030,6 +1021,9 @@ static HWND DIALOG_CreateIndirect( HINSTANCE hInst, LPCVOID dlgTemplate,
             HWND focus = GetNextDlgTabItem( hwnd, 0, FALSE );
             if (!focus) focus = GetNextDlgGroupItem( hwnd, 0, FALSE );
             if (SendMessageW( hwnd, WM_INITDIALOG, (WPARAM)focus, param ) && IsWindow( hwnd ) &&
+#ifdef __REACTOS__
+                !(dlgInfo->flags & DF_END) && /* Ensure EndDialog wasn't called in WM_INITDIALOG */
+#endif
                 ((~template.style & DS_CONTROL) || (template.style & WS_VISIBLE)))
             {
                 /* By returning TRUE, app has requested a default focus assignment.
@@ -1049,29 +1043,46 @@ static HWND DIALOG_CreateIndirect( HINSTANCE hInst, LPCVOID dlgTemplate,
                         SetFocus( hwnd );
                 }
             }
+#ifdef __REACTOS__
 //// ReactOS see 43396, Fixes setting focus on Open and Close dialogs to the FileName edit control in OpenOffice.
 //// This now breaks test_SaveRestoreFocus.
             //DEFDLG_SaveFocus( hwnd );
-////
+#endif
         }
+
+#ifdef __REACTOS__
+        /* Don't continue if the dialog has been destroyed in WM_INITDIALOG */
+        if (!IsWindow(hwnd))
+            return NULL;
+
 //// ReactOS Rev 30613 & 30644
         if (!(GetWindowLongPtrW( hwnd, GWL_STYLE ) & WS_CHILD))
             SendMessageW( hwnd, WM_CHANGEUISTATE, MAKEWPARAM(UIS_INITIALIZE, 0), 0);
-////
+
+        // TODO: Handle DS_SETFOREGROUND
+
+        /* Ensure EndDialog wasn't called in WM_INITDIALOG before making the dialog visible */
+        if (!(dlgInfo->flags & DF_END) && (template.style & WS_VISIBLE) && !(GetWindowLongPtrW(hwnd, GWL_STYLE) & WS_VISIBLE))
+#else
         if (template.style & WS_VISIBLE && !(GetWindowLongPtrW( hwnd, GWL_STYLE ) & WS_VISIBLE))
+#endif
         {
-           ShowWindow( hwnd, SW_SHOWNORMAL );   /* SW_SHOW doesn't always work */
+           ShowWindow( hwnd, SW_SHOWNORMAL ); /* SW_SHOW doesn't always work */
            UpdateWindow( hwnd );
+#ifdef __REACTOS__
            IntNotifyWinEvent(EVENT_SYSTEM_DIALOGSTART, hwnd, OBJID_WINDOW, CHILDID_SELF, 0);
+#endif
         }
         return hwnd;
     }
     if (disabled_owner) EnableWindow( disabled_owner, TRUE );
+#ifdef __REACTOS__
     IntNotifyWinEvent(EVENT_SYSTEM_DIALOGEND, hwnd, OBJID_WINDOW, CHILDID_SELF, 0);
+#endif
     if( IsWindow(hwnd) )
     {
       DestroyWindow( hwnd );
-      //// ReactOS
+#ifdef __REACTOS__
       if (owner)
       {  ERR("DIALOG_CreateIndirect 1\n");
          if ( NtUserGetThreadState(THREADSTATE_FOREGROUNDTHREAD) && // Rule #1.
@@ -1080,7 +1091,7 @@ static HWND DIALOG_CreateIndirect( HINSTANCE hInst, LPCVOID dlgTemplate,
             SetForegroundWindow(owner);
          }
       }
-      ////
+#endif
     }
     return 0;
 }
@@ -1258,7 +1269,8 @@ static LRESULT DEFDLG_Proc( HWND hwnd, UINT msg, WPARAM wParam,
         }
         case WM_NCDESTROY:
 //// ReactOS
-            if ((dlgInfo = (DIALOGINFO *)SetWindowLongPtrW( hwnd, DWLP_ROS_DIALOGINFO, 0 )))
+            dlgInfo = DIALOG_get_info(hwnd, FALSE);
+            if (dlgInfo != NULL)
             {
                 if (dlgInfo->hUserFont) DeleteObject( dlgInfo->hUserFont );
                 if (dlgInfo->hMenu) DestroyMenu( dlgInfo->hMenu );
@@ -2304,25 +2316,18 @@ GetNextDlgGroupItem(
     {
         if (!IsChild (hDlg, hCtl)) return 0;
         /* Make sure hwndCtrl is a top-level child */
-
     }
     else
     {
         /* No ctrl specified -> start from the beginning */
         if (!(hCtl = GetWindow( hDlg, GW_CHILD ))) return 0;
-        /* MSDN is wrong. fPrevious does not result in the last child */
-
-        /* No ctrl specified -> start from the beginning */
-        if (!(hCtl = GetWindow( hDlg, GW_CHILD ))) return 0;
-
-        /* MSDN is wrong. fPrevious does not result in the last child */
+        /* MSDN is wrong. bPrevious does not result in the last child */
 
         /* Maybe that first one is valid.  If so then we don't want to skip it*/
         if ((GetWindowLongPtrW( hCtl, GWL_STYLE ) & (WS_VISIBLE|WS_DISABLED)) == WS_VISIBLE)
         {
             return hCtl;
         }
-
     }
 
     /* Always go forward around the group and list of controls; for the
@@ -2632,13 +2637,25 @@ IsDialogMessageW(
              if (!(dlgCode & DLGC_WANTARROWS))
              {
                  BOOL fPrevious = (lpMsg->wParam == VK_LEFT || lpMsg->wParam == VK_UP);
-                 HWND hwndNext = GetNextDlgGroupItem( hDlg, lpMsg->hwnd, fPrevious );
-                 if (hwndNext && SendMessageW( hwndNext, WM_GETDLGCODE, lpMsg->wParam, (LPARAM)lpMsg ) == (DLGC_BUTTON | DLGC_RADIOBUTTON))
+
+                 /* Skip STATIC elements when arrow-moving through a list of controls */
+                 HWND hwndNext, hwndFirst = lpMsg->hwnd;
+                 for (hwndNext = GetNextDlgGroupItem(hDlg, hwndFirst, fPrevious);
+                      hwndNext && hwndFirst != hwndNext;
+                      hwndNext = GetNextDlgGroupItem(hDlg, hwndNext, fPrevious))
+                  {
+                      if (!(SendMessageW(hwndNext, WM_GETDLGCODE, 0, 0) & DLGC_STATIC))
+                          break;
+                  }
+
+                 if (hwndNext &&
+                     ((SendMessageW(hwndNext, WM_GETDLGCODE, lpMsg->wParam, (LPARAM)lpMsg) &
+                       (DLGC_BUTTON | DLGC_RADIOBUTTON)) == (DLGC_BUTTON | DLGC_RADIOBUTTON)))
                  {
                      SetFocus( hwndNext );
                      if ((GetWindowLongW( hwndNext, GWL_STYLE ) & BS_TYPEMASK) == BS_AUTORADIOBUTTON &&
                          SendMessageW( hwndNext, BM_GETCHECK, 0, 0 ) != BST_CHECKED)
-                         SendMessageW( hwndNext, BM_CLICK, 1, 0 );
+                         SendMessageW(hwndNext, BM_CLICK, 0, 0);
                  }
                  else
                      SendMessageW( hDlg, WM_NEXTDLGCTL, (WPARAM)hwndNext, 1 );

@@ -118,16 +118,17 @@ Ws2helpInitialize(VOID)
     return ERROR_SUCCESS;
 }
 
-BOOL 
-APIENTRY 
-DllMain(HANDLE hModule, 
-        DWORD  dwReason, 
-        LPVOID lpReserved)
+BOOL
+APIENTRY
+Ws2HelpDllMain(
+    HANDLE hModule,
+    DWORD  dwReason,
+    LPVOID lpReserved)
 {
     switch (dwReason)
     {
         case DLL_PROCESS_ATTACH:
-        
+
             /* Save our handle */
             LibraryHdl = hModule;
 

@@ -19,6 +19,7 @@ extern "C" {
 #include <winuser.h>
 #include <winwlx.h>
 #include <ndk/rtlfuncs.h>
+#include <ndk/setypes.h> // For SE_*_PRIVILEGE
 #include <ntsecapi.h>
 
 #include <strsafe.h>
@@ -59,6 +60,8 @@ typedef struct
 } GINA_CONTEXT, *PGINA_CONTEXT;
 
 extern HINSTANCE hDllInstance;
+extern HBITMAP hBanner;
+extern HBITMAP hBannerLine;
 
 typedef BOOL (*PFGINA_INITIALIZE)(PGINA_CONTEXT);
 typedef BOOL (*PFGINA_DISPLAYSTATUSMESSAGE)(PGINA_CONTEXT, HDESK, DWORD, PWSTR, PWSTR);
@@ -81,6 +84,18 @@ typedef struct _GINA_UI
     PFGINA_DISPLAYLOCKEDNOTICE DisplayLockedNotice;
 } GINA_UI, *PGINA_UI;
 
+/* gui.c */
+BOOL
+DrawBrandingBitmap(
+    _Inout_ LPDRAWITEMSTRUCT DrawItem,
+    _Inout_ HBITMAP *BitmapHandle);
+
+BOOL
+DrawScrollingBrandingBitmap(
+    _Inout_ LPDRAWITEMSTRUCT DrawItem,
+    _Inout_ HBITMAP *BitmapHandle,
+    _In_ PDWORD ScrollCounter);
+
 /* lsa.c */
 
 NTSTATUS
@@ -98,12 +113,6 @@ MyLogonUser(
     PNTSTATUS SubStatus);
 
 /* msgina.c */
-
-LONG
-ReadRegSzValue(
-    IN HKEY hKey,
-    IN LPCWSTR pszValue,
-    OUT LPWSTR *pValue);
 
 BOOL
 DoAdminUnlock(
@@ -129,26 +138,70 @@ CreateProfile(
 
 /* shutdown.c */
 
-DWORD
-GetDefaultShutdownSelState(VOID);
+/**
+ * @brief   Shutdown state flags
+ * @see
+ * https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-2000-server/cc962586(v=technet.10)
+ * https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-server-2003/cc783367(v=ws.10)
+ **/
+#define WLX_SHUTDOWN_STATE_LOGOFF       0x01    ///< "Log off <username>"
+#define WLX_SHUTDOWN_STATE_POWER_OFF    0x02    ///< "Shut down"
+#define WLX_SHUTDOWN_STATE_REBOOT       0x04    ///< "Restart"
+// 0x08 ///< "Restart in MS-DOS mode" - Yes, WinNT/2k/XP/2k3 msgina.dll/shell32.dll has it!
+#define WLX_SHUTDOWN_STATE_SLEEP        0x10    ///< "Stand by"
+#define WLX_SHUTDOWN_STATE_SLEEP2       0x20    ///< "Stand by (with wakeup events disabled)"
+#define WLX_SHUTDOWN_STATE_HIBERNATE    0x40    ///< "Hibernate"
+#define WLX_SHUTDOWN_STATE_DISCONNECT   0x80    ///< "Disconnect" (only available in Terminal Services sessions)
+#define WLX_SHUTDOWN_AUTOUPDATE         0x100   ///< Set when updates are queued
 
 DWORD
-LoadShutdownSelState(VOID);
+LoadShutdownSelState(
+    _In_ HKEY hKeyCurrentUser);
 
 VOID
-SaveShutdownSelState(DWORD ShutdownCode);
+SaveShutdownSelState(
+    _In_ HKEY hKeyCurrentUser,
+    _In_ DWORD ShutdownCode);
 
 DWORD
-GetDefaultShutdownOptions(VOID);
-
-DWORD
-GetAllowedShutdownOptions(VOID);
+GetAllowedShutdownOptions(
+    _In_opt_ HKEY hKeyCurrentUser,
+    _In_opt_ HANDLE hUserToken);
 
 INT_PTR
 ShutdownDialog(
     IN HWND hwndDlg,
     IN DWORD ShutdownOptions,
     IN PGINA_CONTEXT pgContext);
+
+/* utils.c */
+
+LONG
+RegOpenLoggedOnHKCU(
+    _In_opt_ HANDLE hUserToken,
+    _In_ REGSAM samDesired,
+    _Out_ PHKEY phkResult);
+
+LONG
+ReadRegSzValue(
+    _In_ HKEY hKey,
+    _In_ PCWSTR pszValue,
+    _Out_ PWSTR* pValue);
+
+LONG
+ReadRegDwordValue(
+    _In_ HKEY hKey,
+    _In_ PCWSTR pszValue,
+    _Out_ PDWORD pValue);
+
+BOOL
+TestTokenPrivilege(
+    _In_opt_ HANDLE hToken,
+    _In_ ULONG Privilege);
+
+PWSTR
+DuplicateString(
+    _In_opt_ PCWSTR Str);
 
 
 #ifdef __cplusplus

@@ -1,16 +1,19 @@
 /*
-* PROJECT:     ReactOS system libraries
-* LICENSE:     GPL - See COPYING in the top level directory
-* FILE:        dll/shellext/stobject/csystray.cpp
-* PURPOSE:     Systray shell service object implementation
-* PROGRAMMERS: David Quintana <gigaherz@gmail.com>
-*              Shriraj Sawant a.k.a SR13 <sr.official@hotmail.com>
-*/
+ * PROJECT:     ReactOS system libraries
+ * LICENSE:     GPL-2.0-or-later (https://spdx.org/licenses/GPL-2.0-or-later)
+ * PURPOSE:     Systray shell service object implementation
+ * COPYRIGHT:   Copyright 2014-2015 David Quintana <gigaherz@gmail.com>
+ *              Copyright 2017 Shriraj Sawant a.k.a SR13 <sr.official@hotmail.com>
+ *              Copyright 2026 Vitaly Orekhov <vkvo2000@vivaldi.net>
+ */
 
 #include "precomp.h"
 
+#include <mmddk.h>
+#include <regstr.h>
 #include <undocshell.h>
 #include <shellutils.h>
+#include <shlwapi.h>
 
 SysTrayIconHandlers_t g_IconHandlers [] = {
     { VOLUME_SERVICE_FLAG, Volume_Init, Volume_Shutdown, Volume_Update, Volume_Message },
@@ -19,8 +22,18 @@ SysTrayIconHandlers_t g_IconHandlers [] = {
 };
 const int g_NumIcons = _countof(g_IconHandlers);
 
-CSysTray::CSysTray() {}
-CSysTray::~CSysTray() {}
+SysTrayIconHandlers_t g_StandaloneHandlers[] = {
+    { MOUSE_SERVICE_FLAG, MouseKeys_Init, MouseKeys_Shutdown, MouseKeys_Update, MouseKeys_Message },
+};
+
+CSysTray::CSysTray() : dwServicesEnabled(0)
+{
+    wm_SHELLHOOK = RegisterWindowMessageW(L"SHELLHOOK");
+}
+
+CSysTray::~CSysTray()
+{
+}
 
 VOID CSysTray::GetServicesEnabled()
 {
@@ -30,8 +43,7 @@ VOID CSysTray::GetServicesEnabled()
     /* Enable power, volume and hotplug by default */
     this->dwServicesEnabled = POWER_SERVICE_FLAG | VOLUME_SERVICE_FLAG | HOTPLUG_SERVICE_FLAG;
 
-    if (RegCreateKeyExW(HKEY_CURRENT_USER,
-                        L"Software\\Microsoft\\Windows\\CurrentVersion\\Applets\\SysTray",
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, REGSTR_PATH_SYSTRAY,
                         0,
                         NULL,
                         REG_OPTION_NON_VOLATILE,
@@ -62,7 +74,7 @@ VOID CSysTray::EnableService(DWORD dwServiceFlag, BOOL bEnable)
         this->dwServicesEnabled &= ~dwServiceFlag;
 
     if (RegCreateKeyExW(HKEY_CURRENT_USER,
-                        L"Software\\Microsoft\\Windows\\CurrentVersion\\Applets\\SysTray",
+                        REGSTR_PATH_SYSTRAY,
                         0,
                         NULL,
                         REG_OPTION_NON_VOLATILE,
@@ -71,20 +83,36 @@ VOID CSysTray::EnableService(DWORD dwServiceFlag, BOOL bEnable)
                         &hKey,
                         NULL) == ERROR_SUCCESS)
     {
+        DWORD dwConfig = this->dwServicesEnabled & ~STANDALONESERVICEMASK;
         RegSetValueExW(hKey,
                        L"Services",
                        0,
                        REG_DWORD,
-                       (LPBYTE)&this->dwServicesEnabled,
-                       sizeof(DWORD));
+                       (LPBYTE)&dwConfig,
+                       sizeof(dwConfig));
 
         RegCloseKey(hKey);
     }
+
+    ConfigurePollTimer();
 }
 
 BOOL CSysTray::IsServiceEnabled(DWORD dwServiceFlag)
 {
     return (this->dwServicesEnabled & dwServiceFlag);
+}
+
+void CSysTray::ConfigurePollTimer()
+{
+    // FIXME: VOLUME_SERVICE_FLAG uses mixerOpen(CALLBACK_WINDOW) but the timer
+    //        still has to be here because CORE-20778
+    // FIXME: POWER_SERVICE_FLAG should use WM_DEVICECHANGE, WM_POWERBROADCAST
+
+    DWORD fNeedsTimer = POWER_SERVICE_FLAG;
+    if (this->dwServicesEnabled & fNeedsTimer)
+        SetTimer(POLL_TIMER_ID, 2000, NULL);
+    else
+        KillTimer(POLL_TIMER_ID);
 }
 
 HRESULT CSysTray::InitNetShell()
@@ -112,7 +140,7 @@ HRESULT CSysTray::ShutdownNetShell()
 HRESULT CSysTray::InitIcons()
 {
     TRACE("Initializing Notification icons...\n");
-    for (int i = 0; i < g_NumIcons; i++)
+    for (UINT i = 0; i < g_NumIcons; i++)
     {
         if (this->dwServicesEnabled & g_IconHandlers[i].dwServiceFlag)
         {
@@ -121,6 +149,10 @@ HRESULT CSysTray::InitIcons()
                 return hr;
         }
     }
+    for (UINT i = 0; i < _countof(g_StandaloneHandlers); ++i)
+    {
+        g_StandaloneHandlers[i].pfnInit(this);
+    }
 
     return InitNetShell();
 }
@@ -128,14 +160,18 @@ HRESULT CSysTray::InitIcons()
 HRESULT CSysTray::ShutdownIcons()
 {
     TRACE("Shutting down Notification icons...\n");
-    for (int i = 0; i < g_NumIcons; i++)
+    for (UINT i = 0; i < g_NumIcons; i++)
     {
         if (this->dwServicesEnabled & g_IconHandlers[i].dwServiceFlag)
         {
+            this->dwServicesEnabled &= ~g_IconHandlers[i].dwServiceFlag;
             HRESULT hr = g_IconHandlers[i].pfnShutdown(this);
-            if (FAILED(hr))
-                return hr;
+            FAILED_UNEXPECTEDLY(hr);
         }
+    }
+    for (UINT i = 0; i < _countof(g_StandaloneHandlers); ++i)
+    {
+        g_StandaloneHandlers[i].pfnShutdown(this);
     }
 
     return ShutdownNetShell();
@@ -159,12 +195,19 @@ HRESULT CSysTray::UpdateIcons()
 
 HRESULT CSysTray::ProcessIconMessage(UINT uMsg, WPARAM wParam, LPARAM lParam, LRESULT &lResult)
 {
-    for (int i = 0; i < g_NumIcons; i++)
+    for (UINT i = 0; i < g_NumIcons; i++)
     {
         HRESULT hr = g_IconHandlers[i].pfnMessage(this, uMsg, wParam, lParam, lResult);
         if (FAILED(hr))
             return hr;
-
+        if (hr == S_OK)
+            return hr;
+    }
+    for (UINT i = 0; i < _countof(g_StandaloneHandlers); ++i)
+    {
+        HRESULT hr = g_StandaloneHandlers[i].pfnMessage(this, uMsg, wParam, lParam, lResult);
+        if (FAILED(hr))
+            return hr;
         if (hr == S_OK)
             return hr;
     }
@@ -253,12 +296,14 @@ HRESULT CSysTray::SysTrayThreadProc()
 
     CoUninitialize();
 
+    Release();
     FreeLibraryAndExitThread(hLib, ret);
 }
 
 HRESULT CSysTray::CreateSysTrayThread()
 {
     TRACE("CSysTray Init TODO: Initialize tray icon handlers.\n");
+    AddRef();
 
     HANDLE hThread = CreateThread(NULL, 0, s_SysTrayThreadProc, this, 0, NULL);
 
@@ -269,8 +314,11 @@ HRESULT CSysTray::CreateSysTrayThread()
 
 HRESULT CSysTray::DestroySysTrayWindow()
 {
-    DestroyWindow();
-    hwndSysTray = NULL;
+    if (!DestroyWindow())
+    {
+        // Window is from another thread, ask it politely to destroy itself:
+        SendMessage(WM_CLOSE);
+    }
     return S_OK;
 }
 
@@ -303,28 +351,60 @@ BOOL CSysTray::ProcessWindowMessage(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM 
     if (hWnd != m_hWnd)
         return FALSE;
 
+    if (uMsg == wm_SHELLHOOK && wm_SHELLHOOK)
+    {
+        if (wParam == HSHELL_ACCESSIBILITYSTATE && lParam == ACCESS_STICKYKEYS)
+        {
+            StickyKeys_Update(this);
+        }
+        else if (wParam == HSHELL_ACCESSIBILITYSTATE && lParam == ACCESS_MOUSEKEYS)
+        {
+            MouseKeys_Update(this);
+        }
+        lResult = 0L;
+        return TRUE;
+    }
+
     switch (uMsg)
     {
     case WM_NCCREATE:
     case WM_NCDESTROY:
+    case MM_MIXM_CONTROL_CHANGE:
         return FALSE;
+
+    case WM_CLOSE:
+        return DestroyWindow();
 
     case WM_CREATE:
         GetServicesEnabled();
         InitIcons();
-        SetTimer(1, 2000, NULL);
+        RegisterShellHookWindow(hWnd);
+        ConfigurePollTimer();
         return TRUE;
 
     case WM_TIMER:
-        if (wParam == 1)
+        if (wParam == POLL_TIMER_ID)
             UpdateIcons();
         else
             ProcessIconMessage(uMsg, wParam, lParam, lResult);
         return TRUE;
 
+    case WM_SETTINGCHANGE:
+        if (wParam == SPI_SETSTICKYKEYS)
+            StickyKeys_Update(this);
+        if (wParam == SPI_SETMOUSEKEYS)
+            MouseKeys_Update(this);
+        break;
+
+    case MM_MIXM_LINE_CHANGE:
+        ProcessIconMessage(uMsg, wParam, lParam, lResult);
+        return TRUE;
+
     case WM_DESTROY:
-        KillTimer(1);
+        KillTimer(POLL_TIMER_ID);
+        DeregisterShellHookWindow(hWnd);
         ShutdownIcons();
+        PostQuitMessage(0);
         return TRUE;
     }
 
@@ -335,4 +415,19 @@ BOOL CSysTray::ProcessWindowMessage(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM 
         return FALSE;
 
     return (hr == S_OK);
+}
+
+void CSysTray::RunDll(PCSTR Dll, PCSTR Parameters)
+{
+    WCHAR buf[400], rundll[MAX_PATH];
+    GetSystemDirectory(rundll, _countof(rundll));
+    PathAppendW(rundll, L"rundll32.exe");
+
+    wsprintfW(buf, L"%hs %hs%hs", "shell32.dll,Control_RunDLL", Dll, Parameters);
+    ShellExecuteW(NULL, NULL, rundll, buf, NULL, SW_SHOW);
+}
+
+void CSysTray::RunAccessCpl(PCSTR Parameters)
+{
+    RunDll("access.cpl", Parameters);
 }

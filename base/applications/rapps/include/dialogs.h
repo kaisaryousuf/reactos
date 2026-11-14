@@ -1,17 +1,21 @@
 #pragma once
 
-#include "available.h"
+#include "appinfo.h"
 
-#include <windef.h>
 #include <atlsimpcoll.h>
 
 // Settings dialog (settingsdlg.cpp)
-VOID CreateSettingsDlg(HWND hwnd);
-
-//Main window
-VOID MainWindowLoop(INT nShowCmd);
+VOID
+CreateSettingsDlg(HWND hwnd);
 
 // Download dialogs
-VOID DownloadApplicationsDB(LPCWSTR lpUrl, BOOL IsOfficial);
-BOOL DownloadApplication(CAvailableApplicationInfo* pAppInfo, BOOL bIsModal);
-BOOL DownloadListOfApplications(const ATL::CSimpleArray<CAvailableApplicationInfo>& AppsList, BOOL bIsModal);
+enum DOWNLOADAPPFLAGS {
+    DAF_SILENT  = 0x01,
+    DAF_MODAL   = 0x02,
+};
+VOID
+DownloadApplicationsDB(LPCWSTR lpUrl, BOOL IsOfficial);
+BOOL
+DownloadApplication(CAppInfo *pAppInfo);
+BOOL
+DownloadListOfApplications(const CAtlList<CAppInfo *> &AppsList, UINT Flags = 0);

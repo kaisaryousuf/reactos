@@ -1,9 +1,9 @@
-#define __ROS_LONG64__
 
 #define STANDALONE
 #include <apitest.h>
 
 extern void func_bind(void);
+extern void func_broadcast(void);
 extern void func_close(void);
 extern void func_getaddrinfo(void);
 extern void func_gethostname(void);
@@ -24,6 +24,7 @@ extern void func_WSAStartup(void);
 const struct test winetest_testlist[] =
 {
     { "bind", func_bind },
+    { "broadcast", func_broadcast },
     { "close", func_close },
     { "getaddrinfo", func_getaddrinfo },
     { "gethostname", func_gethostname },

@@ -2,6 +2,8 @@
 #include "DeviceNode.h"
 #include "ClassNode.h"
 #include "RootNode.h"
+#include "ResourceNode.h"
+#include "ResourceTypeNode.h"
 
 enum ViewType
 {
@@ -11,6 +13,7 @@ enum ViewType
     ResourcesByConnection
 };
 
+#define WM_REFRESH_COMPLETE (WM_APP + 1)
 
 class CDeviceView
 {
@@ -27,6 +30,9 @@ class CDeviceView
     CAtlList<CClassNode *> m_ClassNodeList;
     CAtlList<CDeviceNode *> m_DeviceNodeList;
     SP_CLASSIMAGELIST_DATA m_ImageListData;
+    HANDLE m_hRefreshThread;
+    bool m_RefreshDirty;
+    bool m_DirtyScanForChanges;
 
 public:
     CDeviceView(
@@ -43,6 +49,10 @@ public:
         _In_ int y,
         _In_ int cx,
         _In_ int cy
+        );
+
+    LRESULT OnDoubleClick(
+        _In_ LPNMHDR NmHdr
         );
 
     LRESULT OnRightClick(
@@ -63,6 +73,8 @@ public:
         _In_ bool UpdateView
         );
 
+    VOID OnRefreshComplete();
+
     VOID DisplayPropertySheet();
     VOID SetFocus();
 
@@ -72,6 +84,8 @@ public:
     }
 
     ViewType GetCurrentView() { return m_ViewType; }
+
+    bool IsRefreshing() { return m_hRefreshThread != NULL; }
 
     bool CreateActionMenu(
         _In_ HMENU OwnerMenu,
@@ -96,6 +110,16 @@ private:
     bool ListDevicesByConnection(
         );
     bool ListDevicesByType(
+        );
+    bool ListResourcesByType(
+        );
+
+    bool RecurseResources(
+        _In_ DEVINST ParentDevice,
+        _In_ HTREEITEM hMemoryTreeItem,
+        _In_ HTREEITEM hPortTreeItem,
+        _In_ HTREEITEM hDmaTreeItem,
+        _In_ HTREEITEM hIrqTreeItem
         );
 
     bool GetNextClass(

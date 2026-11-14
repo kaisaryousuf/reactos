@@ -21,6 +21,7 @@
 
 #ifdef _M_IX86
 #include <internal/i386/ke.h>
+#include <internal/x86x64/ke.h>
 #elif defined(_M_PPC)
 #include <internal/powerpc/ke.h>
 #elif defined(_M_MIPS)
@@ -29,6 +30,9 @@
 #include <internal/arm/ke.h>
 #elif defined(_M_AMD64)
 #include <internal/amd64/ke.h>
+#include <internal/x86x64/ke.h>
+#elif defined(_M_ARM64)
+#include <internal/arm64/ke.h>
 #else
 #error "Unknown processor"
 #endif

@@ -3,7 +3,7 @@
  * LICENSE:     GPL-3.0-or-later (https://spdx.org/licenses/GPL-3.0-or-later)
  * PURPOSE:     Implements a TreeList control: a tree window with columns.
  * COPYRIGHT:   Copyright (C) Anton Zechner (az_software@inode.at) 2007
- *              Copyright (C) SÈbastien Kirche (sebastien.kirche@free.fr) 2014
+ *              Copyright (C) S√©bastien Kirche (sebastien.kirche@free.fr) 2014
  *
  * NOTE: Taken from the TreeList code found at https://github.com/sebkirche/treelist
  */
@@ -123,7 +123,7 @@ typedef		TVSORTEX				TV_SORTEX;
 #define 	VK_ICONCLK				0x10001				// Edit with click on icon
 #endif
 #ifndef		VK_EDITCLK
-#define 	VK_EDITCLK				0x10002				// Edit with click on augew‰hltes Element //visble element ?
+#define 	VK_EDITCLK				0x10002				// Edit with click on augew√§hltes Element //visble element ?
 #endif
 #ifdef		UNICODE
 #define		TV_UINICODE				1
@@ -217,7 +217,7 @@ typedef		TVSORTEX				TV_SORTEX;
 // constants for HitTest (flags)
 #define 	TVHT_SUBTOCOL(u)		(((unsigned)u)>>24)	// Convert column to column numbers mask
 #define 	TVHT_SUBMASK			0xFF000000			// Maske in der die Spalte gespeichert wird
-#define 	TVHT_ONRIGHTSPACE		0x00800000			// Auf rechtem Rand nach den Extr‰gen
+#define 	TVHT_ONRIGHTSPACE		0x00800000			// Auf rechtem Rand nach den Extr√§gen
 #define 	TVHT_ONSUBLABEL			0x00400000			// Koordinate ist auf dem Text eines Extraeintrages
 #define 	TVHT_ONSUBICON			0x00200000			// Koordinate ist auf einem Extraeintrag
 #define 	TVHT_ONSUBRIGHT			0x00100000			// Koordinate ist auf einem Extraeintrag rechts vom Text
@@ -421,9 +421,15 @@ typedef		TVSORTEX				TV_SORTEX;
 #define 	TreeList_GetOption(h,i)						((INT       )SNDMSG(h,TVM_GETSETOPTION,i,0))
 #define 	TreeList_SetColumnOrderArray(h,n,p)			((BOOL      )SNDMSG(h,TVM_SETCOLUMNORDERARRAY,n,(LPARAM)(p)))
 #define 	TreeList_GetColumnOrderArray(h,n,p)			((BOOL      )SNDMSG(h,TVM_GETCOLUMNORDERARRAY,n,(LPARAM)(p)))
+#ifdef __cplusplus
 #define		TreeList_GetStyle(h)						((DWORD     )::GetWindowLong(h,GWL_STYLE))
 #define		TreeList_SetStyle(h,d)	  					((DWORD     )::SetWindowLong(h,GWL_STYLE,d))
 #define 	TreeList_SetStyleEx(h,d,m)					((DWORD     )::SetWindowLong(h,GWL_STYLE,((d)&(m))|(::GetWindowLong(h,GWL_STYLE)&~(m))))
+#else
+#define		TreeList_GetStyle(h)						((DWORD     )GetWindowLong(h,GWL_STYLE))
+#define		TreeList_SetStyle(h,d)	  					((DWORD     )SetWindowLong(h,GWL_STYLE,d))
+#define 	TreeList_SetStyleEx(h,d,m)					((DWORD     )SetWindowLong(h,GWL_STYLE,((d)&(m))|(GetWindowLong(h,GWL_STYLE)&~(m))))
+#endif
 #define		TreeList_GetItemRect(h,i,s,p,c)			    (*(HTREEITEM*)p =(i),(BOOL)SNDMSG(h,TVM_GETITEMRECT,(WPARAM)((c)|(TVIR_COLTOSUB(s))),(LPARAM)(RECT*)(p)))
 
 
@@ -457,10 +463,21 @@ extern BOOL	TreeListUnregister(HINSTANCE hInstance);
 
 /* Compat with my old code... */
 #define TLCOLUMN TVCOLUMN
-#define HTLITEM HTREEITEM
+#define HTLITEM  HTREEITEM
+
 #define TL_INSERTSTRUCTA TV_INSERTSTRUCTA
+#define TLINSERTSTRUCTA  TVINSERTSTRUCTA
 #define TL_INSERTSTRUCTW TV_INSERTSTRUCTW
-#define TL_INSERTSTRUCT TV_INSERTSTRUCT
+#define TLINSERTSTRUCTW  TVINSERTSTRUCTW
+#define TL_INSERTSTRUCT  TV_INSERTSTRUCT
+#define TLINSERTSTRUCT   TVINSERTSTRUCT
+
+#define TL_ITEMA TV_ITEMA
+#define TLITEMA  TVITEMA
+#define TL_ITEMW TV_ITEMW
+#define TLITEMW  TVITEMW
+#define TL_ITEM  TV_ITEM
+#define TLITEM   TVITEM
 
 /* New stuff */
 #ifndef __REACTOS__
@@ -488,6 +505,8 @@ extern BOOL	TreeListUnregister(HINSTANCE hInstance);
     _ms_tvi.cChildren   = (iSubItem_); \
     TreeList_SetItem((hwndLV), &_ms_tvi); \
 }
+
+#define TreeList_SetItemState(hwndTV,hti,data,_mask)    TreeView_SetItemState(hwndTV,hti,data,_mask)
 #endif // __REACTOS__
 
 #endif

@@ -9,10 +9,9 @@
 /* INCLUDES ******************************************************************/
 
 #include <hal.h>
+#include "apicp.h"
 #define NDEBUG
 #include <debug.h>
-
-#include "apic.h"
 
 extern LARGE_INTEGER HalpCpuClockFrequency;
 
@@ -37,11 +36,11 @@ ApicSetTimerInterval(ULONG MicroSeconds)
     /* Set the count interval */
     ApicWrite(APIC_TICR, (ULONG)TimerInterval);
 
-    /* Set to periodic */
+    /* Set to periodic / masked */
     LvtEntry.Long = 0;
     LvtEntry.TimerMode = 1;
     LvtEntry.Vector = APIC_PROFILE_VECTOR;
-    LvtEntry.Mask = 0;
+    LvtEntry.Mask = 1;
     ApicWrite(APIC_TMRLVTR, LvtEntry.Long);
 
 }
@@ -60,6 +59,13 @@ ApicInitializeTimer(ULONG Cpu)
     ApicSetTimerInterval(1000);
 
 // KeSetTimeIncrement
+}
+
+VOID
+FASTCALL
+HalpProfileInterruptHandler(_In_ PKTRAP_FRAME TrapFrame)
+{
+    KeProfileInterruptWithSource(TrapFrame, ProfileTime);
 }
 
 

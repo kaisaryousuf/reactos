@@ -31,13 +31,77 @@ UserGetMouseButtonsState(VOID)
     return wRet;
 }
 
+VOID NTAPI
+UserRawInputMouseProcess(PINPUT_DEVICE_INFO pDeviceInfo, PMOUSE_INPUT_DATA mid)
+{
+    PTHREADINFO pti;
+    HWND hwndTarget;
+    WPARAM wParam;
+    HRAWINPUT hRawInput;
+    RAWMOUSE rm = {0};
+    MSG Msg = {0};
+
+    if (!UserGetRawInputTarget(RIM_TYPEMOUSE, &pti, &hwndTarget, &wParam))
+        return;
+
+    if (mid->LastX != 0 || mid->LastY != 0)
+    {
+        rm.usFlags |= MOUSE_MOVE_RELATIVE;
+    }
+
+    /* Flags for absolute move */
+    if (mid->Flags & MOUSE_MOVE_ABSOLUTE)
+        rm.usFlags |= MOUSE_MOVE_ABSOLUTE;
+    if (mid->Flags & MOUSE_VIRTUAL_DESKTOP)
+        rm.usFlags |= MOUSE_VIRTUAL_DESKTOP;
+
+    /* Left button */
+    if (mid->ButtonFlags & MOUSE_LEFT_BUTTON_DOWN)
+        rm.usButtonFlags |= RI_MOUSE_LEFT_BUTTON_DOWN;
+    if (mid->ButtonFlags & MOUSE_LEFT_BUTTON_UP)
+        rm.usButtonFlags |= RI_MOUSE_LEFT_BUTTON_UP;
+
+    /* Middle button */
+    if (mid->ButtonFlags & MOUSE_MIDDLE_BUTTON_DOWN)
+        rm.usButtonFlags |= RI_MOUSE_MIDDLE_BUTTON_DOWN;
+    if (mid->ButtonFlags & MOUSE_MIDDLE_BUTTON_UP)
+        rm.usButtonFlags |= RI_MOUSE_MIDDLE_BUTTON_UP;
+
+    /* Right button */
+    if (mid->ButtonFlags & MOUSE_RIGHT_BUTTON_DOWN)
+        rm.usButtonFlags |= RI_MOUSE_RIGHT_BUTTON_DOWN;
+    if (mid->ButtonFlags & MOUSE_RIGHT_BUTTON_UP)
+        rm.usButtonFlags |= RI_MOUSE_RIGHT_BUTTON_UP;
+    rm.lLastX   = mid->LastX;
+    rm.lLastY   = mid->LastY;
+
+    hRawInput = UserCreateRawInput(pti,
+                                   RIM_TYPEMOUSE,
+                                   (HANDLE)pDeviceInfo,
+                                   wParam,
+                                   &rm,
+                                   sizeof(rm));
+    if (!hRawInput)
+        return;
+
+    Msg.hwnd = hwndTarget;
+    Msg.message = WM_INPUT;
+    Msg.wParam = wParam;
+    Msg.lParam = (LPARAM)hRawInput;
+    Msg.time = EngGetTickCount32();
+    Msg.pt = gpsi->ptCursor;
+
+    if (!MsqPostMessage(pti, &Msg, TRUE, QS_RAWINPUT, 0, 0))
+        UserFreeRawInput(pti->MessageQueue, hRawInput);
+}
+
 /*
  * UserProcessMouseInput
  *
  * Process raw mouse input data
  */
 VOID NTAPI
-UserProcessMouseInput(PMOUSE_INPUT_DATA mid)
+UserProcessMouseInput(PINPUT_DEVICE_INFO pDeviceInfo, PMOUSE_INPUT_DATA mid)
 {
     MOUSEINPUT mi;
 
@@ -48,6 +112,9 @@ UserProcessMouseInput(PMOUSE_INPUT_DATA mid)
     mi.dwFlags = 0;
     mi.time = 0;
     mi.dwExtraInfo = mid->ExtraInformation;
+
+    if (RawInputEnabled == TRUE)
+        UserRawInputMouseProcess(pDeviceInfo, mid);
 
     /* Mouse position */
     if (mi.dx != 0 || mi.dy != 0)
@@ -92,7 +159,7 @@ UserProcessMouseInput(PMOUSE_INPUT_DATA mid)
     }
 
     /* If mouseData is used by button 4, send input and clear mi */
-    if (mi.dwFlags & (MOUSE_BUTTON_4_DOWN | MOUSE_BUTTON_4_UP))
+    if (mi.dwFlags & (MOUSEEVENTF_XDOWN | MOUSEEVENTF_XUP))
     {
         UserSendMouseInput(&mi, FALSE);
         RtlZeroMemory(&mi, sizeof(mi));
@@ -111,7 +178,7 @@ UserProcessMouseInput(PMOUSE_INPUT_DATA mid)
     }
 
     /* If mouseData is used by button 5, send input and clear mi */
-    if (mi.dwFlags & (MOUSE_BUTTON_5_DOWN | MOUSE_BUTTON_5_UP))
+    if (mi.dwFlags & (MOUSEEVENTF_XDOWN | MOUSEEVENTF_XUP))
     {
         UserSendMouseInput(&mi, FALSE);
         RtlZeroMemory(&mi, sizeof(mi));
@@ -326,7 +393,7 @@ UserSendMouseInput(MOUSEINPUT *pmi, BOOL bInjected)
             SET_KEY_DOWN(gafAsyncKeyState, VK_XBUTTON1, FALSE);
             pCurInfo->ButtonsDown &= ~MK_XBUTTON1;
             Msg.wParam &= ~MK_XBUTTON1;
-            Msg.wParam |= MAKEWPARAM(0, XBUTTON2);
+            Msg.wParam |= MAKEWPARAM(0, XBUTTON1);
             co_MsqInsertMouseMessage(&Msg, bInjected, pmi->dwExtraInfo, TRUE);
         }
         if (pmi->mouseData & XBUTTON2)
@@ -579,7 +646,7 @@ NtUserGetMouseMovePointsEx(
 
     UserEnterShared();
 
-    // http://msdn.microsoft.com/en-us/library/ms646259(v=vs.85).aspx
+    // https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getmousemovepointsex
     // This explains the math issues in transforming points.
     iRet = gcMouseHistoryOfMoves; // FIFO is forward so retrieve backward.
     //Hit = FALSE;

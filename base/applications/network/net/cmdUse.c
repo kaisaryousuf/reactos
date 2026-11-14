@@ -47,7 +47,7 @@ EnumerateConnections(LPCWSTR Local)
             lpCur = lpRes;
             for (; dCount; dCount--)
             {
-                if (!Local || wcsicmp(lpCur->lpLocalName, Local) == 0)
+                if (!Local || _wcsicmp(lpCur->lpLocalName, Local) == 0)
                 {
                     ConPrintf(StdOut, L"%s\t\t\t%s\t\t%s\n", lpCur->lpLocalName, lpCur->lpRemoteName, lpCur->lpProvider);
                 }
@@ -70,10 +70,12 @@ PrintError(DWORD Status)
     WCHAR szStatusBuffer[16];
     LPWSTR Buffer;
 
-    swprintf(szStatusBuffer, L"%lu", Status);
+    _swprintf(szStatusBuffer, L"%lu", Status);
     PrintMessageStringV(3502, szStatusBuffer);
 
-    if (FormatMessage(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL, Status, 0, (LPWSTR)&Buffer, 0, NULL))
+    if (FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
+                       FORMAT_MESSAGE_IGNORE_INSERTS, NULL,
+                       Status, LANG_USER_DEFAULT, (LPWSTR)&Buffer, 0, NULL))
     {
         ConPrintf(StdErr, L"\n%s", Buffer);
         LocalFree(Buffer);
@@ -84,20 +86,8 @@ static
 BOOL
 ValidateDeviceName(PWSTR DevName)
 {
-    DWORD Len;
-
-    Len = wcslen(DevName);
-    if (Len != 2)
-    {
-        return FALSE;
-    }
-
-    if (!iswalpha(DevName[0]) || DevName[1] != L':')
-    {
-        return FALSE;
-    }
-
-    return TRUE;
+    /* Check for "X:" format */
+    return (DevName[0] && iswalpha(DevName[0]) && DevName[1] == L':' && !DevName[2]);
 }
 
 INT
@@ -105,7 +95,7 @@ cmdUse(
     INT argc,
     WCHAR **argv)
 {
-    DWORD Status, Len, Delete;
+    DWORD Status, Delete;
 
     if (argc == 2)
     {
@@ -135,7 +125,7 @@ cmdUse(
     }
 
     Delete = 0;
-    if (wcsicmp(argv[2], L"/DELETE") == 0)
+    if (_wcsicmp(argv[2], L"/DELETE") == 0)
     {
         Delete = 3;
     }
@@ -149,7 +139,7 @@ cmdUse(
         }
     }
 
-    if (wcsicmp(argv[3], L"/DELETE") == 0)
+    if (_wcsicmp(argv[3], L"/DELETE") == 0)
     {
         Delete = 2;
     }
@@ -171,9 +161,10 @@ cmdUse(
     else
     {
         BOOL Persist = FALSE;
-        NETRESOURCE lpNet;
+        NETRESOURCE lpNet = { 0 };
         WCHAR Access[256];
         DWORD OutFlags = 0, Size = ARRAYSIZE(Access);
+        size_t Len;
 
         Len = wcslen(argv[3]);
         if (Len < 4)
@@ -197,7 +188,7 @@ cmdUse(
                 Cpy = HeapAlloc(GetProcessHeap(), 0, (Len + 1) * sizeof(WCHAR));
                 if (Cpy)
                 {
-                    INT i;
+                    size_t i;
                     for (i = 0; i < Len; ++i)
                         Cpy[i] = towupper(argv[4][i]);
 
@@ -228,6 +219,7 @@ cmdUse(
         lpNet.dwType = RESOURCETYPE_DISK;
         lpNet.lpLocalName = (argv[2][0] != L'*') ? argv[2] : NULL;
         lpNet.lpRemoteName = argv[3];
+        lpNet.lpComment = L"";
         lpNet.lpProvider = NULL;
 
         Status = WNetUseConnection(NULL, &lpNet, NULL, NULL, CONNECT_REDIRECT | (Persist ? CONNECT_UPDATE_PROFILE : 0), Access, &Size, &OutFlags);

@@ -24,7 +24,7 @@ LsapDeregisterLogonProcess(PLSA_API_MSG RequestMsg,
 {
     TRACE("LsapDeregisterLogonProcess(%p %p)\n", RequestMsg, LogonContext);
 
-    RemoveHeadList(&LogonContext->Entry);
+    RemoveEntryList(&LogonContext->Entry);
 
     NtClose(LogonContext->ClientProcessHandle);
     NtClose(LogonContext->ConnectionHandle);
@@ -135,10 +135,24 @@ LsapCheckLogonProcess(PLSA_API_MSG RequestMsg,
     TRACE("New LogonContext: %p\n", Context);
 
     Context->ClientProcessHandle = ProcessHandle;
-    Context->TrustedCaller = RequestMsg->ConnectInfo.TrustedCaller;
 
-    if (Context->TrustedCaller)
-        Context->TrustedCaller = LsapIsTrustedClient(ProcessHandle);
+    switch (RequestMsg->ConnectInfo.TrustedCaller)
+    {
+        case NO:
+            Context->TrustedCaller = FALSE;
+            break;
+
+        case YES:
+            Context->TrustedCaller = TRUE;
+            break;
+
+        case CHECK:
+        default:
+            Context->TrustedCaller = LsapIsTrustedClient(ProcessHandle);
+            break;
+    }
+
+    TRACE("TrustedCaller: %u\n", Context->TrustedCaller);
 
     *LogonContext = Context;
 

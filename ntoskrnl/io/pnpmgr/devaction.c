@@ -50,8 +50,6 @@ KSPIN_LOCK IopDeviceActionLock;
 KEVENT PiEnumerationFinished;
 static const WCHAR ServicesKeyName[] = L"\\Registry\\Machine\\System\\CurrentControlSet\\Services\\";
 
-#define TAG_PNP_DEVACTION 'aDpP'
-
 /* TYPES *********************************************************************/
 
 typedef struct _DEVICE_ACTION_REQUEST
@@ -253,7 +251,10 @@ IopCreateDeviceInstancePath(
     Status = IopQueryDeviceCapabilities(DeviceNode, &DeviceCapabilities);
     if (!NT_SUCCESS(Status))
     {
-        DPRINT1("IopQueryDeviceCapabilities() failed (Status 0x%08lx)\n", Status);
+        if (Status != STATUS_NOT_SUPPORTED)
+        {
+            DPRINT1("IopQueryDeviceCapabilities() failed (Status 0x%08lx)\n", Status);
+        }
         RtlFreeUnicodeString(&DeviceId);
         return Status;
     }
@@ -427,7 +428,7 @@ PiAttachFilterDriversCallback(
                           (PVOID)((ULONG_PTR)kvInfo + kvInfo->DataOffset),
                           sizeof(startType));
         }
-        
+
         ExFreePool(kvInfo);
     }
 
@@ -627,11 +628,14 @@ PiCallDriverAddDevice(
     Status = IopGetRegistryValue(SubKey, REGSTR_VAL_CLASSGUID, &kvInfo);
     if (NT_SUCCESS(Status))
     {
-        if (kvInfo->Type == REG_SZ && kvInfo->DataLength > sizeof(WCHAR))
+        if ((kvInfo->Type == REG_SZ) &&
+            (kvInfo->DataLength > sizeof(UNICODE_NULL)) &&
+            (kvInfo->DataLength <= UNICODE_STRING_MAX_BYTES) &&
+            ((kvInfo->DataLength % sizeof(WCHAR)) == 0))
         {
             UNICODE_STRING classGUID = {
                 .MaximumLength = kvInfo->DataLength,
-                .Length = kvInfo->DataLength - sizeof(UNICODE_NULL),
+                .Length = (USHORT)(kvInfo->DataLength - sizeof(UNICODE_NULL)),
                 .Buffer = (PVOID)((ULONG_PTR)kvInfo + kvInfo->DataOffset)
             };
             HANDLE ccsControlHandle;
@@ -674,7 +678,7 @@ PiCallDriverAddDevice(
                 }
             }
         }
-        
+
         ExFreePool(kvInfo);
     }
 
@@ -1330,8 +1334,8 @@ PiInitializeDevNode(
     if (!IopDeviceNodeHasFlag(DeviceNode, DNF_LEGACY_DRIVER))
     {
         /* Report the device to the user-mode pnp manager */
-        IopQueueTargetDeviceEvent(&GUID_DEVICE_ENUMERATED,
-                                  &DeviceNode->InstancePath);
+        IopQueueDeviceInstallEvent(&GUID_DEVICE_ENUMERATED,
+                                   &DeviceNode->InstancePath);
     }
 
     return STATUS_SUCCESS;
@@ -1362,14 +1366,20 @@ IopSetServiceEnumData(
         return Status;
     }
 
-    if (kvInfo2->Type != REG_SZ || kvInfo2->DataLength <= sizeof(WCHAR))
+    if ((kvInfo2->Type != REG_SZ) ||
+        (kvInfo2->DataLength <= sizeof(UNICODE_NULL)) ||
+        (kvInfo2->DataLength > UNICODE_STRING_MAX_BYTES) ||
+        ((kvInfo2->DataLength % sizeof(WCHAR)) != 0))
     {
+        DPRINT1("ObjectName invalid (Type = %lu, DataLength = %lu)\n",
+                kvInfo2->Type,
+                kvInfo2->DataLength);
         ExFreePool(kvInfo2);
         return STATUS_UNSUCCESSFUL;
     }
 
     ServiceName.MaximumLength = kvInfo2->DataLength;
-    ServiceName.Length = kvInfo2->DataLength - sizeof(UNICODE_NULL);
+    ServiceName.Length = (USHORT)(kvInfo2->DataLength - sizeof(UNICODE_NULL));
     ServiceName.Buffer = (PVOID)((ULONG_PTR)kvInfo2 + kvInfo2->DataOffset);
 
     DPRINT("IopSetServiceEnumData(%p)\n", DeviceNode);
@@ -1391,6 +1401,14 @@ IopSetServiceEnumData(
     DPRINT("ServiceKeyName: %wZ\n", &ServiceKeyName);
 
     Status = IopOpenRegistryKeyEx(&ServiceKey, NULL, &ServiceKeyName, KEY_CREATE_SUB_KEY);
+    if (!NT_SUCCESS(Status))
+    {
+        goto done;
+    }
+
+    Status = RtlDuplicateUnicodeString(RTL_DUPLICATE_UNICODE_STRING_ALLOCATE_NULL_STRING,
+                                       &ServiceName,
+                                       &DeviceNode->ServiceName);
     if (!NT_SUCCESS(Status))
     {
         goto done;
@@ -1444,7 +1462,7 @@ IopSetServiceEnumData(
         }
 
         /* Set the instance path */
-        swprintf(ValueBuffer, L"%lu", NextInstance);
+        _swprintf(ValueBuffer, L"%lu", NextInstance);
         RtlInitUnicodeString(&ValueName, ValueBuffer);
         Status = ZwSetValueKey(ServiceEnumKey,
                                &ValueName,
@@ -1480,10 +1498,6 @@ IopSetServiceEnumData(
                                sizeof(NextInstance));
     }
 
-    RtlDuplicateUnicodeString(RTL_DUPLICATE_UNICODE_STRING_ALLOCATE_NULL_STRING,
-                              &ServiceName,
-                              &DeviceNode->ServiceName);
-
 done:
     if (ServiceEnumKey != NULL)
         ZwClose(ServiceEnumKey);
@@ -1495,6 +1509,72 @@ done:
     ExFreePool(kvInfo2);
 
     return Status;
+}
+
+/**
+ * @brief      Processes the IoInvalidateDeviceState request
+ *
+ * Sends IRP_MN_QUERY_PNP_DEVICE_STATE request and sets device node's flags
+ * according to the result.
+ * Tree reenumeration should be started upon a successful return of the function.
+ *
+ * @todo       Do not return STATUS_SUCCESS if nothing is changed.
+ */
+static
+NTSTATUS
+PiUpdateDeviceState(
+    _In_ PDEVICE_NODE DeviceNode)
+{
+    PNP_DEVICE_STATE PnPFlags;
+    NTSTATUS Status;
+
+    Status = PiIrpQueryPnPDeviceState(DeviceNode, &PnPFlags);
+    if (!NT_SUCCESS(Status))
+    {
+        return Status;
+    }
+
+    if (PnPFlags & PNP_DEVICE_NOT_DISABLEABLE)
+        DeviceNode->UserFlags |= DNUF_NOT_DISABLEABLE;
+    else
+        DeviceNode->UserFlags &= ~DNUF_NOT_DISABLEABLE;
+
+    if (PnPFlags & PNP_DEVICE_DONT_DISPLAY_IN_UI)
+        DeviceNode->UserFlags |= DNUF_DONT_SHOW_IN_UI;
+    else
+        DeviceNode->UserFlags &= ~DNUF_DONT_SHOW_IN_UI;
+
+    if (PnPFlags & PNP_DEVICE_REMOVED || PnPFlags & PNP_DEVICE_DISABLED)
+    {
+        PiSetDevNodeProblem(DeviceNode,
+                            PnPFlags & PNP_DEVICE_DISABLED
+                            ? CM_PROB_HARDWARE_DISABLED
+                            : CM_PROB_DEVICE_NOT_THERE);
+
+        PiSetDevNodeState(DeviceNode, DeviceNodeAwaitingQueuedRemoval);
+    }
+    else if (PnPFlags & PNP_DEVICE_RESOURCE_REQUIREMENTS_CHANGED)
+    {
+        // Query resource rebalance
+
+        if (PnPFlags & PNP_DEVICE_FAILED)
+            DeviceNode->Flags &= ~DNF_NON_STOPPED_REBALANCE;
+        else
+            DeviceNode->Flags |= DNF_NON_STOPPED_REBALANCE;
+
+        // Clear DNF_NO_RESOURCE_REQUIRED just in case (will be set back if needed)
+        DeviceNode->Flags &= ~DNF_NO_RESOURCE_REQUIRED;
+
+        // This will be caught up later by enumeration
+        DeviceNode->Flags |= DNF_RESOURCE_REQUIREMENTS_CHANGED;
+    }
+    else if (PnPFlags & PNP_DEVICE_FAILED)
+    {
+        PiSetDevNodeProblem(DeviceNode, CM_PROB_FAILED_POST_START);
+        PiSetDevNodeState(DeviceNode, DeviceNodeAwaitingQueuedRemoval);
+    }
+
+    return STATUS_SUCCESS;
 }
 
 static
@@ -1547,8 +1627,8 @@ PiStartDeviceFinal(
         DPRINT("IopInitiatePnpIrp() failed (Status 0x%08lx)\n", Status);
     }
 
-    /* Invalidate device state so IRP_MN_QUERY_PNP_DEVICE_STATE is sent */
-    IoInvalidateDeviceState(DeviceNode->PhysicalDeviceObject);
+    // Query the device state (IRP_MN_QUERY_PNP_DEVICE_STATE)
+    PiUpdateDeviceState(DeviceNode);
 
     DPRINT("Sending GUID_DEVICE_ARRIVAL %wZ\n", &DeviceNode->InstancePath);
     IopQueueTargetDeviceEvent(&GUID_DEVICE_ARRIVAL, &DeviceNode->InstancePath);
@@ -1631,6 +1711,10 @@ PiIrpSendRemoveCheckVpb(
     return IopSynchronousCall(targetDevice, &stack, &info);
 }
 
+NTSTATUS
+IopUpdateResourceMapForPnPDevice(
+    IN PDEVICE_NODE DeviceNode);
+
 static
 VOID
 NTAPI
@@ -1642,6 +1726,16 @@ IopSendRemoveDevice(IN PDEVICE_OBJECT DeviceObject)
 
     /* Drivers should never fail a IRP_MN_REMOVE_DEVICE request */
     PiIrpSendRemoveCheckVpb(DeviceObject, IRP_MN_REMOVE_DEVICE);
+
+    /* Start of HACK: update resources stored in registry, so IopDetectResourceConflict works */
+    if (DeviceNode->ResourceList)
+    {
+        ASSERT(DeviceNode->ResourceListTranslated);
+        DeviceNode->ResourceList->Count = 0;
+        DeviceNode->ResourceListTranslated->Count = 0;
+        IopUpdateResourceMapForPnPDevice(DeviceNode);
+    }
+    /* End of HACK */
 
     PiSetDevNodeState(DeviceNode, DeviceNodeRemoved);
     PiNotifyTargetDeviceChange(&GUID_TARGET_DEVICE_REMOVE_COMPLETE, DeviceObject, NULL);
@@ -2006,116 +2100,6 @@ IopRemoveDevice(PDEVICE_NODE DeviceNode)
     return Status;
 }
 
-/*
- * @implemented
- */
-VOID
-NTAPI
-IoInvalidateDeviceState(IN PDEVICE_OBJECT PhysicalDeviceObject)
-{
-    PDEVICE_NODE DeviceNode = IopGetDeviceNode(PhysicalDeviceObject);
-    PNP_DEVICE_STATE PnPFlags;
-    NTSTATUS Status;
-
-    Status = PiIrpQueryPnPDeviceState(DeviceNode, &PnPFlags);
-    if (!NT_SUCCESS(Status))
-    {
-        if (Status != STATUS_NOT_SUPPORTED)
-        {
-            DPRINT1("IRP_MN_QUERY_PNP_DEVICE_STATE failed with status 0x%lx\n", Status);
-        }
-        return;
-    }
-
-    if (PnPFlags & PNP_DEVICE_NOT_DISABLEABLE)
-        DeviceNode->UserFlags |= DNUF_NOT_DISABLEABLE;
-    else
-        DeviceNode->UserFlags &= ~DNUF_NOT_DISABLEABLE;
-
-    if (PnPFlags & PNP_DEVICE_DONT_DISPLAY_IN_UI)
-        DeviceNode->UserFlags |= DNUF_DONT_SHOW_IN_UI;
-    else
-        DeviceNode->UserFlags &= ~DNUF_DONT_SHOW_IN_UI;
-
-    if ((PnPFlags & PNP_DEVICE_REMOVED) ||
-        ((PnPFlags & PNP_DEVICE_FAILED) && !(PnPFlags & PNP_DEVICE_RESOURCE_REQUIREMENTS_CHANGED)))
-    {
-        /* Flag it if it's failed */
-        if (PnPFlags & PNP_DEVICE_FAILED)
-        {
-            PiSetDevNodeProblem(DeviceNode, CM_PROB_FAILED_POST_START);
-        }
-
-        DeviceNode->Flags |= DNF_DEVICE_GONE;
-        PiSetDevNodeState(DeviceNode, DeviceNodeAwaitingQueuedRemoval);
-    }
-    // it doesn't work anyway. A real resource rebalancing should be implemented
-#if 0
-    else if ((PnPFlags & PNP_DEVICE_FAILED) && (PnPFlags & PNP_DEVICE_RESOURCE_REQUIREMENTS_CHANGED))
-    {
-        /* Stop for resource rebalance */
-        Status = IopStopDevice(DeviceNode);
-        if (!NT_SUCCESS(Status))
-        {
-            DPRINT1("Failed to stop device for rebalancing\n");
-
-            /* Stop failed so don't rebalance */
-            PnPFlags &= ~PNP_DEVICE_RESOURCE_REQUIREMENTS_CHANGED;
-        }
-    }
-
-    /* Resource rebalance */
-    if (PnPFlags & PNP_DEVICE_RESOURCE_REQUIREMENTS_CHANGED)
-    {
-        DPRINT("Sending IRP_MN_QUERY_RESOURCES to device stack\n");
-
-        Status = IopInitiatePnpIrp(PhysicalDeviceObject,
-                                   &IoStatusBlock,
-                                   IRP_MN_QUERY_RESOURCES,
-                                   NULL);
-        if (NT_SUCCESS(Status) && IoStatusBlock.Information)
-        {
-            DeviceNode->BootResources =
-            (PCM_RESOURCE_LIST)IoStatusBlock.Information;
-            IopDeviceNodeSetFlag(DeviceNode, DNF_HAS_BOOT_CONFIG);
-        }
-        else
-        {
-            DPRINT("IopInitiatePnpIrp() failed (Status %x) or IoStatusBlock.Information=NULL\n", Status);
-            DeviceNode->BootResources = NULL;
-        }
-
-        DPRINT("Sending IRP_MN_QUERY_RESOURCE_REQUIREMENTS to device stack\n");
-
-        Status = IopInitiatePnpIrp(PhysicalDeviceObject,
-                                   &IoStatusBlock,
-                                   IRP_MN_QUERY_RESOURCE_REQUIREMENTS,
-                                   NULL);
-        if (NT_SUCCESS(Status))
-        {
-            DeviceNode->ResourceRequirements =
-            (PIO_RESOURCE_REQUIREMENTS_LIST)IoStatusBlock.Information;
-        }
-        else
-        {
-            DPRINT("IopInitiatePnpIrp() failed (Status %08lx)\n", Status);
-            DeviceNode->ResourceRequirements = NULL;
-        }
-
-        /* IRP_MN_FILTER_RESOURCE_REQUIREMENTS is called indirectly by IopStartDevice */
-        if (IopStartDevice(DeviceNode) != STATUS_SUCCESS)
-        {
-            DPRINT1("Restart after resource rebalance failed\n");
-
-            DeviceNode->Flags &= ~(DNF_STARTED | DNF_START_REQUEST_PENDING);
-            DeviceNode->Flags |= DNF_START_FAILED;
-
-            IopRemoveDevice(DeviceNode);
-        }
-    }
-#endif
-}
-
 static
 NTSTATUS
 PiEnumerateDevice(
@@ -2310,6 +2294,30 @@ cleanup:
 
 static
 VOID
+PiFakeResourceRebalance(
+    _In_ PDEVICE_NODE DeviceNode)
+{
+    ASSERT(DeviceNode->Flags & DNF_RESOURCE_REQUIREMENTS_CHANGED);
+
+    PCM_RESOURCE_LIST bootConfig = NULL;
+    PIO_RESOURCE_REQUIREMENTS_LIST resourceRequirements = NULL;
+
+    PiIrpQueryResources(DeviceNode, &bootConfig);
+    PiIrpQueryResourceRequirements(DeviceNode, &resourceRequirements);
+
+    DeviceNode->BootResources = bootConfig;
+    DeviceNode->ResourceRequirements = resourceRequirements;
+
+    if (bootConfig)
+    {
+        DeviceNode->Flags |= DNF_HAS_BOOT_CONFIG;
+    }
+
+    DeviceNode->Flags &= ~DNF_RESOURCE_REQUIREMENTS_CHANGED;
+}
+
+static
+VOID
 PiDevNodeStateMachine(
     _In_ PDEVICE_NODE RootNode)
 {
@@ -2387,6 +2395,7 @@ PiDevNodeStateMachine(
                 break;
             case DeviceNodeStartPostWork:
                 DPRINT("DeviceNodeStartPostWork %wZ\n", &currentNode->InstancePath);
+                // TODO: inspect the status
                 status = PiStartDeviceFinal(currentNode);
                 doProcessAgain = TRUE;
                 break;
@@ -2401,12 +2410,28 @@ PiDevNodeStateMachine(
                     PiSetDevNodeState(currentNode, DeviceNodeEnumerateCompletion);
                     doProcessAgain = TRUE;
                 }
+                else if (currentNode->Flags & DNF_RESOURCE_REQUIREMENTS_CHANGED)
+                {
+                    if (currentNode->Flags & DNF_NON_STOPPED_REBALANCE)
+                    {
+                        PiFakeResourceRebalance(currentNode);
+                        currentNode->Flags &= ~DNF_NON_STOPPED_REBALANCE;
+                    }
+                    else
+                    {
+                        PiIrpQueryStopDevice(currentNode);
+                        PiSetDevNodeState(currentNode, DeviceNodeQueryStopped);
+                    }
+
+                    doProcessAgain = TRUE;
+                }
                 break;
             case DeviceNodeQueryStopped:
                 // we're here after sending IRP_MN_QUERY_STOP_DEVICE
                 status = currentNode->CompletionStatus;
                 if (NT_SUCCESS(status))
                 {
+                    PiIrpStopDevice(currentNode);
                     PiSetDevNodeState(currentNode, DeviceNodeStopped);
                 }
                 else
@@ -2414,10 +2439,14 @@ PiDevNodeStateMachine(
                     PiIrpCancelStopDevice(currentNode);
                     PiSetDevNodeState(currentNode, DeviceNodeStarted);
                 }
+                doProcessAgain = TRUE;
                 break;
             case DeviceNodeStopped:
                 // TODO: do resource rebalance (not implemented)
-                ASSERT(FALSE);
+                PiFakeResourceRebalance(currentNode);
+
+                PiSetDevNodeState(currentNode, DeviceNodeDriversAdded);
+                doProcessAgain = TRUE;
                 break;
             case DeviceNodeRestartCompletion:
                 break;
@@ -2503,6 +2532,8 @@ ActionToStr(
             return "PiActionAddBootDevices";
         case PiActionStartDevice:
             return "PiActionStartDevice";
+        case PiActionQueryState:
+            return "PiActionQueryState";
         default:
             return "(request unknown)";
     }
@@ -2542,7 +2573,7 @@ PipDeviceActionWorker(
         {
             case PiActionAddBootDevices:
             {
-                if (deviceNode->State == DeviceNodeInitialized && 
+                if (deviceNode->State == DeviceNodeInitialized &&
                     !(deviceNode->Flags & DNF_HAS_PROBLEM))
                 {
                     status = PiCallDriverAddDevice(deviceNode, PnPBootDriversInitialized);
@@ -2558,13 +2589,17 @@ PipDeviceActionWorker(
             case PiActionResetDevice:
                 // TODO: the operation is a no-op for everything except removed nodes
                 // for removed nodes, it returns them back to DeviceNodeUninitialized
+                if (deviceNode->State == DeviceNodeRemoved)
+                {
+                    deviceNode->State = DeviceNodeUninitialized;
+                }
                 status = STATUS_SUCCESS;
                 break;
 
             case PiActionStartDevice:
                 // This action is triggered from usermode, when a driver is installed
                 // for a non-critical PDO
-                if (deviceNode->State == DeviceNodeInitialized && 
+                if (deviceNode->State == DeviceNodeInitialized &&
                     !(deviceNode->Flags & DNF_HAS_PROBLEM))
                 {
                     PiDevNodeStateMachine(deviceNode);
@@ -2575,6 +2610,23 @@ PipDeviceActionWorker(
                             &deviceNode->InstancePath);
                     status = STATUS_UNSUCCESSFUL;
                 }
+                break;
+
+            case PiActionQueryState:
+                // This action is only valid for started devices. If the device is not yet
+                // started, the PnP manager issues IRP_MN_QUERY_PNP_DEVICE_STATE by itself.
+                if (deviceNode->State == DeviceNodeStarted)
+                {
+                    // Issue a IRP_MN_QUERY_PNP_DEVICE_STATE request: it will update node's flags
+                    // and then do enumeration if something has changed
+                    status = PiUpdateDeviceState(deviceNode);
+                    if (NT_SUCCESS(status))
+                    {
+                        PiDevNodeStateMachine(deviceNode);
+                    }
+                }
+                // TODO: Windows may return STATUS_DELETE_PENDING here
+                status = STATUS_SUCCESS;
                 break;
 
             default:

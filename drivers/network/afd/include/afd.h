@@ -43,6 +43,7 @@
 
 #define TAG_AFD_CONNECT_OPTIONS            'ocfA'
 #define TAG_AFD_DISCONNECT_OPTIONS         'odfA'
+#define TAG_AFD_SUPER_CONNECT_BUFFER       'sdfA'
 #define TAG_AFD_ACCEPT_QUEUE               'qafA'
 #define TAG_AFD_POLL_HANDLE                'hpfA'
 #define TAG_AFD_FCB                        'cffA'
@@ -88,7 +89,8 @@ typedef struct IPADDR_ENTRY {
 #define FUNCTION_ACCEPT                 4
 #define FUNCTION_DISCONNECT             5
 #define FUNCTION_CLOSE                  6
-#define MAX_FUNCTIONS                   7
+#define FUNCTION_CONNECTEX              7
+#define MAX_FUNCTIONS                   8
 
 #define IN_FLIGHT_REQUESTS              5
 
@@ -159,10 +161,10 @@ typedef struct _AFD_STORED_DATAGRAM {
 } AFD_STORED_DATAGRAM, *PAFD_STORED_DATAGRAM;
 
 typedef struct _AFD_FCB {
-    BOOLEAN Locked, Critical, Overread, NonBlocking, OobInline, TdiReceiveClosed, SendClosed;
-    UINT State, Flags, GroupID, GroupType;
+    SOCK_SHARED_INFO SharedData;
+    BOOLEAN Locked, Critical, NonBlocking, OobInline, TdiReceiveClosed, SendClosed;
+    UINT Flags, GroupID, GroupType;
     KIRQL OldIrql;
-    UINT LockCount;
     PVOID CurrentThread;
     PFILE_OBJECT FileObject;
     PAFD_DEVICE_EXTENSION DeviceExt;
@@ -175,6 +177,7 @@ typedef struct _AFD_FCB {
     PTDI_CONNECTION_INFORMATION AddressFrom, ConnectCallInfo, ConnectReturnInfo;
     AFD_TDI_OBJECT AddressFile, Connection;
     AFD_IN_FLIGHT_REQUEST ConnectIrp, ListenIrp, ReceiveIrp, SendIrp, DisconnectIrp;
+    PIRP AcceptIrp;
     AFD_DATA_WINDOW Send, Recv;
     KMUTEX Mutex;
     PKEVENT EventSelect;
@@ -198,6 +201,8 @@ typedef struct _AFD_FCB {
     PVOID DisconnectOptions;
     UINT FilledDisconnectOptions;
     UINT DisconnectOptionsSize;
+    PVOID OnConnectSendBuffer;
+    UINT OnConnectSendBufferSize;
     LIST_ENTRY PendingIrpList[MAX_FUNCTIONS];
     LIST_ENTRY DatagramList;
     LIST_ENTRY PendingConnections;
@@ -212,11 +217,14 @@ AfdBindSocket(PDEVICE_OBJECT DeviceObject, PIRP Irp,
 
 /* connect.c */
 
-NTSTATUS MakeSocketIntoConnection( PAFD_FCB FCB );
+NTSTATUS MakeSocketIntoConnection(PAFD_FCB FCB, BOOL Receive);
 NTSTATUS WarmSocketForConnection( PAFD_FCB FCB );
 NTSTATUS NTAPI
 AfdStreamSocketConnect(PDEVICE_OBJECT DeviceObject, PIRP Irp,
-		       PIO_STACK_LOCATION IrpSp);
+                       PIO_STACK_LOCATION IrpSp);
+NTSTATUS NTAPI
+AfdStreamSocketSuperConnect(PDEVICE_OBJECT DeviceObject, PIRP Irp,
+		                    PIO_STACK_LOCATION IrpSp);
 NTSTATUS NTAPI
 AfdGetConnectData(PDEVICE_OBJECT DeviceObject, PIRP Irp,
 	          PIO_STACK_LOCATION IrpSp);
@@ -276,6 +284,9 @@ NTSTATUS AfdListenSocket(PDEVICE_OBJECT DeviceObject, PIRP Irp,
 NTSTATUS AfdAccept( PDEVICE_OBJECT DeviceObject, PIRP Irp,
 		    PIO_STACK_LOCATION IrpSp );
 
+NTSTATUS AfdSuperAccept( PDEVICE_OBJECT DeviceObject, PIRP Irp,
+		    PIO_STACK_LOCATION IrpSp );
+
 /* lock.c */
 
 PAFD_WSABUF LockBuffers( PAFD_WSABUF Buf, UINT Count,
@@ -307,6 +318,8 @@ BOOLEAN CheckUnlockExtraBuffers(PAFD_FCB FCB, PIO_STACK_LOCATION IrpSp);
 
 /* read.c */
 
+IO_COMPLETION_ROUTINE AcceptExReceiveComplete;
+
 IO_COMPLETION_ROUTINE ReceiveComplete;
 
 IO_COMPLETION_ROUTINE PacketSocketRecvComplete;
@@ -336,71 +349,6 @@ VOID ZeroEvents( PAFD_HANDLE HandleArray,
 VOID SignalSocket(
    PAFD_ACTIVE_POLL Poll OPTIONAL, PIRP _Irp OPTIONAL,
    PAFD_POLL_INFO PollReq, NTSTATUS Status);
-
-/* tdi.c */
-
-NTSTATUS TdiOpenAddressFile(
-    PUNICODE_STRING DeviceName,
-    PTRANSPORT_ADDRESS Name,
-    ULONG ShareType,
-    PHANDLE AddressHandle,
-    PFILE_OBJECT *AddressObject);
-
-NTSTATUS TdiAssociateAddressFile(
-  HANDLE AddressHandle,
-  PFILE_OBJECT ConnectionObject);
-
-NTSTATUS TdiDisassociateAddressFile(
-  PFILE_OBJECT ConnectionObject);
-
-NTSTATUS TdiListen
-( PIRP *Irp,
-  PFILE_OBJECT ConnectionObject,
-  PTDI_CONNECTION_INFORMATION *RequestConnectionInfo,
-  PTDI_CONNECTION_INFORMATION *ReturnConnectionInfo,
-  PIO_COMPLETION_ROUTINE  CompletionRoutine,
-  PVOID CompletionContext);
-
-NTSTATUS TdiReceive
-( PIRP *Irp,
-  PFILE_OBJECT ConnectionObject,
-  USHORT Flags,
-  PCHAR Buffer,
-  UINT BufferLength,
-  PIO_COMPLETION_ROUTINE  CompletionRoutine,
-  PVOID CompletionContext);
-
-NTSTATUS TdiSend
-( PIRP *Irp,
-  PFILE_OBJECT ConnectionObject,
-  USHORT Flags,
-  PCHAR Buffer,
-  UINT BufferLength,
-  PIO_COMPLETION_ROUTINE  CompletionRoutine,
-  PVOID CompletionContext);
-
-NTSTATUS TdiReceiveDatagram(
-    PIRP *Irp,
-    PFILE_OBJECT TransportObject,
-    USHORT Flags,
-    PCHAR Buffer,
-    UINT BufferLength,
-    PTDI_CONNECTION_INFORMATION From,
-    PIO_COMPLETION_ROUTINE CompletionRoutine,
-    PVOID CompletionContext);
-
-NTSTATUS TdiSendDatagram(
-    PIRP *Irp,
-    PFILE_OBJECT TransportObject,
-    PCHAR Buffer,
-    UINT BufferLength,
-    PTDI_CONNECTION_INFORMATION To,
-    PIO_COMPLETION_ROUTINE CompletionRoutine,
-    PVOID CompletionContext);
-
-NTSTATUS TdiQueryMaxDatagramLength(
-        PFILE_OBJECT FileObject,
-        PUINT MaxDatagramLength);
 
 /* write.c */
 

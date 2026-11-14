@@ -50,7 +50,7 @@ BEGIN
     MENUITEM SEPARATOR
     MENUITEM "关闭(&C)\tCtrl+F4", SC_CLOSE
     MENUITEM SEPARATOR
-    MENUITEM "下一步(&T)\tCtrl+F6", SC_NEXTWINDOW
+    MENUITEM "下一个窗口(&T)\tCtrl+F6", SC_NEXTWINDOW
 END
 
 /* Strings */
@@ -58,7 +58,7 @@ END
 STRINGTABLE
 BEGIN
     IDS_ERROR "错误"
-    IDS_NOT_RESPONDING " (无响应)"
+    IDS_NOT_RESPONDING "（无响应）"
     IDS_ASK_TERMINATE "这个应用程序没有响应，是否需要结束此程序?"
     IDS_HUNG_UP_TITLE "无响应。"
     IDS_OK "确定"

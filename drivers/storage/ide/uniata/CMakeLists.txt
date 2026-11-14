@@ -1,8 +1,5 @@
 
-
-include_directories(
-    BEFORE ${CMAKE_CURRENT_SOURCE_DIR}
-    inc)
+include_directories(inc)
 
 #add_definitions(-D_DEBUG)
 
@@ -20,21 +17,33 @@ list(APPEND SOURCE
     stdafx.h)
 
 add_library(uniata MODULE ${SOURCE} idedma.rc)
+add_pch(uniata stdafx.h SOURCE)
 
-if(USE_CLANG_CL OR (NOT MSVC))
-    target_compile_options(uniata PRIVATE "-Wno-narrowing")
-    if(USE_CLANG_CL)
-        target_compile_options(uniata PRIVATE "-Wno-unused-const-variable")
-    endif()
+if(MSVC)
+    # Disable warning C4267: '=': conversion from 'size_t' to 'USHORT', possible loss of data
+    # Disable warning C4838: conversion from 'int' to 'ULONG' requires a narrowing conversion
+    target_compile_options(uniata PRIVATE /wd4267 /wd4838)
+endif()
+
+if(CMAKE_C_COMPILER_ID STREQUAL "GNU" OR CMAKE_C_COMPILER_ID STREQUAL "Clang")
+    target_compile_options(uniata PRIVATE -Wno-narrowing -Wno-unused-but-set-variable)
 endif()
 
 if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
-    target_compile_options(uniata PRIVATE -Wno-unused-but-set-variable)
+    target_compile_options(uniata PRIVATE -Wno-misleading-indentation)
 endif()
 
-add_pch(uniata stdafx.h SOURCE)
+if(CMAKE_C_COMPILER_ID STREQUAL "Clang")
+    target_compile_options(uniata PRIVATE -Wno-unused-const-variable)
+endif()
+
 set_module_type(uniata kernelmodedriver)
+target_compile_definitions(uniata PRIVATE _CRT_NON_CONFORMING_SWPRINTFS)
 add_importlibs(uniata scsiport ntoskrnl hal)
 add_cd_file(TARGET uniata DESTINATION reactos/system32/drivers NO_CAB FOR all)
-add_registry_inf(uniata_reg.inf)
+# add_registry_inf(uniata_reg.inf)
 add_driver_inf(uniata uniata_comm.inf)
+
+if(ENABLE_UNIATA)
+    set_target_properties(uniata PROPERTIES OUTPUT_NAME "pciide" PDB_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+endif()

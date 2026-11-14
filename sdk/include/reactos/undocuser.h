@@ -1,6 +1,8 @@
 #ifndef _UNDOCUSER_H
 #define _UNDOCUSER_H
 
+#pragma once
+
 #ifdef __cplusplus
 extern "C" {
 #endif /* defined(__cplusplus) */
@@ -36,6 +38,7 @@ extern "C" {
 #define WM_COPYGLOBALDATA   0x00000049
 #define WM_LOGONNOTIFY      0x0000004C
 #define WM_KEYF1            0x0000004D
+#define WM_FINALDESTROY     0x00000070
 #define WM_KLUDGEMINRECT    0x0000008B
 #define WM_UAHDRAWMENU      0x00000091
 #define WM_UAHDRAWITEM      0x00000092 // WM_DRAWITEM
@@ -61,7 +64,7 @@ extern "C" {
 #define WM_CBT              0x000003FF // ReactOS only.
 #define WM_MAXIMUM          0x0001FFFF
 
-/* Non SDK DCE types.*/
+/* Non SDK DCE types */
 #define DCX_USESTYLE     0x00010000
 #define DCX_KEEPCLIPRGN  0x00040000
 #define DCX_KEEPLAYOUT   0x40000000
@@ -157,10 +160,13 @@ extern "C" {
 #define DFCS_MENUARROWDOWN 0x0010
 
 //
-// Undocumented flags for CreateProcess
+// Win32-user-specific undocumented flags for CreateProcess
 //
+#ifndef STARTF_INHERITDESKTOP
 #define STARTF_INHERITDESKTOP   0x40000000
 #define STARTF_SCREENSAVER      0x80000000
+#endif
+
 
 #define MOD_WINLOGON_SAS 0x8000
 
@@ -172,6 +178,12 @@ extern "C" {
 #define SBRG_SCROLLBOX     3 /* the scroll box */
 #define SBRG_PAGEDOWNLEFT  4 /* the page down or page left region */
 #define SBRG_BOTTOMLEFTBTN 5 /* the bottom or left button */
+
+// Keyboard Layout undocumented flags
+#define KL_UNLOAD 0x20000000
+
+// co_IntUnloadKeyboardLayoutEx undocumented flags
+#define UKL_NOACTIVATENEXT 0x80000000
 
 BOOL WINAPI UpdatePerUserSystemParameters(DWORD dwReserved, BOOL bEnable);
 BOOL WINAPI SetLogonNotifyWindow(HWND Wnd);
@@ -190,16 +202,27 @@ LONG WINAPI CsrBroadcastSystemMessageExW(DWORD dwflags,
                                          WPARAM wParam,
                                          LPARAM lParam,
                                          PBSMINFO pBSMInfo);
-BOOL WINAPI CliImmSetHotKey(DWORD dwID, UINT uModifiers, UINT uVirtualKey, HKL hKl);
+
+BOOL WINAPI
+CliImmSetHotKey(
+    _In_ DWORD dwID,
+    _In_ UINT uModifiers,
+    _In_ UINT uVirtualKey,
+    _In_opt_ _When_((dwAction == SETIMEHOTKEY_ADD) &&
+                    !(IME_HOTKEY_DSWITCH_FIRST <= dwHotKeyId &&
+                      dwHotKeyId <= IME_HOTKEY_DSWITCH_LAST), _Null_) HKL hKL);
+
+BOOL WINAPI IsServerSideWindow(HWND);
 HWND WINAPI SetTaskmanWindow(HWND);
 HWND WINAPI GetTaskmanWindow(VOID);
 HWND WINAPI GetProgmanWindow(VOID);
 BOOL WINAPI SetShellWindow(HWND);
 BOOL WINAPI SetShellWindowEx(HWND, HWND);
+BOOL WINAPI User32InitializeImmEntryTable(_In_ DWORD);
 
 BOOL WINAPI DrawCaptionTempA(HWND,HDC,const RECT*,HFONT,HICON,LPCSTR,UINT);
 BOOL WINAPI DrawCaptionTempW(HWND,HDC,const RECT*,HFONT,HICON,LPCWSTR,UINT);
-BOOL WINAPI PaintMenuBar(HWND hWnd, HDC hDC, ULONG left, ULONG right, ULONG top, BOOL bActive); 
+BOOL WINAPI PaintMenuBar(HWND hWnd, HDC hDC, ULONG left, ULONG right, ULONG top, BOOL bActive);
 
 #ifdef UNICODE
 #define DrawCaptionTemp DrawCaptionTempW
@@ -295,6 +318,12 @@ MessageBoxTimeoutW(
 
 LPCWSTR WINAPI MB_GetString(IN UINT wBtn);
 
+/* dwType for NtUserUpdateInputContext */
+typedef enum _UPDATE_INPUT_CONTEXT
+{
+    UIC_CLIENTIMCDATA = 0,
+    UIC_IMEWINDOW
+} UPDATE_INPUT_CONTEXT;
 
 //
 // User api hook
@@ -378,8 +407,25 @@ BOOL WINAPI RegisterUserApiHook(PUSERAPIHOOKINFO puah);
 
 BOOL WINAPI UnregisterUserApiHook(VOID);
 
+/* dwType for NtUserQueryInputContext */
+typedef enum _QUERY_INPUT_CONTEXT
+{
+    QIC_INPUTPROCESSID = 0,
+    QIC_INPUTTHREADID,
+    QIC_DEFAULTWINDOWIME,
+    QIC_DEFAULTIMC
+} QUERY_INPUT_CONTEXT;
+
+/* NtUserSetImeHotKey actions */
+typedef enum tagSETIMEHOTKEY_ACTION
+{
+    SETIMEHOTKEY_DELETE = 1,
+    SETIMEHOTKEY_ADD,
+    SETIMEHOTKEY_INITIALIZE
+} SETIMEHOTKEY_ACTION;
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif /* defined(__cplusplus) */
 
-#endif
+#endif /* _UNDOCUSER_H */

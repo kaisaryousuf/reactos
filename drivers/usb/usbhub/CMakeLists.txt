@@ -1,6 +1,5 @@
 
 add_definitions(-DDEBUG_MODE)
-include_directories(${REACTOS_SOURCE_DIR}/ntoskrnl/include)
 
 list(APPEND SOURCE
     debug.c
@@ -16,9 +15,13 @@ add_library(usbhub MODULE
     ${SOURCE}
     ${PCH_SKIP_SOURCE}
     usbhub.rc)
+add_pch(usbhub usbhub.h "${PCH_SKIP_SOURCE}")
+
+target_compile_definitions(usbhub
+    # HACK: Disabled until USB Stack is reinvestigated.
+    PRIVATE NO_KERNEL_LIST_ENTRY_CHECKS)
 
 target_link_libraries(usbhub ${PSEH_LIB})
 set_module_type(usbhub kernelmodedriver)
 add_importlibs(usbhub ntoskrnl hal wmilib usbd)
-add_pch(usbhub usbhub.h "${PCH_SKIP_SOURCE}")
 add_cd_file(TARGET usbhub DESTINATION reactos/system32/drivers NO_CAB FOR all)

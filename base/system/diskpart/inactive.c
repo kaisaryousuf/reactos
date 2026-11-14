@@ -8,7 +8,56 @@
 
 #include "diskpart.h"
 
-BOOL inactive_main(INT argc, LPWSTR *argv)
+#define NDEBUG
+#include <debug.h>
+
+
+EXIT_CODE
+inactive_main(
+    _In_ INT argc,
+    _In_ PWSTR *argv)
 {
-    return TRUE;
+    NTSTATUS Status;
+
+    DPRINT("Inactive()\n");
+
+    if (CurrentDisk == NULL)
+    {
+        ConResPuts(StdOut, IDS_SELECT_NO_DISK);
+        return EXIT_SUCCESS;
+    }
+
+    if (CurrentPartition == NULL)
+    {
+        ConResPuts(StdOut, IDS_SELECT_NO_PARTITION);
+        return EXIT_SUCCESS;
+    }
+
+    if (CurrentDisk->PartitionStyle == PARTITION_STYLE_MBR)
+    {
+        if (!CurrentPartition->Mbr.BootIndicator)
+        {
+            ConResPuts(StdOut, IDS_INACTIVE_ALREADY);
+            return EXIT_SUCCESS;
+        }
+
+        CurrentPartition->Mbr.BootIndicator = FALSE;
+        CurrentDisk->Dirty = TRUE;
+        UpdateMbrDiskLayout(CurrentDisk);
+        Status = WriteMbrPartitions(CurrentDisk);
+        if (NT_SUCCESS(Status))
+        {
+            ConResPuts(StdOut, IDS_INACTIVE_SUCCESS);
+        }
+        else
+        {
+            ConResPuts(StdOut, IDS_INACTIVE_FAIL);
+        }
+    }
+    else
+    {
+        ConResPuts(StdOut, IDS_INACTIVE_NO_MBR);
+    }
+
+    return EXIT_SUCCESS;
 }

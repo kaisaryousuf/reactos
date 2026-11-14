@@ -36,6 +36,16 @@ WINE_DEFAULT_DEBUG_CHANNEL(CMenuToolbars);
 // User-defined timer ID used while hot-tracking around the menu
 #define TIMERID_HOTTRACK 1
 
+static inline SFGAOF GetFolderItemBaseType(UINT sfgao)
+{
+    return (sfgao & SFGAO_STREAM) ? SFGAO_STREAM : (sfgao & SFGAO_FOLDER);
+}
+
+static SFGAOF GetFolderItemBaseType(IShellFolder *psf, LPCITEMIDLIST pidl)
+{
+    return GetFolderItemBaseType(SHELL_GetAttributesOf(psf, pidl, SFGAO_FOLDER | SFGAO_STREAM));
+}
+
 LRESULT CMenuToolbarBase::OnWinEventWrap(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled)
 {
     LRESULT lr;
@@ -162,7 +172,7 @@ HRESULT CMenuToolbarBase::OnCustomDraw(LPNMTBCUSTOMDRAW cdraw, LRESULT * theResu
         return S_OK;
 
     case CDDS_ITEMPREPAINT:
-        
+
         HWND tlw;
         m_menuBand->_GetTopLevelWindow(&tlw);
 
@@ -246,7 +256,7 @@ HRESULT CMenuToolbarBase::OnCustomDraw(LPNMTBCUSTOMDRAW cdraw, LRESULT * theResu
             WCHAR text [] = L"8";
 
             // Configure the font to draw with Marlett, keeping the current background color as-is
-            SelectObject(cdraw->nmcd.hdc, m_marlett);
+            HGDIOBJ hFontOld = SelectObject(cdraw->nmcd.hdc, m_marlett);
             SetBkMode(cdraw->nmcd.hdc, TRANSPARENT);
 
             // Tweak the alignment by 1 pixel so the menu draws like the Windows start menu.
@@ -255,9 +265,15 @@ HRESULT CMenuToolbarBase::OnCustomDraw(LPNMTBCUSTOMDRAW cdraw, LRESULT * theResu
 
             // The arrow is drawn at the right of the item's rect, aligned vertically.
             DrawTextEx(cdraw->nmcd.hdc, text, 1, &rc, DT_NOCLIP | DT_VCENTER | DT_RIGHT | DT_SINGLELINE, NULL);
+
+            SelectObject(cdraw->nmcd.hdc, hFontOld);
         }
         *theResult = TRUE;
         return S_OK;
+
+    default:
+        *theResult = 0L;
+        break;
     }
     return S_OK;
 }
@@ -290,10 +306,11 @@ CMenuToolbarBase::CMenuToolbarBase(CMenuBand *menuBand, BOOL usePager) :
 
 CMenuToolbarBase::~CMenuToolbarBase()
 {
-    ClearToolbar();
-
     if (m_hWnd)
+    {
+        ClearToolbar();
         DestroyWindow();
+    }
 
     if (m_pager.m_hWnd)
         m_pager.DestroyWindow();
@@ -308,6 +325,9 @@ void CMenuToolbarBase::InvalidateDraw()
 
 HRESULT CMenuToolbarBase::ShowDW(BOOL fShow)
 {
+    if (m_hWnd == NULL)
+        return S_FALSE;
+
     ShowWindow(fShow ? SW_SHOW : SW_HIDE);
 
     // Ensure that the right image list is assigned to the toolbar
@@ -399,7 +419,9 @@ HRESULT CMenuToolbarBase::CreateToolbar(HWND hwndParent, DWORD dwFlags)
     }
 
     // HACK & FIXME: CORE-17505
-    SubclassWindow(CToolbar::Create(hwndParent, tbStyles, tbExStyles));
+    HWND toolbar = CToolbar::Create(hwndParent, tbStyles, tbExStyles);
+    m_hWnd = NULL;
+    SubclassWindow(toolbar);
 
     SetWindowTheme(m_hWnd, L"", L"");
 
@@ -421,7 +443,7 @@ HRESULT CMenuToolbarBase::CreateToolbar(HWND hwndParent, DWORD dwFlags)
         m_pager.SubclassWindow(hwndPager);
 
         ::SetParent(m_hWnd, hwndPager);
-        
+
         m_pager.SendMessageW(PGM_SETCHILD, 0, reinterpret_cast<LPARAM>(m_hWnd));
     }
 
@@ -709,7 +731,7 @@ HRESULT CMenuToolbarBase::PopupSubMenu(UINT iItem, UINT index, IShellMenu* child
 
     if (!GetItemRect(index, &rc))
         return E_FAIL;
-    
+
     POINT a = { rc.left, rc.top };
     POINT b = { rc.right, rc.bottom };
 
@@ -841,7 +863,11 @@ HRESULT CMenuToolbarBase::MenuBarMouseDown(INT iIndex, BOOL isLButton)
 
     GetButton(iIndex, &btn);
 
-    if ((m_initFlags & SMINIT_VERTICAL) 
+    // Ignore disabled items
+    if (!(btn.fsState & TBSTATE_ENABLED))
+        return S_OK;
+
+    if ((m_initFlags & SMINIT_VERTICAL)
         || m_popupBar
         || m_cancelingPopup)
     {
@@ -862,6 +888,10 @@ HRESULT CMenuToolbarBase::MenuBarMouseUp(INT iIndex, BOOL isLButton)
         return S_OK;
 
     GetButton(iIndex, &btn);
+
+    // Ignore disabled items
+    if (!(btn.fsState & TBSTATE_ENABLED))
+        return S_OK;
 
     if (isLButton)
         return ProcessClick(btn.idCommand);
@@ -1036,7 +1066,7 @@ HRESULT CMenuToolbarBase::AddPlaceholder()
 {
     TBBUTTON tbb = { 0 };
     WCHAR MenuString[128];
-    
+
     LoadStringW(GetModuleHandle(L"shell32.dll"), IDS_MENU_EMPTY, MenuString, _countof(MenuString));
 
     tbb.fsState = 0;
@@ -1246,7 +1276,7 @@ HRESULT CMenuStaticToolbar::OnDeletingButton(const NMTOOLBAR * tb)
 HRESULT CMenuStaticToolbar::InternalContextMenu(INT iItem, INT index, DWORD_PTR dwData, POINT pt)
 {
     CComPtr<IContextMenu> contextMenu;
-    HRESULT hr = m_menuBand->_CallCBWithItemId(iItem, SMC_GETOBJECT, 
+    HRESULT hr = m_menuBand->_CallCBWithItemId(iItem, SMC_GETOBJECT,
         reinterpret_cast<WPARAM>(&IID_IContextMenu), reinterpret_cast<LPARAM>(&contextMenu));
     if (hr != S_OK)
         return hr;
@@ -1311,6 +1341,18 @@ int CALLBACK PidlListSort(void* item1, void* item2, LPARAM lParam)
     return (int)(short)LOWORD(hr);
 }
 
+static BOOL IsPidlPrograms(LPCITEMIDLIST pidlTarget)
+{
+    WCHAR szTarget[MAX_PATH], szPath[MAX_PATH];
+    if (!SHGetPathFromIDListW(pidlTarget, szTarget))
+        return FALSE;
+    SHGetSpecialFolderPathW(NULL, szPath, CSIDL_COMMON_PROGRAMS, FALSE);
+    if (lstrcmpiW(szTarget, szPath) == 0)
+        return TRUE;
+    SHGetSpecialFolderPathW(NULL, szPath, CSIDL_PROGRAMS, FALSE);
+    return (lstrcmpiW(szTarget, szPath) == 0);
+}
+
 HRESULT CMenuSFToolbar::FillToolbar(BOOL clearFirst)
 {
     HRESULT hr;
@@ -1349,17 +1391,26 @@ HRESULT CMenuSFToolbar::FillToolbar(BOOL clearFirst)
 
     DPA_Sort(dpaSort, PidlListSort, (LPARAM) m_shellFolder.p);
 
+    BOOL StartMenuAdminTools = SHRegGetBoolUSValueW(
+        L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+        L"StartMenuAdminTools", FALSE, TRUE);
+
+    BOOL bMustHideAdminTools = IsPidlPrograms(m_idList) && !StartMenuAdminTools;
+    TRACE("StartMenuAdminTools: %d\n", StartMenuAdminTools);
+    TRACE("bMustHideAdminTools: %d\n", bMustHideAdminTools);
+
+    WCHAR szAdminTools[MAX_PATH];
+    if (bMustHideAdminTools)
+    {
+        LoadStringW(GetModuleHandleW(L"shell32.dll"), IDS_ADMINISTRATIVETOOLS,
+                    szAdminTools, _countof(szAdminTools));
+    }
+
     for (int i = 0; i<DPA_GetPtrCount(dpaSort);)
     {
-        PWSTR MenuString;
-
-        INT index = 0;
-        INT indexOpen = 0;
-
-        STRRET sr = { STRRET_CSTR, { 0 } };
-
         item = (LPITEMIDLIST)DPA_GetPtr(dpaSort, i);
 
+        STRRET sr = { STRRET_CSTR };
         hr = m_shellFolder->GetDisplayNameOf(item, SIGDN_NORMALDISPLAY, &sr);
         if (FAILED_UNEXPECTEDLY(hr))
         {
@@ -1367,21 +1418,23 @@ HRESULT CMenuSFToolbar::FillToolbar(BOOL clearFirst)
             return hr;
         }
 
+        PWSTR MenuString;
         StrRetToStr(&sr, NULL, &MenuString);
 
-        index = SHMapPIDLToSystemImageListIndex(m_shellFolder, item, &indexOpen);
+        if (bMustHideAdminTools && lstrcmpiW(MenuString, szAdminTools) == 0)
+        {
+            ++i;
+            CoTaskMemFree(MenuString);
+            continue;
+        }
 
-        LPCITEMIDLIST itemc = item;
-
-        SFGAOF attrs = SFGAO_FOLDER;
-        hr = m_shellFolder->GetAttributesOf(1, &itemc, &attrs);
-
-        DWORD_PTR dwData = reinterpret_cast<DWORD_PTR>(item);
+        INT index = SHMapPIDLToSystemImageListIndex(m_shellFolder, item, NULL);
+        BOOL isPureFolder = GetFolderItemBaseType(m_shellFolder, item) == SFGAO_FOLDER; // Don't expand .cab/.zip
 
         // Fetch next item already, so we know if the current one is the last
         i++;
 
-        AddButton(i, MenuString, attrs & SFGAO_FOLDER, index, dwData, i >= DPA_GetPtrCount(dpaSort));
+        AddButton(i, MenuString, isPureFolder, index, reinterpret_cast<DWORD_PTR>(item), i >= DPA_GetPtrCount(dpaSort));
 
         CoTaskMemFree(MenuString);
     }
@@ -1509,13 +1562,7 @@ HRESULT CMenuSFToolbar::InternalPopupItem(INT iItem, INT index, DWORD_PTR dwData
 
 HRESULT CMenuSFToolbar::InternalHasSubMenu(INT iItem, INT index, DWORD_PTR dwData)
 {
-    HRESULT hr;
     LPCITEMIDLIST pidl = reinterpret_cast<LPITEMIDLIST>(dwData);
-
-    SFGAOF attrs = SFGAO_FOLDER;
-    hr = m_shellFolder->GetAttributesOf(1, &pidl, &attrs);
-    if (FAILED_UNEXPECTEDLY(hr))
-        return hr;
-
-    return (attrs & SFGAO_FOLDER) ? S_OK : S_FALSE;
+    BOOL isPureFolder = GetFolderItemBaseType(m_shellFolder, pidl) == SFGAO_FOLDER;
+    return isPureFolder ? S_OK : S_FALSE;
 }

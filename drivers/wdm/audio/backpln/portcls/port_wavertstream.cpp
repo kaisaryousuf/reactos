@@ -8,39 +8,17 @@
 
 #include "private.hpp"
 
-#ifndef YDEBUG
 #define NDEBUG
-#endif
-
 #include <debug.h>
 
-class CPortWaveRTStreamInit : public IPortWaveRTStreamInit
+class CPortWaveRTStreamInit : public CUnknownImpl<IPortWaveRTStreamInit>
 {
 public:
     STDMETHODIMP QueryInterface( REFIID InterfaceId, PVOID* Interface);
 
-    STDMETHODIMP_(ULONG) AddRef()
-    {
-        InterlockedIncrement(&m_Ref);
-        return m_Ref;
-    }
-    STDMETHODIMP_(ULONG) Release()
-    {
-        InterlockedDecrement(&m_Ref);
-
-        if (!m_Ref)
-        {
-            delete this;
-            return 0;
-        }
-        return m_Ref;
-    }
     IMP_IPortWaveRTStreamInit;
     CPortWaveRTStreamInit(IUnknown *OuterUnknown) {}
     virtual ~CPortWaveRTStreamInit() {}
-
-protected:
-    LONG m_Ref;
 
 };
 
@@ -63,14 +41,13 @@ CPortWaveRTStreamInit::QueryInterface(
     return STATUS_UNSUCCESSFUL;
 }
 
-
 PMDL
 NTAPI
 CPortWaveRTStreamInit::AllocatePagesForMdl(
     IN PHYSICAL_ADDRESS HighAddress,
     IN SIZE_T TotalBytes)
 {
-    return MmAllocatePagesForMdl(RtlConvertUlongToLargeInteger(0), HighAddress, RtlConvertUlongToLargeInteger(0), TotalBytes);
+    return MmAllocatePagesForMdl(PHYSICAL_ADDRESS{0LL}, HighAddress, PHYSICAL_ADDRESS{0LL}, TotalBytes);
 }
 
 PMDL
@@ -84,7 +61,7 @@ CPortWaveRTStreamInit::AllocateContiguousPagesForMdl(
     PVOID Buffer;
     PHYSICAL_ADDRESS Address;
 
-    Buffer = MmAllocateContiguousMemorySpecifyCache(TotalBytes, LowAddress, HighAddress, RtlConvertUlongToLargeInteger(0), MmNonCached);
+    Buffer = MmAllocateContiguousMemorySpecifyCache(TotalBytes, LowAddress, HighAddress, PHYSICAL_ADDRESS{0LL}, MmNonCached);
     if (!Buffer)
     {
         DPRINT("MmAllocateContiguousMemorySpecifyCache failed\n");
@@ -95,7 +72,7 @@ CPortWaveRTStreamInit::AllocateContiguousPagesForMdl(
 
     MmFreeContiguousMemorySpecifyCache(Buffer, TotalBytes, MmNonCached);
 
-    Mdl = MmAllocatePagesForMdl(Address, HighAddress, RtlConvertUlongToLargeInteger(0), TotalBytes);
+    Mdl = MmAllocatePagesForMdl(Address, HighAddress, PHYSICAL_ADDRESS{0LL}, TotalBytes);
     if (!Mdl)
     {
         DPRINT("MmAllocatePagesForMdl failed\n");
@@ -164,7 +141,7 @@ CPortWaveRTStreamInit::GetPhysicalPageAddress(
     if (Pages <= Index)
     {
         DPRINT("OutOfBounds: Pages %u Index %u\n", Pages, Index);
-        return RtlConvertUlongToLargeInteger(0);
+        return PHYSICAL_ADDRESS{0LL};
     }
 
     Buffer = (PUCHAR)MmGetSystemAddressForMdlSafe(MemoryDescriptorList, LowPagePriority) + (Index * PAGE_SIZE);
@@ -175,7 +152,6 @@ CPortWaveRTStreamInit::GetPhysicalPageAddress(
 
     return Result;
 }
-
 
 NTSTATUS
 NewPortWaveRTStream(

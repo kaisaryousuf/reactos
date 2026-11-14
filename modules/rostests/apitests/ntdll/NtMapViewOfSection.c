@@ -8,6 +8,14 @@
 
 #include "precomp.h"
 
+#include <pseh/pseh2.h>
+
+#ifdef _M_IX86
+#define IsX86() TRUE
+#else
+#define IsX86() FALSE
+#endif
+
 void
 Test_PageFileSection(void)
 {
@@ -77,7 +85,7 @@ Test_PageFileSection(void)
                                 ViewShare,
                                 MEM_COMMIT,
                                 PAGE_READWRITE);
-    ok_ntstatus(Status, STATUS_INVALID_PARAMETER_9);
+    ok_ntstatus(Status, (GetNTVersion() >= _WIN32_WINNT_WIN10) ? STATUS_INVALID_PARAMETER : STATUS_INVALID_PARAMETER_9);
 
     /* Try to map 1 page, with free base address and zero bits compatible with 64k granularity */
     BaseAddress = NULL;
@@ -94,31 +102,22 @@ Test_PageFileSection(void)
                                 0,
                                 PAGE_READWRITE);
     ok_ntstatus(Status, STATUS_SUCCESS);
+    ok(((ULONG_PTR)BaseAddress & 0x0000FFFF) == 0, "BaseAddress not 64k aligned: %p\n", BaseAddress);
+    ok(((ULONG_PTR)BaseAddress & (ULONG_PTR)0xFFFFFFFFFFC00000ULL) == 0, "Upper bits are not all zero: %p\n", BaseAddress);
     Status = NtUnmapViewOfSection(NtCurrentProcess(), BaseAddress);
     ok_ntstatus(Status, STATUS_SUCCESS);
 
-{
-    ULONG_PTR gran = 64 * 1024;
-    ULONG_PTR ZeroBits = 11;
-
-    ok_hex(gran, 0x10000);
-    gran <<= ZeroBits;
-    ok_hex(gran, 0x8000000);
-    gran >>= ZeroBits;
-    ok_hex(gran, 0x10000);
-
-    ok_hex((gran << ZeroBits) >> ZeroBits, gran);
-
-}
-
-    /* Try to map 1 page, with free base address and zero bits incompatible with 64k granularity */
+    /* Try to map 1 page, with free base address and zero bits incompatible with 64k granularity.
+     * Note: On 64 bit Windows, ZeroBits != 0 means that the upper (32 + ZeroBits) bits must be zero.
+     * While the documented maximum for ZeroBits is "less than 21", to not break 64 bit alignment,
+     * we need to keep at least 17 bits (i.e., ZeroBits must be less than 16). */
     BaseAddress = NULL;
     SectionOffset.QuadPart = 0;
     ViewSize = 0x1000;
     Status = NtMapViewOfSection(SectionHandle,
                                 NtCurrentProcess(),
                                 &BaseAddress,
-                                11,
+                                (32 - 16),
                                 0,
                                 &SectionOffset,
                                 &ViewSize,
@@ -159,7 +158,34 @@ Test_PageFileSection(void)
                                 ViewShare,
                                 0,
                                 PAGE_READWRITE);
-    ok_ntstatus(Status, STATUS_INVALID_PARAMETER_4);
+    ok_ntstatus(Status, (GetNTVersion() >= _WIN32_WINNT_WIN10) ? STATUS_INVALID_PARAMETER : STATUS_INVALID_PARAMETER_4);
+
+    /* Try using ZeroBits like a bitmask */
+    BaseAddress = NULL;
+    SectionOffset.QuadPart = 0;
+    ViewSize = 0x1000;
+    Status = NtMapViewOfSection(SectionHandle,
+                                NtCurrentProcess(),
+                                &BaseAddress,
+                                0x0FFFFFFF,
+                                0,
+                                &SectionOffset,
+                                &ViewSize,
+                                ViewShare,
+                                0,
+                                PAGE_READWRITE);
+    if (GetNTVersion() >= _WIN32_WINNT_VISTA)
+    {
+        ok_ntstatus(Status, STATUS_SUCCESS);
+        ok(((ULONG_PTR)BaseAddress & 0x0000FFFF) == 0, "BaseAddress not 64k aligned: %p\n", BaseAddress);
+        ok(((ULONG_PTR)BaseAddress & (ULONG_PTR)0xFFFFFFFFF0000000ULL) == 0, "Upper bits are not all zero: %p\n", BaseAddress);
+    }
+    else
+    {
+        ok_ntstatus(Status, STATUS_INVALID_PARAMETER_4);
+        if (!NT_SUCCESS(Status))
+            return;
+    }
 
     /* Map 2 pages, without MEM_COMMIT */
     BaseAddress = (PVOID)0x30000000;
@@ -370,7 +396,7 @@ Test_PageFileSection(void)
                                 ViewShare,
                                 MEM_RESERVE,
                                 PAGE_READWRITE);
-    ok_ntstatus(Status, STATUS_INVALID_PARAMETER_9);
+    ok_ntstatus(Status, (GetNTVersion() >= _WIN32_WINNT_WIN10) ? STATUS_INVALID_PARAMETER : STATUS_INVALID_PARAMETER_9);
 
     /* Try to map 1 page using MEM_COMMIT */
     BaseAddress = NULL;
@@ -386,7 +412,7 @@ Test_PageFileSection(void)
                                 ViewShare,
                                 MEM_COMMIT,
                                 PAGE_READWRITE);
-    ok_ntstatus(Status, STATUS_INVALID_PARAMETER_9);
+    ok_ntstatus(Status, (GetNTVersion() >= _WIN32_WINNT_WIN10) ? STATUS_INVALID_PARAMETER : STATUS_INVALID_PARAMETER_9);
 
     /* Map 2 pages, but commit 1 */
     BaseAddress = NULL;
@@ -563,11 +589,14 @@ Test_PageFileSection(void)
                                 0,
                                 PAGE_READWRITE);
 #ifdef _WIN64
-    ok_ntstatus(Status, STATUS_INVALID_PARAMETER_3);
+    ok_ntstatus(Status, (GetNTVersion() >= _WIN32_WINNT_WIN10) ? STATUS_INVALID_PARAMETER : STATUS_INVALID_PARAMETER_3);
 #else
     /* WoW64 returns STATUS_INVALID_PARAMETER_4 */
-    ok((Status == STATUS_INVALID_PARAMETER_4) || (Status == STATUS_INVALID_PARAMETER_3),
-       "got wrong Status: 0x%lx\n", Status);
+    if (GetNTVersion() >= _WIN32_WINNT_WIN10)
+        ok(Status == STATUS_INVALID_PARAMETER, "got wrong Status: 0x%lx\n", Status);
+    else
+        ok((Status == STATUS_INVALID_PARAMETER_4) || (Status == STATUS_INVALID_PARAMETER_3),
+           "got wrong Status: 0x%lx\n", Status);
 #endif
 
     /* Pass 0 region size */
@@ -639,7 +668,7 @@ Test_PageFileSection(void)
     Status = NtProtectVirtualMemory(NtCurrentProcess(), &BaseAddress2, &ViewSize, PAGE_READWRITE, &OldProtect);
     ok_ntstatus(Status, STATUS_SECTION_PROTECTION);
 #ifdef _WIN64
-    ok(OldProtect == 0, "Wrong protection returned: 0x%lx\n", OldProtect);
+    ok(OldProtect == PAGE_NOACCESS, "Wrong protection returned: 0x%lx\n", OldProtect);
 #else
     // Windows 2003 returns bogus
 #endif
@@ -767,8 +796,10 @@ Test_ImageSection(void)
     if (!NT_SUCCESS(Status))
     {
         skip("Failed to open file %s\n", wine_dbgstr_wn(FileName.Buffer, FileName.Length / sizeof(WCHAR)));
+        RtlFreeHeap(RtlGetProcessHeap(), 0, FileName.Buffer);
         return;
     }
+    RtlFreeHeap(RtlGetProcessHeap(), 0, FileName.Buffer);
 
     /* Create a data section with write access */
     Status = NtCreateSection(&DataSectionHandle,
@@ -1027,6 +1058,7 @@ Test_ImageSection2(void)
                         &IoStatusBlock,
                         FILE_SHARE_READ,
                         FILE_SYNCHRONOUS_IO_NONALERT);
+    RtlFreeHeap(RtlGetProcessHeap(), 0, FileName.Buffer);
     ok_ntstatus(Status, STATUS_SUCCESS);
     printf("Opened file with handle %p\n", FileHandle);
 
@@ -1169,12 +1201,16 @@ static struct _SECTION_CONTENTS_IMAGE_FILE
 {
     IMAGE_DOS_HEADER doshdr;
     WORD stub[32];
-    IMAGE_NT_HEADERS32 nthdrs;
+    IMAGE_NT_HEADERS nthdrs;
     IMAGE_SECTION_HEADER text_header;
     IMAGE_SECTION_HEADER rossym_header;
     IMAGE_SECTION_HEADER rsrc_header;
     IMAGE_SECTION_HEADER clc_header;
+#ifdef _WIN64
+    BYTE pad[472];
+#else
     BYTE pad[488];
+#endif
     BYTE text_data[0x400];
     BYTE rossym_data[0x400];
     BYTE rsrc_data[0x400];
@@ -1193,24 +1229,32 @@ static struct _SECTION_CONTENTS_IMAGE_FILE
         0x7220, 0x6E75, 0x6920, 0x206E, 0x4F44, 0x2053, 0x6F6D, 0x6564, 0x0D2E,
         0x0A0D, 0x0024, 0x0000, 0x0000, 0x0000
     },
-    /* IMAGE_NT_HEADERS32 */
+    /* IMAGE_NT_HEADERS */
     {
         IMAGE_NT_SIGNATURE, /* Signature */
         /* IMAGE_FILE_HEADER */
         {
-            IMAGE_FILE_MACHINE_I386, /* Machine */
+            IMAGE_FILE_MACHINE_NATIVE, /* Machine */
             4, /* NumberOfSections */
             0x47EFDF09, /* TimeDateStamp */
             0, /* PointerToSymbolTable */
             0, /* NumberOfSymbols */
+#ifdef _WIN64
+            0xF0, /* SizeOfOptionalHeader */
+#else
             0xE0, /* SizeOfOptionalHeader */
+#endif
             IMAGE_FILE_32BIT_MACHINE | IMAGE_FILE_LOCAL_SYMS_STRIPPED |
             IMAGE_FILE_LINE_NUMS_STRIPPED | IMAGE_FILE_EXECUTABLE_IMAGE |
             IMAGE_FILE_DLL, /* Characteristics */
         },
-        /* IMAGE_OPTIONAL_HEADER32 */
+        /* IMAGE_OPTIONAL_HEADER */
         {
+#ifdef _WIN64
+            IMAGE_NT_OPTIONAL_HDR64_MAGIC, /* Magic */
+#else
             IMAGE_NT_OPTIONAL_HDR32_MAGIC, /* Magic */
+#endif
             8, /* MajorLinkerVersion */
             0, /* MinorLinkerVersion */
             0x400, /* SizeOfCode */
@@ -1218,7 +1262,9 @@ static struct _SECTION_CONTENTS_IMAGE_FILE
             0, /* SizeOfUninitializedData */
             0x2000, /* AddressOfEntryPoint */
             0x2000, /* BaseOfCode */
+#ifndef _WIN64
             0x0000, /* BaseOfData */
+#endif
             0x400000, /* ImageBase */
             0x2000, /* SectionAlignment */
             0x200, /* FileAlignment */
@@ -1397,8 +1443,12 @@ Test_SectionContents(BOOL Relocate)
     }
     if (Relocate)
     {
+#ifdef _WIN64
+        ok((ULONG_PTR)GetModuleHandle(NULL) <= 0x00007FFFFFFFFFFF, "Module at %p\n", GetModuleHandle(NULL));
+#else
         ok((ULONG_PTR)GetModuleHandle(NULL) <= 0x80000000, "Module at %p\n", GetModuleHandle(NULL));
-        SectionContentsImageFile.nthdrs.OptionalHeader.ImageBase = (ULONG)(ULONG_PTR)GetModuleHandle(NULL);
+#endif
+        SectionContentsImageFile.nthdrs.OptionalHeader.ImageBase = (ULONG_PTR)GetModuleHandle(NULL);
     }
     else
     {
@@ -1496,7 +1546,8 @@ static struct _RAW_SIZE_IMAGE_FILE
     IMAGE_SECTION_HEADER data_header;
     IMAGE_SECTION_HEADER zdata_header;
     IMAGE_SECTION_HEADER rsrc_header;
-    BYTE pad[488];
+    IMAGE_SECTION_HEADER bss_header;
+    BYTE pad[448];
     BYTE text_data[0x1200];
     BYTE data_data[0x1200];
     BYTE rsrc_data[0x400];
@@ -1520,7 +1571,7 @@ static struct _RAW_SIZE_IMAGE_FILE
         /* IMAGE_FILE_HEADER */
         {
             IMAGE_FILE_MACHINE_I386, /* Machine */
-            4, /* NumberOfSections */
+            5, /* NumberOfSections */
             0x47EFDF09, /* TimeDateStamp */
             0, /* PointerToSymbolTable */
             0, /* NumberOfSymbols */
@@ -1550,7 +1601,7 @@ static struct _RAW_SIZE_IMAGE_FILE
             4, /* MajorSubsystemVersion */
             0, /* MinorSubsystemVersion */
             0, /* Win32VersionValue */
-            0x5000, /* SizeOfImage */
+            0x6000, /* SizeOfImage */
             0x400, /* SizeOfHeaders */
             0x0, /* CheckSum */
             IMAGE_SUBSYSTEM_WINDOWS_CUI, /* Subsystem */
@@ -1643,6 +1694,21 @@ static struct _RAW_SIZE_IMAGE_FILE
         0, /* NumberOfLinenumbers */
         IMAGE_SCN_MEM_READ |
             IMAGE_SCN_CNT_INITIALIZED_DATA, /* Characteristics */
+    },
+    /* IMAGE_SECTION_HEADER */
+    {
+        /* PointerToRawData = 0 while SizeOfRawData != 0, CORE-18797 */
+        ".bss", /* Name */
+        { 0x400 }, /* Misc.VirtualSize */
+        0x5000, /* VirtualAddress */
+        0x600, /* SizeOfRawData */
+        0, /* PointerToRawData */
+        0, /* PointerToRelocations */
+        0, /* PointerToLinenumbers */
+        0, /* NumberOfRelocations */
+        0, /* NumberOfLinenumbers */
+        IMAGE_SCN_MEM_WRITE | IMAGE_SCN_MEM_READ |
+            IMAGE_SCN_CNT_UNINITIALIZED_DATA, /* Characteristics */
     },
     /* fill */
     { 0 },
@@ -1782,7 +1848,7 @@ Test_RawSize(ULONG TestNumber)
                                     ViewShare,
                                     0,
                                     PAGE_READWRITE);
-        ok_ntstatus(Status, STATUS_SUCCESS);
+        ok_ntstatus(Status, IsX86() ? STATUS_SUCCESS : STATUS_IMAGE_MACHINE_TYPE_MISMATCH);
         if (NT_SUCCESS(Status))
         {
             PUCHAR Bytes = BaseAddress;
@@ -1799,6 +1865,10 @@ Test_RawSize(ULONG TestNumber)
             ok_hex(ImageFile->zdata_header.VirtualAddress, RawSizeImageFile.zdata_header.VirtualAddress);
             ok_hex(ImageFile->zdata_header.SizeOfRawData, RawSizeImageFile.zdata_header.SizeOfRawData);
             ok_hex(ImageFile->zdata_header.PointerToRawData, 0);
+
+            /* .bss section is unmodified */
+            ok_hex(ImageFile->bss_header.SizeOfRawData, 0x600);
+            ok_hex(ImageFile->bss_header.PointerToRawData, 0);
 
 #define TEST_BYTE(n, v) \
     StartSeh() \

@@ -12,7 +12,7 @@ static MUI_ENTRY idIDSetupInitPageEntries[] =
     {
         0,
         20,
-        "Harap tunggu sementara Penyetelan ReactOS menginisialisasi",
+        "Harap tunggu saat Penyetelan ReactOS menginisialisasi",
         TEXT_STYLE_NORMAL | TEXT_ALIGN_CENTER,
         TEXT_ID_STATIC
     },
@@ -57,7 +57,7 @@ static MUI_ENTRY idIDLanguagePageEntries[] =
     {
         8,
         10,
-        "\x07  Mohon pilih bahasa yang digunakan pada proses pemasangan.",
+        "\x07  Mohon pilih bahasa yang digunakan pada proses instalasi.",
         TEXT_STYLE_NORMAL,
         TEXT_ID_STATIC
     },
@@ -102,7 +102,7 @@ static MUI_ENTRY idIDWelcomePageEntries[] =
     {
         6,
         8,
-        "Selamat datang di Penyetelan Reactos",
+        "Selamat datang di Penyetelan ReactOS",
         TEXT_STYLE_HIGHLIGHT,
         TEXT_ID_STATIC
     },
@@ -130,8 +130,8 @@ static MUI_ENTRY idIDWelcomePageEntries[] =
     {
         8,
         17,
-     // "\x07  Tekan R untuk memperbaiki pemasangan ReactOS menggunakan Konsol Pemulihan.",
-        "\x07  Tekan R untuk memperbaiki pemasangan ReactOS.",
+     // "\x07  Tekan R untuk memperbaiki instalasi ReactOS menggunakan Konsol Pemulihan.",
+        "\x07  Tekan R untuk memperbaiki instalasi ReactOS.",
         TEXT_STYLE_NORMAL,
         TEXT_ID_STATIC
     },
@@ -225,7 +225,7 @@ static MUI_ENTRY idIDIntroPageEntries[] =
     {
         6,
         16,
-        "berkenan untuk menjalankan ReactOS pada perangkat keras yang asli.",
+        "berkenan untuk menjalankan ReactOS pada perangkat keras murni.",
         TEXT_STYLE_NORMAL,
         TEXT_ID_STATIC
     },
@@ -593,14 +593,14 @@ static MUI_ENTRY idIDUpgradePageEntries[] =
     {
         6,
         8,
-        "Penyetelan ReactOS dapat meningkatkan salah satu dari pemasangan",
+        "Penyetelan ReactOS dapat meningkatkan salah satu dari instalasi",
         TEXT_STYLE_NORMAL,
         TEXT_ID_STATIC
     },
     {
         6,
         9,
-        "ReactOS yang tersedia di bawah ini, atau, jika pemasangan ReactOS",
+        "ReactOS yang tersedia di bawah ini, atau, jika instalasi ReactOS",
         TEXT_STYLE_NORMAL,
         TEXT_ID_STATIC
     },
@@ -621,21 +621,21 @@ static MUI_ENTRY idIDUpgradePageEntries[] =
     {
         8,
         15,
-        "\x07  Tekan ATAS atau BAWAH untuk memilih pemasangan OS.",
+        "\x07  Tekan ATAS atau BAWAH untuk memilih instalasi OS.",
         TEXT_STYLE_NORMAL,
         TEXT_ID_STATIC
     },
     {
         8,
         17,
-        "\x07  Tekan U untuk meningkatkan pemasangan OS terpilih.",
+        "\x07  Tekan U untuk meningkatkan instalasi OS terpilih.",
         TEXT_STYLE_NORMAL,
         TEXT_ID_STATIC
     },
     {
         8,
         19,
-        "\x07  Tekan ESC untuk lanjut dengan pemasangan yang baru.",
+        "\x07  Tekan ESC untuk lanjut dengan instalasi yang baru.",
         TEXT_STYLE_NORMAL,
         TEXT_ID_STATIC
     },
@@ -791,7 +791,7 @@ static MUI_ENTRY idIDQuitPageEntries[] =
     {
         10,
         9,
-        "semua CD-ROM dari CD-Drive.",
+        "semua CD-ROM dari Drive CD.",
         TEXT_STYLE_NORMAL,
         TEXT_ID_STATIC
     },
@@ -928,59 +928,6 @@ static MUI_ENTRY idIDSuccessPageEntries[] =
     }
 };
 
-static MUI_ENTRY idIDBootPageEntries[] =
-{
-    {
-        4,
-        3,
-        " Penyetelan ReactOS " KERNEL_VERSION_STR " ",
-        TEXT_STYLE_UNDERLINE,
-        TEXT_ID_STATIC
-    },
-    {
-        6,
-        8,
-        "Penyetelan tidak dapat menasang bootloader pada komputer Anda",
-        TEXT_STYLE_NORMAL,
-        TEXT_ID_STATIC
-    },
-    {
-        6,
-        9,
-        "hardisk",
-        TEXT_STYLE_NORMAL,
-        TEXT_ID_STATIC
-    },
-    {
-        6,
-        13,
-        "Mohon masukkan cakram disket yang terformat di drive A:",
-        TEXT_STYLE_NORMAL,
-        TEXT_ID_STATIC
-    },
-    {
-        6,
-        14,
-        "dan tekan ENTER.",
-        TEXT_STYLE_NORMAL,
-        TEXT_ID_STATIC
-    },
-    {
-        0,
-        0,
-        "ENTER = Lanjut   F3 = Keluar",
-        TEXT_TYPE_STATUS | TEXT_PADDING_BIG,
-        TEXT_ID_STATIC
-    },
-    {
-        0,
-        0,
-        NULL,
-        0
-    }
-
-};
-
 static MUI_ENTRY idIDSelectPartitionEntries[] =
 {
     {
@@ -1021,27 +968,20 @@ static MUI_ENTRY idIDSelectPartitionEntries[] =
     {
         8,
         15,
-        "\x07  Tekan P untuk membuat partisi primary.",
+        "\x07  Tekan C untuk membuat partisi primary/logical.",
         TEXT_STYLE_NORMAL,
         TEXT_ID_STATIC
     },
     {
         8,
         17,
-        "\x07  Tekan E untuk membuat partisi extended.",
+        "\x07  Tekan E untuk membuat partisi yang diperluas.",
         TEXT_STYLE_NORMAL,
         TEXT_ID_STATIC
     },
     {
         8,
         19,
-        "\x07  Tekan L untuk membuat partisi logical.",
-        TEXT_STYLE_NORMAL,
-        TEXT_ID_STATIC
-    },
-    {
-        8,
-        21,
         "\x07  Tekan D untuk menghapus partisi yang tersedia.",
         TEXT_STYLE_NORMAL,
         TEXT_ID_STATIC
@@ -1094,7 +1034,7 @@ static MUI_ENTRY idIDChangeSystemPartition[] =
     {
         6,
         18,
-        "Agar pemasangan ReactOS berhasil, program Penyetelan harus",
+        "Agar instalasi ReactOS berhasil, program Penyetelan harus",
         TEXT_STYLE_NORMAL,
         TEXT_ID_STATIC
     },
@@ -1309,7 +1249,7 @@ static MUI_ENTRY idIDFormatPartitionEntries[] =
     },
     {
         6,
-        10,
+        16,
         "Penyetelan akan memformat partisi. Tekan ENTER untuk lanjut.",
         TEXT_STYLE_NORMAL,
         TEXT_ID_FORMAT_PROMPT
@@ -1317,7 +1257,7 @@ static MUI_ENTRY idIDFormatPartitionEntries[] =
     {
         0,
         0,
-        "ENTER = Lanjut   F3 = Keluar",
+        "ENTER = Lanjut   ESC = Batal   F3 = Keluar",
         TEXT_TYPE_STATUS | TEXT_PADDING_BIG,
         TEXT_ID_STATIC
     },
@@ -1438,7 +1378,7 @@ static MUI_ENTRY idIDFileCopyEntries[] =
     {
         0,
         13,
-        "folder pemasangan ReactOS Anda.",
+        "folder instalasi ReactOS Anda.",
         TEXT_STYLE_NORMAL | TEXT_ALIGN_CENTER,
         TEXT_ID_STATIC
     },
@@ -1464,7 +1404,7 @@ static MUI_ENTRY idIDFileCopyEntries[] =
     }
 };
 
-static MUI_ENTRY idIDBootLoaderEntries[] =
+static MUI_ENTRY idIDBootLoaderSelectPageEntries[] =
 {
     {
         4,
@@ -1476,21 +1416,21 @@ static MUI_ENTRY idIDBootLoaderEntries[] =
     {
         6,
         8,
-        "Penyetelan sedang memasang the boot loader",
+        "Please select where Setup should install the bootloader:",
         TEXT_STYLE_NORMAL,
         TEXT_ID_STATIC
     },
     {
         8,
         12,
-        "Pasang bootloader pada harddisk (MBR dan VBR).",
+        "Pasang bootloader pada cakram keras (MBR dan VBR).",
         TEXT_STYLE_NORMAL,
         TEXT_ID_STATIC
     },
     {
         8,
         13,
-        "Pasang bootloader pada harddisk (hanya VBR).",
+        "Pasang bootloader pada cakram keras (hanya VBR).",
         TEXT_STYLE_NORMAL,
         TEXT_ID_STATIC
     },
@@ -1504,7 +1444,7 @@ static MUI_ENTRY idIDBootLoaderEntries[] =
     {
         8,
         15,
-        "Lewati pemasangan bootloader.",
+        "Lewati instalasi bootloader.",
         TEXT_STYLE_NORMAL,
         TEXT_ID_STATIC
     },
@@ -1528,14 +1468,21 @@ static MUI_ENTRY idIDBootLoaderInstallPageEntries[] =
     {
         4,
         3,
-        " ReactOS " KERNEL_VERSION_STR " Setup ",
+        " Penyetelan ReactOS " KERNEL_VERSION_STR " ",
         TEXT_STYLE_UNDERLINE,
+        TEXT_ID_STATIC
+    },
+    {
+        6,
+        8,
+        "Penyetelan sedang memasang the bootloader.",
+        TEXT_STYLE_NORMAL,
         TEXT_ID_STATIC
     },
     {
         0,
         0,
-        "Installing the bootloader onto the media, please wait...",
+        "Memasang bootloader pada media, harap tunggu...",
         TEXT_TYPE_STATUS | TEXT_PADDING_BIG,
         TEXT_ID_STATIC
     },
@@ -1545,6 +1492,52 @@ static MUI_ENTRY idIDBootLoaderInstallPageEntries[] =
         NULL,
         0
     }
+};
+
+static MUI_ENTRY idIDBootLoaderRemovableDiskPageEntries[] =
+{
+    {
+        4,
+        3,
+        " Penyetelan ReactOS " KERNEL_VERSION_STR " ",
+        TEXT_STYLE_UNDERLINE,
+        TEXT_ID_STATIC
+    },
+    {
+        6,
+        8,
+        "Penyetelan sedang memasang the bootloader.",
+        TEXT_STYLE_NORMAL,
+        TEXT_ID_STATIC
+    },
+    {
+        6,
+        13,
+        "Mohon masukkan cakram disket yang terformat di drive A:",
+        TEXT_STYLE_NORMAL,
+        TEXT_ID_STATIC
+    },
+    {
+        6,
+        14,
+        "dan tekan ENTER.",
+        TEXT_STYLE_NORMAL,
+        TEXT_ID_STATIC
+    },
+    {
+        0,
+        0,
+        "ENTER = Lanjut   F3 = Keluar",
+        TEXT_TYPE_STATUS | TEXT_PADDING_BIG,
+        TEXT_ID_STATIC
+    },
+    {
+        0,
+        0,
+        NULL,
+        0
+    }
+
 };
 
 static MUI_ENTRY idIDKeyboardSettingsEntries[] =
@@ -1848,17 +1841,17 @@ MUI_ERROR idIDErrorEntries[] =
     },
     {
         // ERROR_NO_BUILD_PATH
-        "Gagal membangun jalur pemasangan untuk direktori pemasangan ReactOS!\n"
+        "Gagal membangun jalur instalasi untuk direktori instalasi ReactOS!\n"
         "ENTER = Mulai ulang komputer"
     },
     {
         // ERROR_SOURCE_PATH
-        "Anda tidak dapat menghapus partisi yang memuat sumber pemasangan!\n"
+        "Anda tidak dapat menghapus partisi yang memuat sumber instalasi!\n"
         "ENTER = Mulai ulang komputer"
     },
     {
         // ERROR_SOURCE_DIR
-        "Anda tidak dapat memasang ReactOS yang di dalamnya berisi direktori sumber pemasangan!\n"
+        "Anda tidak dapat memasang ReactOS yang di dalamnya berisi direktori sumber instalasi!\n"
         "ENTER = Mulai ulang komputer"
     },
     {
@@ -1932,14 +1925,7 @@ MUI_ERROR idIDErrorEntries[] =
         "Anda tidak dapat membuat partisi baru di dalam\n"
         "partisi yang sudah ada!\n"
         "\n"
-        "  * Tekan apa saja untuk lanjut.",
-        NULL
-    },
-    {
-        // ERROR_DELETE_SPACE,
-        "Anda tidak dapat menghapus ukuran cakram yang belum dipartisi!\n"
-        "\n"
-        "  * Tekan apa saja untuk lanjut.",
+        "  * Tekan tombol apapun untuk lanjut.",
         NULL
     },
     {
@@ -2004,7 +1990,7 @@ MUI_ERROR idIDErrorEntries[] =
     },
     {
         // ERROR_CREATE_DIR,
-        "Penyetelan tidak dapat membuat direktori pemasangan.",
+        "Penyetelan tidak dapat membuat direktori instalasi.",
         "ENTER = Mulai ulang komputer"
     },
     {
@@ -2021,7 +2007,7 @@ MUI_ERROR idIDErrorEntries[] =
     },
     {
         // ERROR_CREATE_INSTALL_DIR
-        "Penyetelan tidak dapat membuat direktori pemasangan.",
+        "Penyetelan tidak dapat membuat direktori instalasi.",
         "ENTER = Mulai ulang komputer"
     },
     {
@@ -2053,28 +2039,28 @@ MUI_ERROR idIDErrorEntries[] =
         // ERROR_DIRECTORY_NAME,
         "Nama direktori tidak sah.\n"
         "\n"
-        "  * Tekan apa saja untuk lanjut."
+        "  * Tekan tombol apapun untuk lanjut."
     },
     {
         // ERROR_INSUFFICIENT_PARTITION_SIZE,
         "Partisi yang dipilih tidak cukup besar untuk memasang ReactOS.\n"
-        "Partisi pemasangan harus memiliki ukuran setidaknya %lu MB.\n"
+        "Partisi instalasi harus memiliki ukuran setidaknya %lu MB.\n"
         "\n"
-        "  * Tekan apa saja untuk lanjut.",
+        "  * Tekan tombol apapun untuk lanjut.",
         NULL
     },
     {
         // ERROR_PARTITION_TABLE_FULL,
-        "Anda tidak dapat membuat partisi primary atau extended baru di\n"
+        "Anda tidak dapat membuat partisi primer baru atau yg diperluas di\n"
         "tabel partisi cakram ini karena tabel partisi ini penuh.\n"
         "\n"
-        "  * Tekan apa saja untuk lanjut."
+        "  * Tekan tombol apapun untuk lanjut."
     },
     {
         // ERROR_ONLY_ONE_EXTENDED,
-        "Anda tidak dapat membuat lebih dari satu partisi extended per satu cakram.\n"
+        "Anda tidak dapat membuat lebih dari satu partisi yang diperluas per satu cakram.\n"
         "\n"
-        "  * Tekan apa saja untuk lanjut."
+        "  * Tekan tombol apapun untuk lanjut."
     },
     {
         // ERROR_FORMATTING_PARTITION,
@@ -2180,8 +2166,8 @@ MUI_PAGE idIDPages[] =
         idIDKeyboardSettingsEntries
     },
     {
-        BOOT_LOADER_PAGE,
-        idIDBootLoaderEntries
+        BOOTLOADER_SELECT_PAGE,
+        idIDBootLoaderSelectPageEntries
     },
     {
         LAYOUT_SETTINGS_PAGE,
@@ -2196,12 +2182,12 @@ MUI_PAGE idIDPages[] =
         idIDSuccessPageEntries
     },
     {
-        BOOT_LOADER_INSTALLATION_PAGE,
+        BOOTLOADER_INSTALL_PAGE,
         idIDBootLoaderInstallPageEntries
     },
     {
-        BOOT_LOADER_FLOPPY_PAGE,
-        idIDBootPageEntries
+        BOOTLOADER_REMOVABLE_DISK_PAGE,
+        idIDBootLoaderRemovableDiskPageEntries
     },
     {
         REGISTRY_PAGE,
@@ -2218,25 +2204,27 @@ MUI_STRING idIDStrings[] =
     {STRING_PLEASEWAIT,
      "   Mohon tunggu..."},
     {STRING_INSTALLCREATEPARTITION,
-     "   ENTER = Pasang   P = Buat Primary   E = Buat Extended   F3 = Keluar"},
+     "   ENTER = Pasang   C = Buat Primary   E = Buat Extended   F3 = Keluar"},
     {STRING_INSTALLCREATELOGICAL,
-     "   ENTER = Pasang   L = Buat Partisi Logical   F3 = Keluar"},
+     "   ENTER = Pasang   C = Buat Partisi Logical   F3 = Keluar"},
     {STRING_INSTALLDELETEPARTITION,
      "   ENTER = Pasang   D = Hapus Partisi   F3 = Keluar"},
     {STRING_DELETEPARTITION,
      "   D = Hapus Partisi   F3 = Keluar"},
     {STRING_PARTITIONSIZE,
      "Ukuran partisi baru:"},
-    {STRING_CHOOSENEWPARTITION,
-     "Anda telah memilih untuk membuat partisi primary pada"},
+    {STRING_CHOOSE_NEW_PARTITION,
+     "Anda telah memilih untuk membuat partisi primer pada"},
     {STRING_CHOOSE_NEW_EXTENDED_PARTITION,
-     "Anda telah memilih untuk membuat partisi extended pada"},
+     "Anda telah memilih untuk membuat partisi yg diperluas pada"},
     {STRING_CHOOSE_NEW_LOGICAL_PARTITION,
-     "Anda telah memilih untuk membuat partisi logical pada"},
-    {STRING_HDDSIZE,
+     "Anda telah memilih untuk membuat partisi logikal pada"},
+    {STRING_HDPARTSIZE,
     "Mohon masukkan ukuran pada partisi baru dalam bentuk megabyte."},
     {STRING_CREATEPARTITION,
      "   ENTER = Buat Partisi   ESC = Batal   F3 = Keluar"},
+    {STRING_NEWPARTITION,
+    "Penyetelan membuat partisi baru pada"},
     {STRING_PARTFORMAT,
     "Partisi ini selanjutnya akan diformat."},
     {STRING_NONFORMATTEDPART,
@@ -2274,7 +2262,7 @@ MUI_STRING idIDStrings[] =
     {STRING_KEYBOARDSETTINGSUPDATE,
     "   Memperbarui pengaturan tata letak papan ketik..."},
     {STRING_CODEPAGEINFOUPDATE,
-    "   Menambahkan informasi halaman kode pada registri..."},
+    "   Menambahkan informasi halaman kode..."},
     {STRING_DONE,
     "   Selesai..."},
     {STRING_REBOOTCOMPUTER2,
@@ -2287,36 +2275,34 @@ MUI_STRING idIDStrings[] =
     "Secara umum penyebab dari ini adalah menggunakan papan ketik USB\r\n"},
     {STRING_CONSOLEFAIL3,
     "Papan ketik USB belum didukung sepenuhnya\r\n"},
-    {STRING_FORMATTINGDISK,
-    "Penyetelan sedang memformat cakram anda"},
+    {STRING_FORMATTINGPART,
+    "Penyetelan sedang memformat partisi..."},
     {STRING_CHECKINGDISK,
-    "Penyetelan sedang memeriksa cakram anda"},
+    "Penyetelan sedang memeriksa cakram..."},
     {STRING_FORMATDISK1,
     " Format partisi sebagai sistem berkas %S (format cepat) "},
     {STRING_FORMATDISK2,
     " Format partisi sebagai sistem berkas %S  "},
     {STRING_KEEPFORMAT,
     " Tetapkan sistem berkas seperti ini (tanpa perubahan) "},
-    {STRING_HDINFOPARTCREATE_1,
+    {STRING_HDDISK1,
     "%s."},
-    {STRING_HDINFOPARTDELETE_1,
+    {STRING_HDDISK2,
     "pada %s."},
     {STRING_PARTTYPE,
     "Jenis 0x%02x"},
-    {STRING_HDDINFO_1,
+    {STRING_HDDINFO1,
     // "Harddisk %lu (%I64u %s), Port=%hu, Bus=%hu, Id=%hu (%wZ) [%s]"
     "%I64u %s Harddisk %lu (Port=%hu, Bus=%hu, Id=%hu) pada %wZ [%s]"},
-    {STRING_HDDINFO_2,
+    {STRING_HDDINFO2,
     // "Harddisk %lu (%I64u %s), Port=%hu, Bus=%hu, Id=%hu [%s]"
     "%I64u %s Harddisk %lu (Port=%hu, Bus=%hu, Id=%hu) [%s]"},
-    {STRING_NEWPARTITION,
-    "Penyetelan membuat partisi baru pada"},
     {STRING_UNPSPACE,
     "Ukuran yang belum dipartisi"},
     {STRING_MAXSIZE,
     "MB (maks. %lu MB)"},
     {STRING_EXTENDED_PARTITION,
-    "Partisi Extended"},
+    "Partisi yang Diperluas"},
     {STRING_UNFORMATTED,
     "Baru (Belum Diformat)"},
     {STRING_FORMATUNUSED,

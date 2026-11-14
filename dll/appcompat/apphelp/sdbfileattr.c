@@ -1,4 +1,4 @@
-﻿/*
+/*
  * PROJECT:     ReactOS Application compatibility module
  * LICENSE:     GPL-2.0+ (https://spdx.org/licenses/GPL-2.0+)
  * PURPOSE:     Query file attributes used to match exe's
@@ -204,7 +204,7 @@ static DWORD WINAPI SdbpGetModuleType(PMEMMAPPED mapping, PIMAGE_NT_HEADERS* nt_
 
 /**
  * Frees attribute data allocated by SdbGetFileAttributes.
- * 
+ *
  * @note Unlike Windows, this implementation will not crash if attr_info is NULL.
  *
  * @param [in]  attr_info   Pointer to array of ATTRINFO which will be freed.
@@ -227,7 +227,7 @@ BOOL WINAPI SdbFreeFileAttributes(PATTRINFO attr_info)
 
 /**
  * Retrieves attribute data shim database requires to match a file with database entry
- * 
+ *
  * @note You must free the attr_info allocated by this function by calling SdbFreeFileAttributes.
  *
  * @param [in]  path            Path to the file.
@@ -288,13 +288,25 @@ BOOL WINAPI SdbGetFileAttributes(LPCWSTR path, PATTRINFO *attr_info_ret, LPDWORD
         DWORD info_size;
         ULONG export_dir_size;
         PIMAGE_EXPORT_DIRECTORY export_dir;
+        LPCWSTR dos_path;
 
-        info_size = GetFileVersionInfoSizeW(path, NULL);
+        /* Check if the caller passed an NT style path (full path, prefixed wih "\\??\\") */
+        if (!wcsncmp(path, L"\\??\\", 4) && (path[4] != UNICODE_NULL) && (path[5] == L':'))
+        {
+            /* Skip NT prefix, if it is present (GetFileVersionInfoSizeW doesn't handle NT paths) */
+            dos_path = path + 4;
+        }
+        else
+        {
+            dos_path = path;
+        }
+
+        info_size = GetFileVersionInfoSizeW(dos_path, NULL);
         if (info_size != 0)
         {
             UINT page_size = 0;
             file_info = SdbAlloc(info_size);
-            GetFileVersionInfoW(path, 0, info_size, file_info);
+            GetFileVersionInfoW(dos_path, 0, info_size, file_info);
             VerQueryValueW(file_info, str_tinfo, (LPVOID)&lang_page, &page_size);
             StringCchPrintfW(translation, ARRAYSIZE(translation), str_trans, lang_page->language, lang_page->code_page);
         }
@@ -311,7 +323,7 @@ BOOL WINAPI SdbGetFileAttributes(LPCWSTR path, PATTRINFO *attr_info_ret, LPDWORD
         SdbpSetStringAttr(&attr_info[10], TAG_INTERNAL_NAME, SdbpGetStringAttr(translation, str_InternalName, file_info));
         SdbpSetStringAttr(&attr_info[11], TAG_LEGAL_COPYRIGHT, SdbpGetStringAttr(translation, str_LegalCopyright, file_info));
 
-        /* http://msdn.microsoft.com/en-us/library/windows/desktop/ms680339(v=vs.85).aspx */
+        /* https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-image_optional_header32 */
 
         SdbpSetDWORDAttr(&attr_info[17], TAG_PE_CHECKSUM, headers->OptionalHeader.CheckSum);
 

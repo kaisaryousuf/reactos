@@ -24,7 +24,7 @@ typedef struct _ROSSYM_HEADER {
 } ROSSYM_HEADER, *PROSSYM_HEADER;
 
 typedef struct _ROSSYM_ENTRY {
-  ULONG_PTR Address;
+  ULONG Address; /* RVA */
   ULONG FunctionOffset;
   ULONG FileOffset;
   ULONG SourceLine;
@@ -119,7 +119,12 @@ typedef struct _ROSSYM_OWN_FILECONTEXT {
 struct Dwarf;
 typedef struct Dwarf *PROSSYM_INFO;
 #else
-typedef struct _ROSSYM_INFO *PROSSYM_INFO;
+typedef struct _ROSSYM_INFO {
+  PROSSYM_ENTRY Symbols;
+  ULONG SymbolsCount;
+  PCHAR Strings;
+  ULONG StringsLength;
+} ROSSYM_INFO, *PROSSYM_INFO;
 #endif
 
 VOID RosSymInit(PROSSYM_CALLBACKS Callbacks);

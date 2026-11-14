@@ -20,97 +20,54 @@
  */
 VOID
 NTAPI
-RtlInitializeContext(IN HANDLE ProcessHandle,
-                     OUT PCONTEXT ThreadContext,
-                     IN PVOID ThreadStartParam  OPTIONAL,
-                     IN PTHREAD_START_ROUTINE ThreadStartAddress,
-                     IN PINITIAL_TEB StackBase)
+RtlInitializeContext(
+    _Reserved_ HANDLE ProcessHandle,
+    _Out_ PCONTEXT ThreadContext,
+    _In_opt_ PVOID ThreadStartParam,
+    _In_ PTHREAD_START_ROUTINE ThreadStartAddress,
+    _In_ PVOID StackBase)
 {
-
-    ThreadContext->Rax = 0;
-    ThreadContext->Rbx = 0;
-    ThreadContext->Rcx = (ULONG64)ThreadStartParam;
-    ThreadContext->Rdx = 0;
-    ThreadContext->Rsi = 0;
-    ThreadContext->Rdi = 0;
-    ThreadContext->Rbp = 0;
-    ThreadContext->R8 = 0;
-    ThreadContext->R9 = 0;
-    ThreadContext->R10 = 0;
-    ThreadContext->R11 = 0;
-    ThreadContext->R12 = 0;
-
-    /* Set the Selectors */
-    if ((LONG64)ThreadStartAddress < 0)
+    /* Make sure the stack is aligned */
+    if (((ULONG_PTR)StackBase & 0xF) != 0)
     {
-        /* Initialize kernel mode segments */
-        ThreadContext->SegCs = KGDT64_R0_CODE;
-        ThreadContext->SegDs = KGDT64_R3_DATA;
-        ThreadContext->SegEs = KGDT64_R3_DATA;
-        ThreadContext->SegFs = KGDT64_R3_CMTEB;
-        ThreadContext->SegGs = KGDT64_R3_DATA;
-        ThreadContext->SegSs = KGDT64_R0_DATA;
+        RtlRaiseStatus(STATUS_BAD_INITIAL_STACK);
     }
-    else
-    {
-        /* Initialize user mode segments */
-        ThreadContext->SegCs = KGDT64_R3_CODE |  RPL_MASK;
-        ThreadContext->SegDs = KGDT64_R3_DATA |  RPL_MASK;
-        ThreadContext->SegEs = KGDT64_R3_DATA |  RPL_MASK;
-        ThreadContext->SegFs = KGDT64_R3_CMTEB |  RPL_MASK;
-        ThreadContext->SegGs = KGDT64_R3_DATA |  RPL_MASK;
-        ThreadContext->SegSs = KGDT64_R3_DATA |  RPL_MASK;
-    }
+
+    /* Initialize StartAddress and Stack */
+    ThreadContext->Rip = (ULONG64)ThreadStartAddress;
+    ThreadContext->Rsp = (ULONG64)StackBase;
 
     /* Enable Interrupts */
     ThreadContext->EFlags = EFLAGS_INTERRUPT_MASK;
 
-    /* Settings passed */
-    ThreadContext->Rip = (ULONG64)ThreadStartAddress;
-    ThreadContext->Rsp = (ULONG64)StackBase - 6 * sizeof(PVOID);
+    /* Set start parameter */
+    ThreadContext->Rcx = (ULONG64)ThreadStartParam;
 
-    /* Align stack by 16 and substract 8 (unaligned on function entry) */
-    ThreadContext->Rsp &= ~15;
-    ThreadContext->Rsp -= 8;
+    /* Initialize floating point and SSE state */
+    RtlZeroMemory(&ThreadContext->FltSave, sizeof(ThreadContext->FltSave));
+    ThreadContext->MxCsr = INITIAL_MXCSR;
+    ThreadContext->FltSave.MxCsr = INITIAL_MXCSR;
+    ThreadContext->FltSave.ControlWord = INITIAL_FPCSR;
 
-    /* Only the basic Context is initialized */
-    ThreadContext->ContextFlags = CONTEXT_CONTROL |
-                                  CONTEXT_INTEGER |
-                                  CONTEXT_SEGMENTS;
+    /* Initialize integer registers */
+    ThreadContext->Rbp = 0x0000000000000000ull;
+    ThreadContext->Rax = 0x0000000000000000ull;
+    ThreadContext->Rbx = 0x0000000000000001ull;
+    ThreadContext->Rsi = 0x0000000000000004ull;
+    ThreadContext->Rdi = 0x0000000000000005ull;
+    ThreadContext->R8  = 0x0000000000000008ull;
+    ThreadContext->R9  = 0xF0E0D0C0A0908070ull;
+    ThreadContext->R10 = 0x000000000000000Aull;
+    ThreadContext->R11 = 0x000000000000000Bull;
+    ThreadContext->R12 = 0x000000000000000Cull;
+    ThreadContext->R13 = 0x000000000000000Dull;
+    ThreadContext->R14 = 0x000000000000000Eull;
+    ThreadContext->R15 = 0x000000000000000Full;
+
+    /* Set the context flags */
+    ThreadContext->ContextFlags = CONTEXT_FULL;
 
     return;
-}
-
-/*
- * @unimplemented
- */
-PVOID
-NTAPI
-RtlpGetExceptionAddress(VOID)
-{
-    UNIMPLEMENTED;
-    return NULL;
-}
-
-/*
- * @unimplemented
- */
-BOOLEAN
-NTAPI
-RtlDispatchException(IN PEXCEPTION_RECORD ExceptionRecord,
-                     IN PCONTEXT Context)
-{
-    UNIMPLEMENTED;
-    return FALSE;
-}
-
-NTSYSAPI
-VOID
-RtlRestoreContext(
-    PCONTEXT ContextRecord,
-    PEXCEPTION_RECORD ExceptionRecord)
-{
-    UNIMPLEMENTED;
 }
 
 NTSTATUS

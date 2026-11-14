@@ -1,8 +1,9 @@
+#pragma once
 
 /* Maximum string lengths for ASCII ip address and port names */
 #define HOSTNAMELEN     256
 #define PORTNAMELEN     256
-#define ADDRESSLEN      HOSTNAMELEN+PORTNAMELEN
+#define ADDRESSLEN      (HOSTNAMELEN + PORTNAMELEN)
 
 /* command line options */
 BOOL bNoOptions        = FALSE; // print default
@@ -10,10 +11,10 @@ BOOL bDoShowAllCons    = FALSE; // -a
 BOOL bDoShowProcName   = FALSE; // -b
 BOOL bDoShowEthStats   = FALSE; // -e
 BOOL bDoShowNumbers    = FALSE; // -n
+BOOL bDoShowProcessId  = FALSE; // -o
 BOOL bDoShowProtoCons  = FALSE; // -p
 BOOL bDoShowRouteTable = FALSE; // -r
 BOOL bDoShowProtoStats = FALSE; // -s
-BOOL bDoShowProcessId  = FALSE; // -o
 BOOL bDoDispSeqComp    = FALSE; // -v
 BOOL bLoopOutput       = FALSE; // interval
 

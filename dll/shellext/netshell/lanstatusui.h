@@ -4,6 +4,7 @@
 // IID B722BCCB-4E68-101B-A2BC-00AA00404770
 
 #define WM_SHOWSTATUSDLG    (WM_USER+10)
+#define WM_CONFIGURETRAYICON (WM_APP + 42)
 
 typedef struct tagNotificationItem
 {
@@ -40,8 +41,8 @@ class CLanStatus:
         CLanStatus();
 
         // IOleCommandTarget
-        virtual HRESULT WINAPI QueryStatus(const GUID *pguidCmdGroup, ULONG cCmds, OLECMD *prgCmds, OLECMDTEXT *pCmdText);
-        virtual HRESULT WINAPI Exec(const GUID *pguidCmdGroup, DWORD nCmdID, DWORD nCmdexecopt, VARIANT *pvaIn, VARIANT *pvaOut);
+        STDMETHOD(QueryStatus)(const GUID *pguidCmdGroup, ULONG cCmds, OLECMD *prgCmds, OLECMDTEXT *pCmdText) override;
+        STDMETHOD(Exec)(const GUID *pguidCmdGroup, DWORD nCmdID, DWORD nCmdexecopt, VARIANT *pvaIn, VARIANT *pvaOut) override;
 
     private:
         HRESULT InitializeNetTaskbarNotifications();
@@ -60,3 +61,5 @@ class CLanStatus:
         END_COM_MAP()
 
 };
+
+extern void RefreshNetTaskbarNotificationIcon();

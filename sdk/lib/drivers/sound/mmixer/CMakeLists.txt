@@ -1,7 +1,9 @@
 
 add_definitions(
-    -DUNICODE -D_UNICODE
-    -DNDEBUG=1)
+    -DUNICODE -D_UNICODE)
+if(DBG)
+    add_compile_definitions(NDEBUG)
+endif()
 
 include_directories(${REACTOS_SOURCE_DIR}/sdk/include/reactos/libs/sound)
 
@@ -15,6 +17,7 @@ list(APPEND SOURCE
     topology.c
     precomp.h)
 
-add_library(mmixer ${SOURCE})
+add_library(mmixer STATIC ${SOURCE})
 add_pch(mmixer precomp.h SOURCE)
 add_dependencies(mmixer bugcodes xdk)
+target_include_directories(mmixer INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})

@@ -3,8 +3,8 @@
  * LICENSE:     GPL-2.0+ (https://spdx.org/licenses/GPL-2.0+)
  * PURPOSE:     Base set of functions for loading string resources
  *              and message strings, and handle type identification.
- * COPYRIGHT:   Copyright 2017-2018 ReactOS Team
- *              Copyright 2017-2018 Hermes Belusca-Maito
+ * COPYRIGHT:   Copyright 2017-2021 ReactOS Team
+ *              Copyright 2017-2021 Hermes Belusca-Maito
  */
 
 /**
@@ -28,6 +28,18 @@
 extern "C" {
 #endif
 
+/* Avoid including winuser.h for these definitions */
+#ifndef IS_INTRESOURCE
+#define IS_INTRESOURCE(i)   (((ULONG_PTR)(i) >> 16) == 0)
+#endif
+#ifndef MAKEINTRESOURCEA
+#define MAKEINTRESOURCEA(i) ((LPSTR)(ULONG_PTR)LOWORD(i))
+#endif
+#ifndef MAKEINTRESOURCEW
+#define MAKEINTRESOURCEW(i) ((LPWSTR)(ULONG_PTR)LOWORD(i))
+#endif
+// #define MAKEINTRESOURCE(i)  ((ULONG_PTR)((WORD)(i)))
+
 INT
 WINAPI
 K32LoadStringExW(
@@ -45,6 +57,17 @@ K32LoadStringW(
     OUT LPWSTR lpBuffer,
     IN  INT    nBufferMax);
 
+/* Override LoadString */
+#ifdef LoadString
+#undef LoadString
+#endif
+#define LoadStringW K32LoadStringW
+#if defined(UNICODE) || defined(_UNICODE)
+#define LoadString  LoadStringW
+#else
+#error The ConUtils library only supports UNICODE at the moment!
+#endif // UNICODE
+
 DWORD
 WINAPI
 FormatMessageSafeW(
@@ -55,6 +78,10 @@ FormatMessageSafeW(
     OUT LPWSTR  lpBuffer,
     IN  DWORD   nSize,
     IN  va_list *Arguments OPTIONAL);
+
+LANGID
+ConSetThreadUILanguage(
+    IN LANGID LangId OPTIONAL);
 
 BOOL
 IsTTYHandle(IN HANDLE hHandle);

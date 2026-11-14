@@ -33,7 +33,7 @@ LlbFwGetCh(
 
 ULONG
 LlbFwVideoSetDisplayMode(
-    IN PCHAR DisplayModeName,
+    IN PCSTR DisplayModeName,
     IN BOOLEAN Init
 );
 
@@ -69,7 +69,7 @@ VOID
 LlbFwVideoClearScreen(
     IN UCHAR Attr
 );
-    
+
 VOID
 LlbFwVideoPutChar(
     IN INT c,

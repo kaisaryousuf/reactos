@@ -38,6 +38,15 @@ $endif()
 extern "C" {
 #endif
 
+#ifndef DECLSPEC_NOINITALL
+#if defined(_MSC_VER) && (!defined(__clang__) || (__clang_major__ >= 22)) && \
+    (_MSC_VER >= 1915) && !defined(MIDL_PASS) && !defined(SORTPP_PASS) && !defined(RC_INVOKED)
+#define DECLSPEC_NOINITALL __pragma(warning(push)) __pragma(warning(disable:4845)) __declspec(no_init_all) __pragma(warning(pop))
+#else
+#define DECLSPEC_NOINITALL
+#endif
+#endif
+
 /* Default to strict */
 #ifndef NO_STRICT
 #ifndef STRICT
@@ -245,8 +254,14 @@ char _RTL_CONSTANT_STRING_type_check(const void *s);
   const UNICODE_STRING _var = { sizeof(_string) - sizeof(WCHAR), sizeof(_string), (PWCH)_var##_buffer }
 #endif
 
+#if defined(__GNUC__) && !defined(__cplusplus)
+/* GCC C rejects an initializer on an extern declaration, selectany alone is enough */
+#define DECLARE_GLOBAL_CONST_UNICODE_STRING(_var, _str) \
+  const __declspec(selectany) UNICODE_STRING _var = RTL_CONSTANT_STRING(_str)
+#else
 #define DECLARE_GLOBAL_CONST_UNICODE_STRING(_var, _str) \
   extern const __declspec(selectany) UNICODE_STRING _var = RTL_CONSTANT_STRING(_str)
+#endif
 
 /* Object Attributes */
 typedef struct _OBJECT_ATTRIBUTES {

@@ -28,6 +28,8 @@
 #include "nfs41_np.h"
 #include "options.h"
 
+#include <pseh/pseh2.h>
+
 #ifdef DBG
 #define DbgP(_x_) NFS41DbgPrint _x_
 #else
@@ -45,13 +47,19 @@ ULONG _cdecl NFS41DbgPrint( __in LPTSTR Format, ... )
     va_list marker;
     va_start( marker, Format );
     {
-
+#ifndef __REACTOS__
         //StringCchVPrintfW( szbuffer, 127, Format, marker );
         StringCchVPrintfW( szbuffer, 256, Format, marker );
         szbuffer[255] = (TCHAR)0;
+#else
+        StringCchVPrintf( szbuffer, 256, Format, marker );
+#endif
         OutputDebugString( TRACE_TAG );
         OutputDebugString( szbuffer );
     }
+#ifdef __REACTOS__
+    va_end(marker);
+#endif
 
     return rc;
 }

@@ -748,70 +748,6 @@ FindVolumeClose(IN HANDLE hFindVolume)
  */
 BOOL
 WINAPI
-GetVolumePathNameA(IN LPCSTR lpszFileName,
-                   IN LPSTR lpszVolumePathName,
-                   IN DWORD cchBufferLength)
-{
-    BOOL Ret;
-    PUNICODE_STRING FileNameU;
-    ANSI_STRING VolumePathName;
-    UNICODE_STRING VolumePathNameU;
-
-    /* Convert file name to unicode */
-    FileNameU = Basep8BitStringToStaticUnicodeString(lpszFileName);
-    if (FileNameU == NULL)
-    {
-        return FALSE;
-    }
-
-    /* Initialize all the strings we'll need */
-    VolumePathName.Buffer = lpszVolumePathName;
-    VolumePathName.Length = 0;
-    VolumePathName.MaximumLength = cchBufferLength - 1;
-
-    VolumePathNameU.Length = 0;
-    VolumePathNameU.MaximumLength = (cchBufferLength - 1) * sizeof(WCHAR) + sizeof(UNICODE_NULL);
-    /* Allocate a buffer for calling the -W */
-    VolumePathNameU.Buffer = RtlAllocateHeap(RtlGetProcessHeap(), 0, VolumePathNameU.MaximumLength);
-    if (VolumePathNameU.Buffer == NULL)
-    {
-        SetLastError(ERROR_NOT_ENOUGH_MEMORY);
-        return FALSE;
-    }
-
-    /* Call the -W implementation */
-    Ret = GetVolumePathNameW(FileNameU->Buffer, VolumePathNameU.Buffer, cchBufferLength);
-    /* If it succeed */
-    if (Ret)
-    {
-        NTSTATUS Status;
-
-        /* Convert back to ANSI */
-        RtlInitUnicodeString(&VolumePathNameU, VolumePathNameU.Buffer);
-        Status = RtlUnicodeStringToAnsiString(&VolumePathName, &VolumePathNameU, FALSE);
-        /* If conversion failed, just set error code and fail the rest */
-        if (!NT_SUCCESS(Status))
-        {
-            BaseSetLastNTError(Status);
-            Ret = FALSE;
-        }
-        /* Otherwise, null terminate the string (it's OK, we computed -1) */
-        else
-        {
-            VolumePathName.Buffer[VolumePathName.Length] = ANSI_NULL;
-        }
-    }
-
-    /* Free the buffer allocated for -W call */
-    RtlFreeHeap(RtlGetProcessHeap(), 0, VolumePathNameU.Buffer);
-    return Ret;
-}
-
-/*
- * @implemented
- */
-BOOL
-WINAPI
 GetVolumePathNameW(IN LPCWSTR lpszFileName,
                    IN LPWSTR lpszVolumePathName,
                    IN DWORD cchBufferLength)
@@ -1266,7 +1202,7 @@ GetVolumePathNamesForVolumeNameW(IN LPCWSTR lpszVolumeName,
     TargetName->DeviceNameLength = VolumeName.Length - sizeof(WCHAR);
     RtlCopyMemory(TargetName->DeviceName, VolumeName.Buffer, TargetName->DeviceNameLength);
     TargetName->DeviceName[1] = L'?';
-    
+
     /* Open the mount manager */
     MountMgrHandle = CreateFileW(MOUNTMGR_DOS_DEVICE_NAME, 0,
                                  FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
@@ -1387,7 +1323,7 @@ GetVolumePathNamesForVolumeNameW(IN LPCWSTR lpszVolumeName,
     }
 
     /* If we couldn't write as much as we wanted to the output buffer
-     * This handles the case where we could write everything excepted the 
+     * This handles the case where we could write everything excepted the
      * terminating \0 for multi SZ
      */
     if (CharsInOutput >= cchBufferLength)

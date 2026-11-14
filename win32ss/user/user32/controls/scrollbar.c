@@ -77,8 +77,8 @@ const struct builtin_class_descr SCROLL_builtin_class =
 {
     L"ScrollBar",           /* name */
     CS_DBLCLKS | CS_VREDRAW | CS_HREDRAW | CS_PARENTDC, /* style */
-    ScrollBarWndProcA,      /* procA */
-    ScrollBarWndProcW,      /* procW */
+    &pfnClientA.pfnScrollBarWndProc, /* procA */
+    &pfnClientW.pfnScrollBarWndProc, /* procW */
     sizeof(SBWND)-sizeof(WND), /* extra */
     IDC_ARROW,              /* cursor */
     0                       /* brush */
@@ -1723,7 +1723,7 @@ SetScrollPos(HWND hWnd, INT nBar, INT nPos, BOOL bRedraw)
   ScrollInfo.fMask = SIF_POS|SIF_PREVIOUSPOS;
   ScrollInfo.nPos = nPos;
 
-  return RealSetScrollInfo(hWnd, nBar, &ScrollInfo, bRedraw);
+  return SetScrollInfo(hWnd, nBar, &ScrollInfo, bRedraw);
 }
 
 /*

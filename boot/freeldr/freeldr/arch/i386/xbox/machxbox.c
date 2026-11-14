@@ -18,23 +18,32 @@
 
 #include <freeldr.h>
 #include <drivers/xbox/superio.h>
+#include "../../vidfb.h"
 
 #include <debug.h>
 DBG_DEFAULT_CHANNEL(HWDETECT);
 
 #define MAX_XBOX_COM_PORTS    2
 
-extern PVOID FrameBuffer;
+/* From xboxvideo.c */
+extern ULONG NvBase;
+extern ULONG_PTR FrameBuffer;
 extern ULONG FrameBufferSize;
+extern PCM_FRAMEBUF_DEVICE_DATA FrameBufferData;
 
-BOOLEAN
-XboxFindPciBios(PPCI_REGISTRY_INFO BusData)
+static BOOLEAN
+XboxDetectPciBus(
+    _In_ PCONFIGURATION_COMPONENT_DATA SystemKey,
+    _Inout_ PULONG BusNumber,
+    _Out_ PPCI_REGISTRY_INFO BusData)
 {
-    /* We emulate PCI BIOS here, there are 2 known working PCI buses on an original Xbox */
+    UNREFERENCED_PARAMETER(SystemKey);
+    UNREFERENCED_PARAMETER(BusNumber);
 
-    BusData->NoBuses = 2;
+    /* There are 2 known working Type 1 PCI buses on an original Xbox */
     BusData->MajorRevision = 1;
     BusData->MinorRevision = 0;
+    BusData->NoBuses = 2;
     BusData->HardwareMechanism = 1;
     return TRUE;
 }
@@ -73,7 +82,11 @@ XboxGetSerialPort(ULONG Index, PULONG Irq)
 
 extern
 VOID
-DetectSerialPorts(PCONFIGURATION_COMPONENT_DATA BusKey, GET_SERIAL_PORT MachGetSerialPort, ULONG Count);
+DetectSerialPorts(
+    _In_opt_ PCSTR Options,
+    _Inout_ PCONFIGURATION_COMPONENT_DATA BusKey,
+    _In_ GET_SERIAL_PORT MachGetSerialPort,
+    _In_ ULONG Count);
 
 VOID
 XboxGetExtendedBIOSData(PULONG ExtendedBIOSDataArea, PULONG ExtendedBIOSDataSize)
@@ -91,26 +104,22 @@ XboxGetHarddiskConfigurationData(UCHAR DriveNumber, ULONG* pSize)
 {
     PCM_PARTIAL_RESOURCE_LIST PartialResourceList;
     PCM_DISK_GEOMETRY_DEVICE_DATA DiskGeometry;
-    //EXTENDED_GEOMETRY ExtGeometry;
     GEOMETRY Geometry;
     ULONG Size;
 
-    //
-    // Initialize returned size
-    //
+    /* Initialize returned size */
     *pSize = 0;
 
     /* Set 'Configuration Data' value */
-    Size = sizeof(CM_PARTIAL_RESOURCE_LIST) +
-           sizeof(CM_DISK_GEOMETRY_DEVICE_DATA);
+    Size = FIELD_OFFSET(CM_PARTIAL_RESOURCE_LIST, PartialDescriptors[1]) + sizeof(*DiskGeometry);
     PartialResourceList = FrLdrHeapAlloc(Size, TAG_HW_RESOURCE_LIST);
     if (PartialResourceList == NULL)
     {
-        ERR("Failed to allocate a full resource descriptor\n");
+        ERR("Failed to allocate resource descriptor\n");
         return NULL;
     }
 
-    memset(PartialResourceList, 0, Size);
+    RtlZeroMemory(PartialResourceList, Size);
     PartialResourceList->Version = 1;
     PartialResourceList->Revision = 1;
     PartialResourceList->Count = 1;
@@ -119,19 +128,15 @@ XboxGetHarddiskConfigurationData(UCHAR DriveNumber, ULONG* pSize)
 //  PartialResourceList->PartialDescriptors[0].ShareDisposition =
 //  PartialResourceList->PartialDescriptors[0].Flags =
     PartialResourceList->PartialDescriptors[0].u.DeviceSpecificData.DataSize =
-        sizeof(CM_DISK_GEOMETRY_DEVICE_DATA);
-
-    /* Get pointer to geometry data */
-    DiskGeometry = (PVOID)(((ULONG_PTR)PartialResourceList) + sizeof(CM_PARTIAL_RESOURCE_LIST));
+        sizeof(*DiskGeometry);
 
     /* Get the disk geometry */
-    //ExtGeometry.Size = sizeof(EXTENDED_GEOMETRY);
-
+    DiskGeometry = (PCM_DISK_GEOMETRY_DEVICE_DATA)&PartialResourceList->PartialDescriptors[1];
     if (XboxDiskGetDriveGeometry(DriveNumber, &Geometry))
     {
         DiskGeometry->BytesPerSector = Geometry.BytesPerSector;
         DiskGeometry->NumberOfCylinders = Geometry.Cylinders;
-        DiskGeometry->SectorsPerTrack = Geometry.Sectors;
+        DiskGeometry->SectorsPerTrack = Geometry.SectorsPerTrack;
         DiskGeometry->NumberOfHeads = Geometry.Heads;
     }
     else
@@ -147,83 +152,105 @@ XboxGetHarddiskConfigurationData(UCHAR DriveNumber, ULONG* pSize)
           DiskGeometry->SectorsPerTrack,
           DiskGeometry->BytesPerSector);
 
-    //
-    // Return configuration data
-    //
+    /* Return configuration data */
     *pSize = Size;
     return PartialResourceList;
 }
 
 static VOID
-DetectDisplayController(PCONFIGURATION_COMPONENT_DATA BusKey)
+DetectDisplayController(
+    _In_ PCONFIGURATION_COMPONENT_DATA BusKey)
 {
-    CHAR Buffer[80];
     PCONFIGURATION_COMPONENT_DATA ControllerKey;
     PCM_PARTIAL_RESOURCE_LIST PartialResourceList;
     PCM_PARTIAL_RESOURCE_DESCRIPTOR PartialDescriptor;
+    PCM_FRAMEBUF_DEVICE_DATA FramebufData;
     ULONG Size;
 
-    if (FrameBufferSize == 0)
+    if (!FrameBuffer || (FrameBufferSize == 0) || !FrameBufferData)
         return;
 
-    strcpy(Buffer, "NV2A Framebuffer");
-
-    Size = sizeof(CM_PARTIAL_RESOURCE_LIST);
+    Size = FIELD_OFFSET(CM_PARTIAL_RESOURCE_LIST, PartialDescriptors[3]) + sizeof(*FramebufData);
     PartialResourceList = FrLdrHeapAlloc(Size, TAG_HW_RESOURCE_LIST);
     if (PartialResourceList == NULL)
     {
         ERR("Failed to allocate resource descriptor\n");
         return;
     }
-    memset(PartialResourceList, 0, Size);
 
     /* Initialize resource descriptor */
+    RtlZeroMemory(PartialResourceList, Size);
     PartialResourceList->Version = 1;
-    PartialResourceList->Revision = 1;
-    PartialResourceList->Count = 1;
+    PartialResourceList->Revision = 2;
+    PartialResourceList->Count = 3;
+
+    /* Set IO Control Port */
+    PartialDescriptor = &PartialResourceList->PartialDescriptors[0];
+    PartialDescriptor->Type = CmResourceTypePort;
+    PartialDescriptor->ShareDisposition = CmResourceShareDeviceExclusive;
+    PartialDescriptor->Flags = CM_RESOURCE_PORT_MEMORY;
+    PartialDescriptor->u.Port.Start.LowPart = NvBase;
+    PartialDescriptor->u.Port.Start.HighPart = 0;
+    PartialDescriptor->u.Port.Length = (16 * 1024 * 1024);
 
     /* Set Memory */
-    PartialDescriptor = &PartialResourceList->PartialDescriptors[0];
+    PartialDescriptor = &PartialResourceList->PartialDescriptors[1];
     PartialDescriptor->Type = CmResourceTypeMemory;
     PartialDescriptor->ShareDisposition = CmResourceShareDeviceExclusive;
     PartialDescriptor->Flags = CM_RESOURCE_MEMORY_READ_WRITE;
-    PartialDescriptor->u.Memory.Start.LowPart = (ULONG_PTR)FrameBuffer & 0x0FFFFFFF;
+    PartialDescriptor->u.Memory.Start.LowPart = (FrameBuffer & 0x0FFFFFFF);
     PartialDescriptor->u.Memory.Length = FrameBufferSize;
+
+    /* Set framebuffer-specific data */
+    PartialDescriptor = &PartialResourceList->PartialDescriptors[2];
+    PartialDescriptor->Type = CmResourceTypeDeviceSpecific;
+    PartialDescriptor->ShareDisposition = CmResourceShareUndetermined;
+    PartialDescriptor->Flags = 0;
+    PartialDescriptor->u.DeviceSpecificData.DataSize = sizeof(*FramebufData);
+
+    /* Get pointer to framebuffer-specific data */
+    FramebufData = (PCM_FRAMEBUF_DEVICE_DATA)(PartialDescriptor + 1);
+    RtlCopyMemory(FramebufData, FrameBufferData, sizeof(*FrameBufferData));
+    FramebufData->Version  = 1;
+    FramebufData->Revision = 3;
+    FramebufData->VideoClock = 0;
 
     FldrCreateComponentKey(BusKey,
                            ControllerClass,
                            DisplayController,
-                           0x0,
-                           0x0,
+                           Output | ConsoleOut,
+                           0,
                            0xFFFFFFFF,
-                           Buffer,
+                           "NV2A Framebuffer",
                            PartialResourceList,
                            Size,
                            &ControllerKey);
 
-    TRACE("Created key: DisplayController\\0\n");
+    // NOTE: Don't add a MonitorPeripheral for now.
 }
 
 static
 VOID
-DetectIsaBios(PCONFIGURATION_COMPONENT_DATA SystemKey, ULONG *BusNumber)
+DetectIsaBios(
+    _In_opt_ PCSTR Options,
+    _Inout_ PCONFIGURATION_COMPONENT_DATA SystemKey,
+    _Out_ ULONG *BusNumber)
 {
     PCM_PARTIAL_RESOURCE_LIST PartialResourceList;
     PCONFIGURATION_COMPONENT_DATA BusKey;
     ULONG Size;
 
     /* Set 'Configuration Data' value */
-    Size = sizeof(CM_PARTIAL_RESOURCE_LIST) -
-           sizeof(CM_PARTIAL_RESOURCE_DESCRIPTOR);
+    Size = FIELD_OFFSET(CM_PARTIAL_RESOURCE_LIST, PartialDescriptors);
     PartialResourceList = FrLdrHeapAlloc(Size, TAG_HW_RESOURCE_LIST);
     if (PartialResourceList == NULL)
     {
-        TRACE("Failed to allocate resource descriptor\n");
+        ERR("Failed to allocate resource descriptor\n");
         return;
     }
 
     /* Initialize resource descriptor */
-    memset(PartialResourceList, 0, Size);
+    RtlZeroMemory(PartialResourceList, Size);
     PartialResourceList->Version = 1;
     PartialResourceList->Revision = 1;
     PartialResourceList->Count = 0;
@@ -232,8 +259,8 @@ DetectIsaBios(PCONFIGURATION_COMPONENT_DATA SystemKey, ULONG *BusNumber)
     FldrCreateComponentKey(SystemKey,
                            AdapterClass,
                            MultiFunctionAdapter,
-                           0x0,
-                           0x0,
+                           0,
+                           0,
                            0xFFFFFFFF,
                            "ISA",
                            PartialResourceList,
@@ -245,8 +272,7 @@ DetectIsaBios(PCONFIGURATION_COMPONENT_DATA SystemKey, ULONG *BusNumber)
 
     /* Detect ISA/BIOS devices */
     DetectBiosDisks(SystemKey, BusKey);
-    DetectSerialPorts(BusKey, XboxGetSerialPort, MAX_XBOX_COM_PORTS);
-    DetectDisplayController(BusKey);
+    DetectSerialPorts(Options, BusKey, XboxGetSerialPort, MAX_XBOX_COM_PORTS);
 
     /* FIXME: Detect more ISA devices */
 }
@@ -268,7 +294,8 @@ XboxGetFloppyCount(VOID)
 }
 
 PCONFIGURATION_COMPONENT_DATA
-XboxHwDetect(VOID)
+XboxHwDetect(
+    _In_opt_ PCSTR Options)
 {
     PCONFIGURATION_COMPONENT_DATA SystemKey;
     ULONG BusNumber = 0;
@@ -276,15 +303,48 @@ XboxHwDetect(VOID)
     TRACE("DetectHardware()\n");
 
     /* Create the 'System' key */
-    FldrCreateSystemKey(&SystemKey);
-    FldrSetIdentifier(SystemKey, "Original Xbox (PC/AT like)");
+    FldrCreateSystemKey(&SystemKey, "Original Xbox (PC/AT like)");
 
     GetHarddiskConfigurationData = XboxGetHarddiskConfigurationData;
-    FindPciBios = XboxFindPciBios;
 
-    /* TODO: Build actual xbox's hardware configuration tree */
-    DetectPciBios(SystemKey, &BusNumber);
-    DetectIsaBios(SystemKey, &BusNumber);
+    /* TODO: Build actual Xbox's hardware configuration tree */
+    DetectPciBus(SystemKey, &BusNumber, XboxDetectPciBus);
+    DetectIsaBios(Options, SystemKey, &BusNumber);
+
+    /* On XBOX, the display controller is on PCI bus #1 */
+    {
+    PCONFIGURATION_COMPONENT_DATA BusKey;
+    ULONG NumPciBus = 0;
+    ULONG PciBusToFind = 1;
+
+    /* PCI buses are under the System Key (i.e. siblings) */
+    for (BusKey = SystemKey->Child; BusKey; BusKey = BusKey->Sibling)
+    {
+        ERR("** XBOX: Current bus '%s' **\n", BusKey->ComponentEntry.Identifier);
+
+        /* Try to get a match */
+        if ((BusKey->ComponentEntry.Class == AdapterClass) &&
+            (BusKey->ComponentEntry.Type  == MultiFunctionAdapter) &&
+            /* Verify it's a PCI key */
+            (BusKey->ComponentEntry.Identifier &&
+             !_stricmp(BusKey->ComponentEntry.Identifier, "PCI")))
+        {
+            /* Got a PCI bus, check whether it's the one to find */
+            if (NumPciBus == PciBusToFind)
+            {
+                ERR("** XBOX: PCI bus #%lu found!\n **\n", PciBusToFind);
+                break;
+            }
+            /* Nope, continue */
+            ++NumPciBus;
+        }
+    }
+    if (BusKey)
+    {
+        ERR("** XBOX: Adding Display Controller on PCI #1 **\n");
+        DetectDisplayController(BusKey);
+    }
+    }
 
     TRACE("DetectHardware() Done\n");
     return SystemKey;
@@ -295,35 +355,53 @@ VOID XboxHwIdle(VOID)
     /* UNIMPLEMENTED */
 }
 
+// FIXME: Dummy to make freeldr exports working.
+VOID __cdecl ChainLoadBiosBootSectorCode(
+    IN UCHAR BootDrive OPTIONAL,
+    IN ULONG BootPartition OPTIONAL)
+{
+    /* No-op on XBOX */
+}
 
 /******************************************************************************/
 
 VOID
 MachInit(const char *CmdLine)
 {
+    PCI_TYPE1_CFG_BITS PciCfg1;
     ULONG PciId;
-
-    memset(&MachVtbl, 0, sizeof(MACHVTBL));
 
     /* Check for Xbox by identifying device at PCI 0:0:0, if it's
      * 0x10DE/0x02A5 then we're running on an Xbox */
-    WRITE_PORT_ULONG((PULONG)0xCF8, CONFIG_CMD(0, 0, 0));
-    PciId = READ_PORT_ULONG((PULONG)0xCFC);
+
+    /* Select Host to PCI bridge */
+    PciCfg1.u.bits.Enable = 1;
+    PciCfg1.u.bits.BusNumber = 0;
+    PciCfg1.u.bits.DeviceNumber = 0;
+    PciCfg1.u.bits.FunctionNumber = 0;
+    /* Select register VendorID & DeviceID */
+    PciCfg1.u.bits.RegisterNumber = 0x00;
+    PciCfg1.u.bits.Reserved = 0;
+
+    WRITE_PORT_ULONG(PCI_TYPE1_ADDRESS_PORT, PciCfg1.u.AsULONG);
+    PciId = READ_PORT_ULONG((PULONG)PCI_TYPE1_DATA_PORT);
     if (PciId != 0x02A510DE)
     {
-        ERR("This is not original Xbox!\n");
+        ERR("This is not an original Xbox!\n");
 
         /* Disable and halt the CPU */
         _disable();
         __halt();
 
-        while (TRUE);
+        while (TRUE)
+            NOTHING;
     }
 
     /* Set LEDs to red before anything is initialized */
     XboxSetLED("rrrr");
 
     /* Setup vtbl */
+    RtlZeroMemory(&MachVtbl, sizeof(MachVtbl));
     MachVtbl.ConsPutChar = XboxConsPutChar;
     MachVtbl.ConsKbHit = XboxConsKbHit;
     MachVtbl.ConsGetCh = XboxConsGetCh;
@@ -366,12 +444,8 @@ MachInit(const char *CmdLine)
 VOID
 XboxPrepareForReactOS(VOID)
 {
-    /* On Xbox, prepare video and disk support */
+    /* Prepare video and turn off debug messages to screen */
     XboxVideoPrepareForReactOS();
-    XboxDiskInit(FALSE);
-    DiskStopFloppyMotor();
-    
-    /* Turn off debug messages to screen */
     DebugDisableScreenPort();
 }
 

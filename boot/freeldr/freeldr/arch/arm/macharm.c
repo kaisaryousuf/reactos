@@ -18,7 +18,9 @@ ULONG gDiskReadBuffer, gFileSysBuffer;
 BOOLEAN ArmHwDetectRan;
 PCONFIGURATION_COMPONENT_DATA RootNode;
 
+#ifndef UEFIBOOT
 BOOLEAN AcpiPresent = FALSE;
+#endif
 
 ULONG FirstLevelDcacheSize;
 ULONG FirstLevelDcacheFillSize;
@@ -92,13 +94,14 @@ ArmPrepareForReactOS(VOID)
 }
 
 PCONFIGURATION_COMPONENT_DATA
-ArmHwDetect(VOID)
+ArmHwDetect(
+    _In_opt_ PCSTR Options)
 {
     ARM_CACHE_REGISTER CacheReg;
 
     /* Create the root node */
     if (ArmHwDetectRan++) return RootNode;
-    FldrCreateSystemKey(&RootNode);
+    FldrCreateSystemKey(&RootNode, "");
 
     /*
      * TODO:
@@ -124,7 +127,7 @@ ArmHwDetect(VOID)
     RamDiskInitialize(TRUE, NULL, NULL);
 
     /* Fill out the ARC disk block */
-    AddReactOSArcDiskInfo("ramdisk(0)", 0xBADAB00F, 0xDEADBABE, TRUE);
+    AddReactOSArcDiskInfo("ramdisk(0)", NULL, 0xBADAB00F, 0xDEADBABE, TRUE);
     ASSERT(reactos_disk_count == 1);
 
     /* Return the root node */
@@ -135,7 +138,7 @@ BOOLEAN
 ArmInitializeBootDevices(VOID)
 {
     /* Emulate old behavior */
-    if (ArmHwDetect() == NULL)
+    if (ArmHwDetect(NULL) == NULL)
         return FALSE;
 
     /* On ARM platforms, the loader is always in RAM */
@@ -174,6 +177,7 @@ ArmHwIdle(VOID)
     /* UNIMPLEMENTED */
 }
 
+#ifndef UEFIBOOT
 VOID
 MachInit(IN PCCH CommandLine)
 {
@@ -229,3 +233,4 @@ MachInit(IN PCCH CommandLine)
     MachVtbl.HwDetect = ArmHwDetect;
     MachVtbl.HwIdle = ArmHwIdle;
 }
+#endif

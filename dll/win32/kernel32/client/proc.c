@@ -15,13 +15,13 @@
 #define NDEBUG
 #include <debug.h>
 
+#define THREAD_ALL_ACCESS_NT6 (STANDARD_RIGHTS_REQUIRED|SYNCHRONIZE|0xFFFF)
+
 /* GLOBALS *******************************************************************/
 
-WaitForInputIdleType UserWaitForInputIdleRoutine;
 UNICODE_STRING BaseUnicodeCommandLine;
 ANSI_STRING BaseAnsiCommandLine;
 UNICODE_STRING BasePathVariableName = RTL_CONSTANT_STRING(L"PATH");
-LPSTARTUPINFOA BaseAnsiStartupInfo = NULL;
 PLDR_DATA_TABLE_ENTRY BasepExeLdrEntry;
 BOOLEAN g_AppCertInitialized;
 BOOLEAN g_HaveAppCerts;
@@ -445,12 +445,12 @@ BasepSxsCloseHandles(IN PBASE_MSG_SXS_HANDLES Handles)
     }
 }
 
+DECLSPEC_NORETURN
 VOID
 WINAPI
-BaseProcessStartup(PPROCESS_START_ROUTINE lpStartAddress)
+BaseProcessStartup(
+    _In_ PPROCESS_START_ROUTINE lpStartAddress)
 {
-    DPRINT("BaseProcessStartup(..) - setting up exception frame.\n");
-
     _SEH2_TRY
     {
         /* Set our Start Address */
@@ -611,7 +611,6 @@ BasePushProcessParameters(IN ULONG ParameterFlags,
     if (lpEnvironment)
     {
         /* We should've made it part of the parameters block, enforce this */
-        ASSERT(ProcessParameters->Environment == lpEnvironment);
         lpEnvironment = ProcessParameters->Environment;
     }
     else
@@ -900,7 +899,7 @@ SetProcessAffinityMask(IN HANDLE hProcess,
     Status = NtSetInformationProcess(hProcess,
                                      ProcessAffinityMask,
                                      (PVOID)&dwProcessAffinityMask,
-                                     sizeof(DWORD));
+                                     sizeof(dwProcessAffinityMask));
     if (!NT_SUCCESS(Status))
     {
         /* Handle failure */
@@ -910,6 +909,56 @@ SetProcessAffinityMask(IN HANDLE hProcess,
 
     /* Everything was ok */
     return TRUE;
+}
+
+#define THEONLYGROUP 0 // Fake support for a single group
+
+/*
+ * @implemented
+ */
+WORD
+WINAPI
+GetActiveProcessorGroupCount(VOID)
+{
+    STUB; // FIXME: Real group support
+    return 1; // TODO: SharedUserData->ActiveGroupCount?
+}
+
+static DWORD
+GetProcessorCountInfo(IN WORD GroupNumber, IN BOOL Maximum)
+{
+    SYSTEM_INFO info;
+
+    // TODO: SharedUserData->ActiveProcessorCount for ALL_PROCESSOR_GROUPS?
+    if (GroupNumber != ALL_PROCESSOR_GROUPS && GroupNumber != THEONLYGROUP)
+    {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return 0;
+    }
+    GetNativeSystemInfo(&info);
+    return info.dwNumberOfProcessors;
+}
+
+/*
+ * @implemented
+ */
+DWORD
+WINAPI
+GetActiveProcessorCount(IN WORD GroupNumber)
+{
+    STUB; // FIXME: Real group support
+    return GetProcessorCountInfo(GroupNumber, FALSE);
+}
+
+/*
+ * @implemented
+ */
+DWORD
+WINAPI
+GetMaximumProcessorCount(IN WORD GroupNumber)
+{
+    STUB; // FIXME: Real group support
+    return GetProcessorCountInfo(GroupNumber, TRUE);
 }
 
 /*
@@ -1265,17 +1314,6 @@ OpenProcess(IN DWORD dwDesiredAccess,
  */
 VOID
 WINAPI
-RegisterWaitForInputIdle(IN WaitForInputIdleType lpfnRegisterWaitForInputIdle)
-{
-    /* Write the global function pointer */
-    UserWaitForInputIdleRoutine = lpfnRegisterWaitForInputIdle;
-}
-
-/*
- * @implemented
- */
-VOID
-WINAPI
 GetStartupInfoW(IN LPSTARTUPINFOW lpStartupInfo)
 {
     PRTL_USER_PROCESS_PARAMETERS Params;
@@ -1309,149 +1347,6 @@ GetStartupInfoW(IN LPSTARTUPINFOW lpStartupInfo)
         lpStartupInfo->hStdInput = Params->StandardInput;
         lpStartupInfo->hStdOutput = Params->StandardOutput;
         lpStartupInfo->hStdError = Params->StandardError;
-    }
-}
-
-/*
- * @implemented
- */
-VOID
-WINAPI
-GetStartupInfoA(IN LPSTARTUPINFOA lpStartupInfo)
-{
-    PRTL_USER_PROCESS_PARAMETERS Params;
-    ANSI_STRING TitleString, ShellString, DesktopString;
-    LPSTARTUPINFOA StartupInfo;
-    NTSTATUS Status;
-
-    /* Get the cached information as well as the PEB parameters */
-    StartupInfo = BaseAnsiStartupInfo;
-    Params = NtCurrentPeb()->ProcessParameters;
-
-    /* Check if this is the first time we have to get the cached version */
-    while (!StartupInfo)
-    {
-        /* Create new ANSI startup info */
-        StartupInfo = RtlAllocateHeap(RtlGetProcessHeap(),
-                                      0,
-                                      sizeof(*StartupInfo));
-        if (StartupInfo)
-        {
-            /* Zero out string pointers in case we fail to create them */
-            StartupInfo->lpReserved = NULL;
-            StartupInfo->lpDesktop = NULL;
-            StartupInfo->lpTitle = NULL;
-
-            /* Set the size */
-            StartupInfo->cb = sizeof(*StartupInfo);
-
-            /* Copy what's already stored in the PEB */
-            StartupInfo->dwX = Params->StartingX;
-            StartupInfo->dwY = Params->StartingY;
-            StartupInfo->dwXSize = Params->CountX;
-            StartupInfo->dwYSize = Params->CountY;
-            StartupInfo->dwXCountChars = Params->CountCharsX;
-            StartupInfo->dwYCountChars = Params->CountCharsY;
-            StartupInfo->dwFillAttribute = Params->FillAttribute;
-            StartupInfo->dwFlags = Params->WindowFlags;
-            StartupInfo->wShowWindow = (WORD)Params->ShowWindowFlags;
-            StartupInfo->cbReserved2 = Params->RuntimeData.Length;
-            StartupInfo->lpReserved2 = (LPBYTE)Params->RuntimeData.Buffer;
-            StartupInfo->hStdInput = Params->StandardInput;
-            StartupInfo->hStdOutput = Params->StandardOutput;
-            StartupInfo->hStdError = Params->StandardError;
-
-            /* Copy shell info string */
-            Status = RtlUnicodeStringToAnsiString(&ShellString,
-                                                  &Params->ShellInfo,
-                                                  TRUE);
-            if (NT_SUCCESS(Status))
-            {
-                /* Save it */
-                StartupInfo->lpReserved = ShellString.Buffer;
-
-                /* Copy desktop info string */
-                Status = RtlUnicodeStringToAnsiString(&DesktopString,
-                                                      &Params->DesktopInfo,
-                                                      TRUE);
-                if (NT_SUCCESS(Status))
-                {
-                    /* Save it */
-                    StartupInfo->lpDesktop = DesktopString.Buffer;
-
-                    /* Copy window title string */
-                    Status = RtlUnicodeStringToAnsiString(&TitleString,
-                                                          &Params->WindowTitle,
-                                                          TRUE);
-                    if (NT_SUCCESS(Status))
-                    {
-                        /* Save it */
-                        StartupInfo->lpTitle = TitleString.Buffer;
-
-                        /* We finished with the ANSI version, try to cache it */
-                        if (!InterlockedCompareExchangePointer((PVOID*)&BaseAnsiStartupInfo,
-                                                               StartupInfo,
-                                                               NULL))
-                        {
-                            /* We were the first thread through, use the data */
-                            break;
-                        }
-
-                        /* Someone beat us to it, use their data instead */
-                        StartupInfo = BaseAnsiStartupInfo;
-                        Status = STATUS_SUCCESS;
-
-                        /* We're going to free our own stuff, but not raise */
-                        RtlFreeAnsiString(&TitleString);
-                    }
-                    RtlFreeAnsiString(&DesktopString);
-                }
-                RtlFreeAnsiString(&ShellString);
-            }
-            RtlFreeHeap(RtlGetProcessHeap(), 0, StartupInfo);
-        }
-        else
-        {
-            /* No memory, fail */
-            Status = STATUS_NO_MEMORY;
-        }
-
-        /* Raise an error unless we got here due to the race condition */
-        if (!NT_SUCCESS(Status)) RtlRaiseStatus(Status);
-    }
-
-    /* Now copy from the cached ANSI version */
-    lpStartupInfo->cb = StartupInfo->cb;
-    lpStartupInfo->lpReserved = StartupInfo->lpReserved;
-    lpStartupInfo->lpDesktop = StartupInfo->lpDesktop;
-    lpStartupInfo->lpTitle = StartupInfo->lpTitle;
-    lpStartupInfo->dwX = StartupInfo->dwX;
-    lpStartupInfo->dwY = StartupInfo->dwY;
-    lpStartupInfo->dwXSize = StartupInfo->dwXSize;
-    lpStartupInfo->dwYSize = StartupInfo->dwYSize;
-    lpStartupInfo->dwXCountChars = StartupInfo->dwXCountChars;
-    lpStartupInfo->dwYCountChars = StartupInfo->dwYCountChars;
-    lpStartupInfo->dwFillAttribute = StartupInfo->dwFillAttribute;
-    lpStartupInfo->dwFlags = StartupInfo->dwFlags;
-    lpStartupInfo->wShowWindow = StartupInfo->wShowWindow;
-    lpStartupInfo->cbReserved2 = StartupInfo->cbReserved2;
-    lpStartupInfo->lpReserved2 = StartupInfo->lpReserved2;
-
-    /* Check if the shell is hijacking the handles for other features */
-    if (lpStartupInfo->dwFlags &
-        (STARTF_USESTDHANDLES | STARTF_USEHOTKEY | STARTF_SHELLPRIVATE))
-    {
-        /* It isn't, so we can return the raw values */
-        lpStartupInfo->hStdInput = StartupInfo->hStdInput;
-        lpStartupInfo->hStdOutput = StartupInfo->hStdOutput;
-        lpStartupInfo->hStdError = StartupInfo->hStdError;
-    }
-    else
-    {
-        /* It is, so make sure nobody uses these as console handles */
-        lpStartupInfo->hStdInput = INVALID_HANDLE_VALUE;
-        lpStartupInfo->hStdOutput = INVALID_HANDLE_VALUE;
-        lpStartupInfo->hStdError = INVALID_HANDLE_VALUE;
     }
 }
 
@@ -1625,14 +1520,19 @@ FatalExit(IN int ExitCode)
 {
 #if DBG
     /* On Checked builds, Windows gives the user a nice little debugger UI */
-    CHAR ch[2];
-    DbgPrint("FatalExit...\n");
-    DbgPrint("\n");
+    CHAR Action[2];
+    DbgPrint("FatalExit...\n\n");
+
+    /* Check for reactos specific flag (set by rosautotest) */
+    if (RtlGetNtGlobalFlags() & FLG_DISABLE_DEBUG_PROMPTS)
+    {
+        RtlRaiseStatus(STATUS_FATAL_APP_EXIT);
+    }
 
     while (TRUE)
     {
-        DbgPrompt( "A (Abort), B (Break), I (Ignore)? ", ch, sizeof(ch));
-        switch (ch[0])
+        DbgPrompt("A (Abort), B (Break), I (Ignore)? ", Action, sizeof(Action));
+        switch (Action[0])
         {
             case 'B': case 'b':
                  DbgBreakPoint();
@@ -2223,8 +2123,8 @@ ProcessIdToSessionId(IN DWORD dwProcessId,
 }
 
 
-#define AddToHandle(x,y)  (x) = (HANDLE)((ULONG_PTR)(x) | (y));
-#define RemoveFromHandle(x,y)  (x) = (HANDLE)((ULONG_PTR)(x) & ~(y));
+#define AddToHandle(x,y)       ((x) = (HANDLE)((ULONG_PTR)(x) | (y)))
+#define RemoveFromHandle(x,y)  ((x) = (HANDLE)((ULONG_PTR)(x) & ~(y)))
 C_ASSERT(PROCESS_PRIORITY_CLASS_REALTIME == (PROCESS_PRIORITY_CLASS_HIGH + 1));
 
 /*
@@ -2354,6 +2254,7 @@ CreateProcessInternalW(IN HANDLE hUserToken,
     SectionHandle = NULL;
     ProcessHandle = NULL;
     ThreadHandle = NULL;
+    ClientId.UniqueProcess = ClientId.UniqueThread = 0;
     BaseAddress = (PVOID)1;
 
     /* Zero out initial SxS and Application Compatibility state */
@@ -3555,7 +3456,7 @@ StartScan:
 
     /* If the process is being debugged, only read IFEO if the PEB says so */
     if (!(dwCreationFlags & (DEBUG_PROCESS | DEBUG_ONLY_THIS_PROCESS)) ||
-        (NtCurrentPeb()->ReadImageFileExecOptions))
+        (Peb->ReadImageFileExecOptions))
     {
         /* Let's do this! Attempt to open IFEO */
         IFEOStatus = LdrOpenImageFileOptionsKey(&PathName, 0, &KeyHandle);
@@ -3808,10 +3709,10 @@ StartScan:
                                                       NULL);
     }
 
-    /* Check if we're going to be debugged */
-    if (dwCreationFlags & DEBUG_PROCESS)
+    /* CREATE_BREAKAWAY_FROM_JOB allows the child process to break
+     * away from the job associated with the calling process */
+    if (dwCreationFlags & CREATE_BREAKAWAY_FROM_JOB)
     {
-        /* Set process flag */
         Flags |= PROCESS_CREATE_FLAGS_BREAKAWAY;
     }
 
@@ -3999,11 +3900,11 @@ StartScan:
         QuerySection = TRUE;
     }
 
-    /* Do we need to apply SxS to this image? */
+    /* Do we need to apply SxS to this image? (On x86 this flag is set by PeFmtCreateSection) */
     if (!(ImageInformation.DllCharacteristics & IMAGE_DLLCHARACTERISTICS_NO_ISOLATION))
     {
         /* Too bad, we don't support this yet */
-        DPRINT1("Image should receive SxS Fusion Isolation\n");
+        DPRINT("Image should receive SxS Fusion Isolation\n");
     }
 
     /* There's some SxS flag that we need to set if fusion flags have 1 set */
@@ -4181,7 +4082,7 @@ StartScan:
 
     /* Create the Thread's Context */
     BaseInitializeContext(&Context,
-                          Peb,
+                          RemotePeb,
                           ImageInformation.TransferAddress,
                           InitialTeb.StackBase,
                           0);
@@ -4202,7 +4103,7 @@ StartScan:
 
     /* Create the Kernel Thread Object */
     Status = NtCreateThread(&ThreadHandle,
-                            THREAD_ALL_ACCESS,
+                            THREAD_ALL_ACCESS_NT6,
                             ObjectAttributes,
                             ProcessHandle,
                             &ClientId,
@@ -4226,7 +4127,7 @@ StartScan:
     /* Write the remote PEB address and clear it locally, we no longer use it */
     CreateProcessMsg->PebAddressNative = RemotePeb;
 #ifdef _WIN64
-    DPRINT1("TODO: WOW64 is not supported yet\n");
+    DPRINT("TODO: WOW64 is not supported yet\n");
     CreateProcessMsg->PebAddressWow64 = 0;
 #else
     CreateProcessMsg->PebAddressWow64 = (ULONG)RemotePeb;
@@ -4280,13 +4181,12 @@ StartScan:
         }
     }
 
-    /* For all apps, if this flag is on, the hourglass mouse cursor is shown */
+    /* For all apps, if this flag is on, the hourglass mouse cursor is shown.
+     * Likewise, the opposite holds as well, and no-feedback has precedence. */
     if (StartupInfo.dwFlags & STARTF_FORCEONFEEDBACK)
     {
         AddToHandle(CreateProcessMsg->ProcessHandle, 1);
     }
-
-    /* Likewise, the opposite holds as well */
     if (StartupInfo.dwFlags & STARTF_FORCEOFFFEEDBACK)
     {
         RemoveFromHandle(CreateProcessMsg->ProcessHandle, 1);
@@ -4298,8 +4198,8 @@ StartScan:
     /* And if it really is a VDM app... */
     if (VdmBinaryType)
     {
-        /* Store the task ID and VDM console handle */
-        CreateProcessMsg->hVDM = VdmTask ? 0 : Peb->ProcessParameters->ConsoleHandle;
+        /* Store the VDM console handle (none if inherited or WOW app) and the task ID */
+        CreateProcessMsg->hVDM = VdmTask ? NULL : Peb->ProcessParameters->ConsoleHandle;
         CreateProcessMsg->VdmTask = VdmTask;
     }
     else if (VdmReserve)
@@ -4411,10 +4311,9 @@ VdmShortCircuit:
         }
         else
         {
-            /* OR-in the special flag to indicate this is not a separate VDM */
+            /* OR-in the special flag to indicate this is not a separate VDM,
+             * and return the handle to the caller */
             AddToHandle(VdmWaitObject, 1);
-
-            /* Return handle to the caller */
             lpProcessInformation->hProcess = VdmWaitObject;
         }
 
@@ -4525,7 +4424,7 @@ Quickie:
     if (ThreadHandle)
     {
         /* So kill the process and close the thread handle */
-        NtTerminateProcess(ProcessHandle, 0);
+        NtTerminateProcess(ProcessHandle, STATUS_SUCCESS);
         NtClose(ThreadHandle);
     }
 
@@ -4615,200 +4514,6 @@ CreateProcessW(LPCWSTR lpApplicationName,
                                   lpStartupInfo,
                                   lpProcessInformation,
                                   NULL);
-}
-
-/*
- * @implemented
- */
-BOOL
-WINAPI
-CreateProcessInternalA(HANDLE hToken,
-                       LPCSTR lpApplicationName,
-                       LPSTR lpCommandLine,
-                       LPSECURITY_ATTRIBUTES lpProcessAttributes,
-                       LPSECURITY_ATTRIBUTES lpThreadAttributes,
-                       BOOL bInheritHandles,
-                       DWORD dwCreationFlags,
-                       LPVOID lpEnvironment,
-                       LPCSTR lpCurrentDirectory,
-                       LPSTARTUPINFOA lpStartupInfo,
-                       LPPROCESS_INFORMATION lpProcessInformation,
-                       PHANDLE hNewToken)
-{
-    UNICODE_STRING CommandLine;
-    UNICODE_STRING ApplicationName;
-    UNICODE_STRING CurrentDirectory;
-    BOOL bRetVal;
-    STARTUPINFOW StartupInfo;
-
-    DPRINT("dwCreationFlags %x, lpEnvironment %p, lpCurrentDirectory %p, "
-            "lpStartupInfo %p, lpProcessInformation %p\n",
-            dwCreationFlags, lpEnvironment, lpCurrentDirectory,
-            lpStartupInfo, lpProcessInformation);
-
-    /* Copy Startup Info */
-    RtlMoveMemory(&StartupInfo, lpStartupInfo, sizeof(*lpStartupInfo));
-
-    /* Initialize all strings to nothing */
-    CommandLine.Buffer = NULL;
-    ApplicationName.Buffer = NULL;
-    CurrentDirectory.Buffer = NULL;
-    StartupInfo.lpDesktop = NULL;
-    StartupInfo.lpReserved = NULL;
-    StartupInfo.lpTitle = NULL;
-
-    /* Convert the Command line */
-    if (lpCommandLine)
-    {
-        Basep8BitStringToDynamicUnicodeString(&CommandLine,
-                                              lpCommandLine);
-    }
-
-    /* Convert the Name and Directory */
-    if (lpApplicationName)
-    {
-        Basep8BitStringToDynamicUnicodeString(&ApplicationName,
-                                              lpApplicationName);
-    }
-    if (lpCurrentDirectory)
-    {
-        Basep8BitStringToDynamicUnicodeString(&CurrentDirectory,
-                                              lpCurrentDirectory);
-    }
-
-    /* Now convert Startup Strings */
-    if (lpStartupInfo->lpReserved)
-    {
-        BasepAnsiStringToHeapUnicodeString(lpStartupInfo->lpReserved,
-                                           &StartupInfo.lpReserved);
-    }
-    if (lpStartupInfo->lpDesktop)
-    {
-        BasepAnsiStringToHeapUnicodeString(lpStartupInfo->lpDesktop,
-                                           &StartupInfo.lpDesktop);
-    }
-    if (lpStartupInfo->lpTitle)
-    {
-        BasepAnsiStringToHeapUnicodeString(lpStartupInfo->lpTitle,
-                                           &StartupInfo.lpTitle);
-    }
-
-    /* Call the Unicode function */
-    bRetVal = CreateProcessInternalW(hToken,
-                                     ApplicationName.Buffer,
-                                     CommandLine.Buffer,
-                                     lpProcessAttributes,
-                                     lpThreadAttributes,
-                                     bInheritHandles,
-                                     dwCreationFlags,
-                                     lpEnvironment,
-                                     CurrentDirectory.Buffer,
-                                     &StartupInfo,
-                                     lpProcessInformation,
-                                     hNewToken);
-
-    /* Clean up */
-    RtlFreeUnicodeString(&ApplicationName);
-    RtlFreeUnicodeString(&CommandLine);
-    RtlFreeUnicodeString(&CurrentDirectory);
-    RtlFreeHeap(RtlGetProcessHeap(), 0, StartupInfo.lpDesktop);
-    RtlFreeHeap(RtlGetProcessHeap(), 0, StartupInfo.lpReserved);
-    RtlFreeHeap(RtlGetProcessHeap(), 0, StartupInfo.lpTitle);
-
-    /* Return what Unicode did */
-    return bRetVal;
-}
-
-/*
- * FUNCTION: The CreateProcess function creates a new process and its
- * primary thread. The new process executes the specified executable file
- * ARGUMENTS:
- *
- *     lpApplicationName = Pointer to name of executable module
- *     lpCommandLine = Pointer to command line string
- *     lpProcessAttributes = Process security attributes
- *     lpThreadAttributes = Thread security attributes
- *     bInheritHandles = Handle inheritance flag
- *     dwCreationFlags = Creation flags
- *     lpEnvironment = Pointer to new environment block
- *     lpCurrentDirectory = Pointer to current directory name
- *     lpStartupInfo = Pointer to startup info
- *     lpProcessInformation = Pointer to process information
- *
- * @implemented
- */
-BOOL
-WINAPI
-DECLSPEC_HOTPATCH
-CreateProcessA(LPCSTR lpApplicationName,
-               LPSTR lpCommandLine,
-               LPSECURITY_ATTRIBUTES lpProcessAttributes,
-               LPSECURITY_ATTRIBUTES lpThreadAttributes,
-               BOOL bInheritHandles,
-               DWORD dwCreationFlags,
-               LPVOID lpEnvironment,
-               LPCSTR lpCurrentDirectory,
-               LPSTARTUPINFOA lpStartupInfo,
-               LPPROCESS_INFORMATION lpProcessInformation)
-{
-    /* Call the internal (but exported) version */
-    return CreateProcessInternalA(NULL,
-                                  lpApplicationName,
-                                  lpCommandLine,
-                                  lpProcessAttributes,
-                                  lpThreadAttributes,
-                                  bInheritHandles,
-                                  dwCreationFlags,
-                                  lpEnvironment,
-                                  lpCurrentDirectory,
-                                  lpStartupInfo,
-                                  lpProcessInformation,
-                                  NULL);
-}
-
-/*
- * @implemented
- */
-UINT
-WINAPI
-DECLSPEC_HOTPATCH
-WinExec(LPCSTR lpCmdLine,
-        UINT uCmdShow)
-{
-    STARTUPINFOA StartupInfo;
-    PROCESS_INFORMATION  ProcessInformation;
-    DWORD dosErr;
-
-    RtlZeroMemory(&StartupInfo, sizeof(StartupInfo));
-    StartupInfo.cb = sizeof(STARTUPINFOA);
-    StartupInfo.wShowWindow = (WORD)uCmdShow;
-    StartupInfo.dwFlags = 0;
-
-    if (!CreateProcessA(NULL,
-                        (PVOID)lpCmdLine,
-                        NULL,
-                        NULL,
-                        FALSE,
-                        0,
-                        NULL,
-                        NULL,
-                        &StartupInfo,
-                        &ProcessInformation))
-    {
-        dosErr = GetLastError();
-        return dosErr < 32 ? dosErr : ERROR_BAD_FORMAT;
-    }
-
-    if (NULL != UserWaitForInputIdleRoutine)
-    {
-        UserWaitForInputIdleRoutine(ProcessInformation.hProcess,
-                                           10000);
-    }
-
-    NtClose(ProcessInformation.hProcess);
-    NtClose(ProcessInformation.hThread);
-
-    return 33; /* Something bigger than 31 means success. */
 }
 
 /* EOF */

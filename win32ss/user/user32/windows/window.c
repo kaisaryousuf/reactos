@@ -148,34 +148,6 @@ RtlFreeLargeString(
     }
 }
 
-DWORD
-FASTCALL
-RtlGetExpWinVer( HMODULE hModule )
-{
-    DWORD dwMajorVersion = 3;  // Set default to Windows 3.10.
-    DWORD dwMinorVersion = 10;
-    PIMAGE_NT_HEADERS pinth;
-
-    if ( hModule && !((ULONG_PTR)hModule >> 16))
-    {
-        pinth = RtlImageNtHeader( hModule );
-        if ( pinth )
-        {
-            dwMajorVersion = pinth->OptionalHeader.MajorSubsystemVersion;
-
-            if ( dwMajorVersion == 1 )
-            {
-                dwMajorVersion = 3;
-            }
-            else
-            {
-                dwMinorVersion = pinth->OptionalHeader.MinorSubsystemVersion;
-            }
-        }
-    }
-    return MAKELONG(MAKEWORD(dwMinorVersion, dwMajorVersion), 0);
-}
-
 HWND WINAPI
 User32CreateWindowEx(DWORD dwExStyle,
                      LPCSTR lpClassName,
@@ -645,7 +617,7 @@ DeferWindowPos(HDWP hWinPosInfo,
 BOOL WINAPI
 EndDeferWindowPos(HDWP hWinPosInfo)
 {
-    return NtUserEndDeferWindowPosEx(hWinPosInfo, 0);
+    return NtUserEndDeferWindowPosEx(hWinPosInfo, FALSE);
 }
 
 
@@ -701,7 +673,7 @@ User32EnumWindows(HDESK hDesktop,
                                  hWndparent,
                                  bChildren,
                                  dwThreadId,
-                                 lParam,
+                                 dwCount,
                                  NULL,
                                  &dwCount);
     if (!NT_SUCCESS(Status))
@@ -729,7 +701,7 @@ User32EnumWindows(HDESK hDesktop,
                                  hWndparent,
                                  bChildren,
                                  dwThreadId,
-                                 lParam,
+                                 dwCount,
                                  pHwnd,
                                  &dwCount);
     if (!NT_SUCCESS(Status))
@@ -952,51 +924,39 @@ GetAltTabInfoW(HWND hwnd,
     return NtUserGetAltTabInfo(hwnd,iItem,pati,pszItemText,cchItemText,FALSE);
 }
 
-
-/*
- * @implemented
- */
+/* @implemented */
 HWND WINAPI
-GetAncestor(HWND hwnd, UINT gaFlags)
+GetAncestor(_In_ HWND hwnd, _In_ UINT uType)
 {
-    HWND Ret = NULL;
-    PWND Ancestor, Wnd;
-
-    Wnd = ValidateHwnd(hwnd);
-    if (!Wnd)
+    PWND pWnd = ValidateHwnd(hwnd);
+    if (!pWnd || pWnd == GetThreadDesktopWnd())
         return NULL;
 
-    _SEH2_TRY
+    /* Special handling optimized for speed */
+    if (uType == GA_PARENT)
     {
-        Ancestor = NULL;
-        switch (gaFlags)
+        HWND hwndAncestor = NULL;
+
+        _SEH2_TRY
         {
-            case GA_PARENT:
-                if (Wnd->spwndParent != NULL)
-                    Ancestor = DesktopPtrToUser(Wnd->spwndParent);
-                break;
-
-            default:
-                /* FIXME: Call win32k for now */
-                Wnd = NULL;
-                break;
+            if (pWnd->spwndParent && pWnd->fnid != FNID_MESSAGEWND)
+            {
+                PWND pwndAncestor = DesktopPtrToUser(pWnd->spwndParent);
+                if (pwndAncestor)
+                    hwndAncestor = UserHMGetHandle(pwndAncestor);
+            }
         }
+        _SEH2_EXCEPT(EXCEPTION_EXECUTE_HANDLER)
+        {
+            /* Do nothing */
+        }
+        _SEH2_END;
 
-        if (Ancestor != NULL)
-            Ret = UserHMGetHandle(Ancestor);
+        return hwndAncestor;
     }
-    _SEH2_EXCEPT(EXCEPTION_EXECUTE_HANDLER)
-    {
-        /* Do nothing */
-    }
-    _SEH2_END;
 
-    if (!Wnd) /* Fall back */
-        Ret = NtUserGetAncestor(hwnd, gaFlags);
-
-    return Ret;
+    return NtUserGetAncestor(hwnd, uType);
 }
-
 
 /*
  * @implemented
@@ -1169,9 +1129,19 @@ GetWindow(HWND hWnd,
                     FoundWnd = DesktopPtrToUser(FoundWnd->spwndNext);
                 break;
 
-            default:
-                Wnd = NULL;
+            case GW_ENABLEDPOPUP:
+            {
+                PWND pwndPopup = (PWND)NtUserCallHwnd(hWnd, HWND_ROUTINE_DWP_GETENABLEDPOPUP);
+                if (pwndPopup)
+                    FoundWnd = DesktopPtrToUser(pwndPopup);
                 break;
+            }
+
+            default:
+            {
+                UserSetLastError(ERROR_INVALID_GW_COMMAND);
+                break;
+            }
         }
 
         if (FoundWnd != NULL)
@@ -1540,6 +1510,30 @@ IsIconic(HWND hWnd)
 }
 
 
+/**
+ * @brief
+ * Checks whether a window has a window procedure that resides in kernel mode.
+ *
+ * @param[in]   hWnd
+ * A handle to the window to be checked.
+ *
+ * @return
+ * TRUE if the window has a window procedure that resides in kernel mode,
+ * FALSE otherwise.
+ *
+ * @remarks
+ * Undocumented, see https://undoc.airesoft.co.uk/user32.dll/IsServerSideWindow.php
+ **/
+BOOL
+WINAPI
+IsServerSideWindow(
+    _In_ HWND hWnd)
+{
+    PWND Wnd = ValidateHwnd(hWnd);
+    return Wnd && (Wnd->state & WNDS_SERVERSIDEWINDOWPROC);
+}
+
+
 /*
  * @implemented
  */
@@ -1549,9 +1543,8 @@ IsWindow(HWND hWnd)
     PWND Wnd = ValidateHwndNoErr(hWnd);
     if (Wnd != NULL)
     {
-        if (Wnd->state & WNDS_DESTROYED ||
-            Wnd->state2 & WNDS2_INDESTROY)
-           return FALSE;
+        if (Wnd->state & WNDS_DESTROYED)
+            return FALSE;
         return TRUE;
     }
 
@@ -1875,22 +1868,7 @@ InternalGetWindowText(HWND hWnd, LPWSTR lpString, int nMaxCount)
 BOOL WINAPI
 IsHungAppWindow(HWND hwnd)
 {
-    PWND Window;
-    UNICODE_STRING ClassName;
-    WCHAR szClass[16];
-    static const UNICODE_STRING GhostClass = RTL_CONSTANT_STRING(L"Ghost");
-
-    /* Ghost is a hung window */
-    RtlInitEmptyUnicodeString(&ClassName, szClass, sizeof(szClass));
-    Window = ValidateHwnd(hwnd);
-    if (Window && Window->fnid == FNID_GHOST &&
-        NtUserGetClassName(hwnd, FALSE, &ClassName) &&
-        RtlEqualUnicodeString(&ClassName, &GhostClass, TRUE))
-    {
-        return TRUE;
-    }
-
-    return (NtUserQueryWindow(hwnd, QUERY_WINDOW_ISHUNG) != 0);
+    return !!NtUserQueryWindow(hwnd, QUERY_WINDOW_ISHUNG);
 }
 
 /*
@@ -1990,7 +1968,7 @@ ScrollWindowEx(HWND hWnd,
 {
     if (flags & SW_SMOOTHSCROLL)
     {
-       FIXME("SW_SMOOTHSCROLL not supported.");
+       FIXME("SW_SMOOTHSCROLL not supported.\n");
        // Fall through....
     }
     return NtUserScrollWindowEx(hWnd,

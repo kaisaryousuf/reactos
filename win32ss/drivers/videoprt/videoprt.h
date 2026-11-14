@@ -48,6 +48,7 @@ typedef struct _VIDEO_PORT_ADDRESS_MAPPING
    ULONG NumberOfUchars;
    PHYSICAL_ADDRESS IoAddress;
    ULONG SystemIoBusNumber;
+   MEMORY_CACHING_TYPE CacheType;
    UINT MappingCount;
 } VIDEO_PORT_ADDRESS_MAPPING, *PVIDEO_PORT_ADDRESS_MAPPING;
 
@@ -107,7 +108,15 @@ typedef struct _VIDEO_PORT_DEVICE_EXTENSTION
    LIST_ENTRY DmaAdapterList, ChildDeviceList;
    LIST_ENTRY HwResetListEntry;
    ULONG SessionId;
-   CHAR MiniPortDeviceExtension[1];
+   USHORT AdapterNumber;
+   USHORT DisplayNumber;
+   ULONG NumberOfSecondaryDisplays;
+   BOOLEAN IsLegacyDevice;
+   BOOLEAN IsLegacyDetect;
+   BOOLEAN IsVgaDriver;
+   BOOLEAN IsVgaDetect;
+   BOOLEAN ReportDevice;
+   CHAR POINTER_ALIGNMENT MiniPortDeviceExtension[1];
 } VIDEO_PORT_DEVICE_EXTENSION, *PVIDEO_PORT_DEVICE_EXTENSION;
 
 typedef struct _VIDEO_PORT_CHILD_EXTENSION
@@ -231,7 +240,12 @@ IntVideoPortSetupInterrupt(
 NTSTATUS NTAPI
 IntVideoPortFilterResourceRequirements(
    IN PDEVICE_OBJECT DeviceObject,
+   IN PIO_STACK_LOCATION IrpStack,
    IN PIRP Irp);
+
+VOID
+IntVideoPortReleaseResources(
+    _In_ PVIDEO_PORT_DEVICE_EXTENSION DeviceExtension);
 
 NTSTATUS NTAPI
 IntVideoPortMapPhysicalMemory(
@@ -245,73 +259,102 @@ IntVideoPortMapPhysicalMemory(
 
 extern PKPROCESS CsrProcess;
 extern ULONG VideoPortDeviceNumber;
-extern KMUTEX VideoPortInt10Mutex;
+extern BOOLEAN VideoPortUseNewKey;
+
 extern KSPIN_LOCK HwResetAdaptersLock;
 extern LIST_ENTRY HwResetAdaptersList;
+extern KMUTEX VgaSyncLock;
+extern PVIDEO_PORT_DEVICE_EXTENSION VgaDeviceExtension;
+extern PVIDEO_ACCESS_RANGE VgaRanges;
+extern ULONG NumOfVgaRanges;
 
-VOID FASTCALL
-IntAttachToCSRSS(PKPROCESS *CallingProcess, PKAPC_STATE ApcState);
+BOOLEAN
+FASTCALL
+IntAttachToCSRSS(
+    _Outptr_ PKPROCESS* CallingProcess,
+    _Out_ PKAPC_STATE ApcState);
 
-VOID FASTCALL
-IntDetachFromCSRSS(PKPROCESS *CallingProcess, PKAPC_STATE ApcState);
+VOID
+FASTCALL
+IntDetachFromCSRSS(
+    _In_ PKPROCESS CallingProcess,
+    _In_ PKAPC_STATE ApcState);
 
 NTSTATUS NTAPI
 IntVideoPortCreateAdapterDeviceObject(
    _In_ PDRIVER_OBJECT DriverObject,
    _In_ PVIDEO_PORT_DRIVER_EXTENSION DriverExtension,
    _In_opt_ PDEVICE_OBJECT PhysicalDeviceObject,
+   _In_ USHORT AdapterNumber,
+   _In_ USHORT DisplayNumber,
    _Out_opt_ PDEVICE_OBJECT *DeviceObject);
 
-NTSTATUS NTAPI
+NTSTATUS
 IntVideoPortFindAdapter(
-   IN PDRIVER_OBJECT DriverObject,
-   IN PVIDEO_PORT_DRIVER_EXTENSION DriverExtension,
-   IN PDEVICE_OBJECT DeviceObject);
+    _In_ PDRIVER_OBJECT DriverObject,
+    _In_ PVIDEO_PORT_DRIVER_EXTENSION DriverExtension,
+    _In_ _When_(LegacyDetection, _Null_) PDEVICE_OBJECT DeviceObject,
+    _In_ BOOLEAN LegacyDetection);
 
-PVOID NTAPI
+PVOID
+NTAPI
 IntVideoPortGetProcAddress(
-   IN PVOID HwDeviceExtension,
-   IN PUCHAR FunctionName);
+    _In_ PVOID HwDeviceExtension,
+    _In_ PUCHAR FunctionName);
+
+NTSTATUS NTAPI
+IntVideoPortEnumerateChildren(
+    IN PDEVICE_OBJECT DeviceObject,
+    IN PIRP Irp);
 
 /* int10.c */
 
+#ifdef _M_IX86
+extern BOOLEAN VideoPortDisableX86Emulator;
+#endif
+extern KMUTEX VideoPortInt10Mutex;
+
 NTSTATUS
+IntInitializeInt10(VOID);
+
+VP_STATUS
 NTAPI
-IntInitializeVideoAddressSpace(VOID);
-
-VP_STATUS NTAPI
 IntInt10AllocateBuffer(
-   IN PVOID Context,
-   OUT PUSHORT Seg,
-   OUT PUSHORT Off,
-   IN OUT PULONG Length);
+    _In_ PVOID Context,
+    _Out_ PUSHORT Seg,
+    _Out_ PUSHORT Off,
+    _Inout_ PULONG Length);
 
-VP_STATUS NTAPI
+VP_STATUS
+NTAPI
 IntInt10FreeBuffer(
-   IN PVOID Context,
-   IN USHORT Seg,
-   IN USHORT Off);
+    _In_ PVOID Context,
+    _In_ USHORT Seg,
+    _In_ USHORT Off);
 
-VP_STATUS NTAPI
+VP_STATUS
+NTAPI
 IntInt10ReadMemory(
-   IN PVOID Context,
-   IN USHORT Seg,
-   IN USHORT Off,
-   OUT PVOID Buffer,
-   IN ULONG Length);
+    _In_ PVOID Context,
+    _In_ USHORT Seg,
+    _In_ USHORT Off,
+    _Out_writes_bytes_(Length) PVOID Buffer,
+    _In_ ULONG Length);
 
-VP_STATUS NTAPI
+VP_STATUS
+NTAPI
 IntInt10WriteMemory(
-   IN PVOID Context,
-   IN USHORT Seg,
-   IN USHORT Off,
-   IN PVOID Buffer,
-   IN ULONG Length);
+    _In_ PVOID Context,
+    _In_ USHORT Seg,
+    _In_ USHORT Off,
+    _In_reads_bytes_(Length) PVOID Buffer,
+    _In_ ULONG Length);
 
-VP_STATUS NTAPI
+VP_STATUS
+NTAPI
 IntInt10CallBios(
-   IN PVOID Context,
-   IN OUT PINT10_BIOS_ARGUMENTS BiosArguments);
+    _In_ PVOID Context,
+    _Inout_ PINT10_BIOS_ARGUMENTS BiosArguments);
 
 /* registry.c */
 
@@ -342,7 +385,7 @@ NTSTATUS
 NTAPI
 IntCreateRegistryPath(
     IN PCUNICODE_STRING DriverRegistryPath,
+    IN ULONG DeviceNumber,
     OUT PUNICODE_STRING DeviceRegistryPath);
-
 
 #endif /* VIDEOPRT_H */

@@ -337,6 +337,11 @@ USBH_HubSetD0(
 
 NTSTATUS
 NTAPI
+USBH_HubStartESDRecovery(
+  IN PUSBHUB_FDO_EXTENSION HubExtension);
+
+NTSTATUS
+NTAPI
 USBH_FdoPower(
   IN PUSBHUB_FDO_EXTENSION HubExtension,
   IN PIRP Irp,
@@ -606,7 +611,7 @@ USBD_UnRegisterRootHubCallBack(
 VOID
 NTAPI
 USBH_HubCancelIdleIrp(
-  IN PUSBHUB_FDO_EXTENSION HubExtension, 
+  IN PUSBHUB_FDO_EXTENSION HubExtension,
   IN PIRP IdleIrp);
 
 BOOLEAN

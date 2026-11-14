@@ -42,12 +42,20 @@ void CFolderItemVerb::Init(IContextMenu* menu, BSTR name)
 HRESULT STDMETHODCALLTYPE CFolderItemVerb::get_Application(IDispatch **ppid)
 {
     TRACE("(%p, %p)\n", this, ppid);
+
+    if (ppid)
+        *ppid = NULL;
+
     return E_NOTIMPL;
 }
 
 HRESULT STDMETHODCALLTYPE CFolderItemVerb::get_Parent(IDispatch **ppid)
 {
     TRACE("(%p, %p)\n", this, ppid);
+
+    if (ppid)
+        *ppid = NULL;
+
     return E_NOTIMPL;
 }
 
@@ -81,25 +89,25 @@ CFolderItemVerbs::~CFolderItemVerbs()
     DestroyMenu(m_menu);
 }
 
-HRESULT CFolderItemVerbs::Init(LPITEMIDLIST idlist)
+HRESULT CFolderItemVerbs::Init(IContextMenu &cm)
 {
-    CComPtr<IShellFolder> folder;
-    LPCITEMIDLIST child;
-    HRESULT hr = SHBindToParent(idlist, IID_PPV_ARG(IShellFolder, &folder), &child);
-    if (FAILED_UNEXPECTEDLY(hr))
-        return hr;
-
-    hr = folder->GetUIObjectOf(NULL, 1, &child, IID_IContextMenu, NULL, (PVOID*)&m_contextmenu);
-    if (FAILED_UNEXPECTEDLY(hr))
-        return hr;
-
+    m_contextmenu = &cm;
     m_menu = CreatePopupMenu();
-    hr = m_contextmenu->QueryContextMenu(m_menu, 0, FCIDM_SHVIEWFIRST, FCIDM_SHVIEWLAST, CMF_NORMAL);
-    if (!SUCCEEDED(hr))
+    HRESULT hr = m_contextmenu->QueryContextMenu(m_menu, 0, FCIDM_SHVIEWFIRST, FCIDM_SHVIEWLAST, CMF_NORMAL);
+    if (FAILED(hr))
         return hr;
 
     m_count = GetMenuItemCount(m_menu);
     return hr;
+}
+
+HRESULT CFolderItemVerbs::Init(LPCITEMIDLIST idlist)
+{
+    CComPtr<IContextMenu> pCM;
+    HRESULT hr = SHELL_GetUIObjectOfAbsoluteItem(NULL, idlist, IID_PPV_ARG(IContextMenu, &pCM));
+    if (FAILED_UNEXPECTEDLY(hr))
+        return hr;
+    return Init(*static_cast<IContextMenu*>(pCM));
 }
 
 
@@ -144,13 +152,11 @@ HRESULT STDMETHODCALLTYPE CFolderItemVerbs::Item(VARIANT indexVar, FolderItemVer
         return E_INVALIDARG;
 
     int index = V_I4(&var);
-
     if (index > m_count)
-        return S_OK;
+        return S_FALSE;
 
     BSTR name = NULL;
-
-    if(index == m_count)
+    if (index == m_count)
     {
         name = SysAllocStringLen(NULL, 0);
     }

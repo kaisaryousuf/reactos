@@ -19,6 +19,7 @@
  */
 
 #include "precomp.h"
+#include <cfgmgr32.h>
 
 class CStartMenuSite :
     public CComCoClass<CStartMenuSite>,
@@ -37,12 +38,13 @@ public:
 
     virtual ~CStartMenuSite() {}
 
-    /*******************************************************************/
+    // *** IServiceProvider methods ***
 
-    virtual HRESULT STDMETHODCALLTYPE QueryService(
+    STDMETHODIMP
+    QueryService(
         IN REFGUID guidService,
         IN REFIID riid,
-        OUT PVOID *ppvObject)
+        OUT PVOID *ppvObject) override
     {
         if (IsEqualGUID(guidService, SID_SMenuPopup))
         {
@@ -52,10 +54,10 @@ public:
         return E_NOINTERFACE;
     }
 
-    /*******************************************************************/
+    // *** IOleWindow methods ***
 
-    virtual HRESULT STDMETHODCALLTYPE GetWindow(
-        OUT HWND *phwnd)
+    STDMETHODIMP
+    GetWindow(OUT HWND *phwnd) override
     {
         TRACE("ITrayPriv::GetWindow\n");
 
@@ -66,16 +68,17 @@ public:
         return E_FAIL;
     }
 
-    virtual HRESULT STDMETHODCALLTYPE ContextSensitiveHelp(
-        IN BOOL fEnterMode)
+    STDMETHODIMP
+    ContextSensitiveHelp(IN BOOL fEnterMode) override
     {
         TRACE("ITrayPriv::ContextSensitiveHelp\n");
         return E_NOTIMPL;
     }
 
-    virtual HRESULT STDMETHODCALLTYPE Execute(
+    STDMETHODIMP
+    Execute(
         IN IShellFolder *pShellFolder,
-        IN LPCITEMIDLIST pidl)
+        IN LPCITEMIDLIST pidl) override
     {
         HRESULT ret = S_FALSE;
 
@@ -86,22 +89,26 @@ public:
         return ret;
     }
 
-    virtual HRESULT STDMETHODCALLTYPE Unknown(
+    STDMETHODIMP
+    Unknown(
         IN PVOID Unknown1,
         IN PVOID Unknown2,
         IN PVOID Unknown3,
-        IN PVOID Unknown4)
+        IN PVOID Unknown4) override
     {
         TRACE("ITrayPriv::Unknown(0x%p,0x%p,0x%p,0x%p)\n", Unknown1, Unknown2, Unknown3, Unknown4);
         return E_NOTIMPL;
     }
 
-    virtual BOOL
-        ShowUndockMenuItem(VOID)
+    virtual BOOL ShowUndockMenuItem(VOID)
     {
-        TRACE("ShowUndockMenuItem() not implemented!\n");
-        /* FIXME: How do we detect this?! */
-        return FALSE;
+        BOOL bPresent;
+        CM_Is_Dock_Station_Present(&bPresent);
+
+        return bPresent &&
+               !SHRestricted(REST_NOSMEJECTPC) &&
+               SHTestTokenPrivilegeW(NULL, L"SeUndockPrivilege") &&
+               !GetSystemMetrics(SM_REMOTESESSION);
     }
 
     virtual BOOL
@@ -112,8 +119,8 @@ public:
         return FALSE;
     }
 
-    virtual HRESULT STDMETHODCALLTYPE AppendMenu(
-        OUT HMENU* phMenu)
+    STDMETHODIMP
+    AppendMenu(OUT HMENU* phMenu) override
     {
         HMENU hMenu, hSettingsMenu;
         DWORD dwLogoff;
@@ -130,111 +137,96 @@ public:
 
         /* Remove menu items that don't apply */
 
-        dwLogoff = SHRestricted(REST_STARTMENULOGOFF);
-        bWantLogoff = (dwLogoff == 2 ||
-                       SHRestricted(REST_FORCESTARTMENULOGOFF) ||
-                       GetExplorerRegValueSet(HKEY_CURRENT_USER,
-                                              L"Advanced",
-                                              L"StartMenuLogoff"));
-
         /* Favorites */
-        if (!GetExplorerRegValueSet(HKEY_CURRENT_USER,
-                                    L"Advanced",
-                                    L"StartMenuFavorites"))
+        if (SHRestricted(REST_NOFAVORITESMENU) ||
+            !GetAdvancedBool(L"StartMenuFavorites", FALSE))
         {
-            DeleteMenu(hMenu,
-                       IDM_FAVORITES,
-                       MF_BYCOMMAND);
+            DeleteMenu(hMenu, IDM_FAVORITES, MF_BYCOMMAND);
         }
 
         /* Documents */
-        if (SHRestricted(REST_NORECENTDOCSMENU))
+        if (SHRestricted(REST_NORECENTDOCSMENU) ||
+            !GetAdvancedBool(L"Start_ShowRecentDocs", TRUE))
         {
-            DeleteMenu(hMenu,
-                       IDM_DOCUMENTS,
-                       MF_BYCOMMAND);
+            DeleteMenu(hMenu, IDM_DOCUMENTS, MF_BYCOMMAND);
         }
 
         /* Settings */
-        hSettingsMenu = FindSubMenu(hMenu,
-                                    IDM_SETTINGS,
-                                    FALSE);
-        if (hSettingsMenu != NULL)
+        hSettingsMenu = FindSubMenu(hMenu, IDM_SETTINGS, FALSE);
+
+        /* Control Panel */
+        if (SHRestricted(REST_NOSETFOLDERS) ||
+            SHRestricted(REST_NOCONTROLPANEL) ||
+            !GetAdvancedBool(L"Start_ShowControlPanel", TRUE))
         {
-            if (SHRestricted(REST_NOSETFOLDERS))
-            {
-                /* Control Panel */
-                if (SHRestricted(REST_NOCONTROLPANEL))
-                {
-                    DeleteMenu(hSettingsMenu,
-                               IDM_CONTROLPANEL,
-                               MF_BYCOMMAND);
+            DeleteMenu(hSettingsMenu, IDM_CONTROLPANEL, MF_BYCOMMAND);
 
-                    /* Delete the separator below it */
-                    DeleteMenu(hSettingsMenu,
-                               0,
-                               MF_BYPOSITION);
-                }
+            /* Delete the separator below it */
+            DeleteMenu(hSettingsMenu, 0, MF_BYPOSITION);
+        }
 
-                /* Network Connections */
-                if (SHRestricted(REST_NONETWORKCONNECTIONS))
-                {
-                    DeleteMenu(hSettingsMenu,
-                               IDM_NETWORKCONNECTIONS,
-                               MF_BYCOMMAND);
-                }
+        /* Network Connections */
+        if (SHRestricted(REST_NOSETFOLDERS) ||
+            SHRestricted(REST_NONETWORKCONNECTIONS) ||
+            !GetAdvancedBool(L"Start_ShowNetConn", TRUE))
+        {
+            DeleteMenu(hSettingsMenu, IDM_NETWORKCONNECTIONS, MF_BYCOMMAND);
+        }
 
-                /* Printers and Faxes */
-                DeleteMenu(hSettingsMenu,
-                           IDM_PRINTERSANDFAXES,
-                           MF_BYCOMMAND);
-            }
+        /* Printers and Faxes */
+        if (SHRestricted(REST_NOSETFOLDERS) ||
+            !GetAdvancedBool(L"Start_ShowPrinters", TRUE))
+        {
+            DeleteMenu(hSettingsMenu, IDM_PRINTERSANDFAXES, MF_BYCOMMAND);
+        }
 
-            /* Security */
-            if (GetSystemMetrics(SM_REMOTECONTROL) == 0 ||
-                SHRestricted(REST_NOSECURITY))
-            {
-                DeleteMenu(hSettingsMenu,
-                           IDM_SECURITY,
-                           MF_BYCOMMAND);
-            }
+        /* Security */
+        if (SHRestricted(REST_NOSETFOLDERS) ||
+            GetSystemMetrics(SM_REMOTECONTROL) == 0 ||
+            SHRestricted(REST_NOSECURITY))
+        {
+            DeleteMenu(hSettingsMenu, IDM_SECURITY, MF_BYCOMMAND);
+        }
 
-            if (GetMenuItemCount(hSettingsMenu) == 0)
-            {
-                DeleteMenu(hMenu,
-                           IDM_SETTINGS,
-                           MF_BYCOMMAND);
-            }
+        /* Delete Settings menu if it was empty */
+        if (GetMenuItemCount(hSettingsMenu) == 0)
+        {
+            DeleteMenu(hMenu, IDM_SETTINGS, MF_BYCOMMAND);
         }
 
         /* Search */
-        if (SHRestricted(REST_NOFIND))
+        if (SHRestricted(REST_NOFIND) ||
+            !GetAdvancedBool(L"Start_ShowSearch", TRUE))
         {
-            DeleteMenu(hMenu,
-                       IDM_SEARCH,
-                       MF_BYCOMMAND);
+            DeleteMenu(hMenu, IDM_SEARCH, MF_BYCOMMAND);
         }
 
-        /* FIXME: Help */
+        /* Help */
+        if (SHRestricted(REST_NOSMHELP) ||
+            !GetAdvancedBool(L"Start_ShowHelp", TRUE))
+        {
+            DeleteMenu(hMenu, IDM_HELPANDSUPPORT, MF_BYCOMMAND);
+        }
 
         /* Run */
-        if (SHRestricted(REST_NORUN))
+        if (SHRestricted(REST_NORUN) ||
+            !GetAdvancedBool(L"StartMenuRun", TRUE))
         {
-            DeleteMenu(hMenu,
-                       IDM_RUN,
-                       MF_BYCOMMAND);
+            DeleteMenu(hMenu, IDM_RUN, MF_BYCOMMAND);
         }
 
         /* Synchronize */
         if (!ShowSynchronizeMenuItem())
         {
-            DeleteMenu(hMenu,
-                       IDM_SYNCHRONIZE,
-                       MF_BYCOMMAND);
+            DeleteMenu(hMenu, IDM_SYNCHRONIZE, MF_BYCOMMAND);
             uLastItemsCount--;
         }
 
         /* Log off */
+        dwLogoff = SHRestricted(REST_STARTMENULOGOFF);
+        bWantLogoff = (dwLogoff == 2 ||
+                       SHRestricted(REST_FORCESTARTMENULOGOFF) ||
+                       GetAdvancedBool(L"StartMenuLogoff", FALSE));
         if (dwLogoff != 1 && bWantLogoff)
         {
             /* FIXME: We need a more sophisticated way to determine whether to show
@@ -252,53 +244,41 @@ public:
                 szUser))
             {
                 /* We couldn't update the menu item, delete it... */
-                DeleteMenu(hMenu,
-                           IDM_LOGOFF,
-                           MF_BYCOMMAND);
+                DeleteMenu(hMenu, IDM_LOGOFF, MF_BYCOMMAND);
             }
         }
         else
         {
-            DeleteMenu(hMenu,
-                       IDM_LOGOFF,
-                       MF_BYCOMMAND);
+            DeleteMenu(hMenu, IDM_LOGOFF, MF_BYCOMMAND);
             uLastItemsCount--;
         }
 
-
         /* Disconnect */
-        if (GetSystemMetrics(SM_REMOTECONTROL) == 0)
+        if (SHRestricted(REST_NODISCONNECT) ||
+            GetSystemMetrics(SM_REMOTECONTROL) == 0)
         {
-            DeleteMenu(hMenu,
-                       IDM_DISCONNECT,
-                       MF_BYCOMMAND);
+            DeleteMenu(hMenu, IDM_DISCONNECT, MF_BYCOMMAND);
             uLastItemsCount--;
         }
 
         /* Undock computer */
         if (!ShowUndockMenuItem())
         {
-            DeleteMenu(hMenu,
-                       IDM_UNDOCKCOMPUTER,
-                       MF_BYCOMMAND);
+            DeleteMenu(hMenu, IDM_UNDOCKCOMPUTER, MF_BYCOMMAND);
             uLastItemsCount--;
         }
 
         /* Shut down */
         if (SHRestricted(REST_NOCLOSE))
         {
-            DeleteMenu(hMenu,
-                       IDM_SHUTDOWN,
-                       MF_BYCOMMAND);
+            DeleteMenu(hMenu, IDM_SHUTDOWN, MF_BYCOMMAND);
             uLastItemsCount--;
         }
 
         if (uLastItemsCount == 0)
         {
             /* Remove the separator at the end of the menu */
-            DeleteMenu(hMenu,
-                       IDM_LASTSTARTMENU_SEPARATOR,
-                       MF_BYCOMMAND);
+            DeleteMenu(hMenu, IDM_LASTSTARTMENU_SEPARATOR, MF_BYCOMMAND);
         }
 
         return S_OK;
@@ -306,53 +286,63 @@ public:
 
     /*******************************************************************/
 
-    virtual HRESULT STDMETHODCALLTYPE QueryStatus(
+    STDMETHODIMP
+    QueryStatus(
         IN const GUID *pguidCmdGroup  OPTIONAL,
         IN ULONG cCmds,
         IN OUT OLECMD *prgCmds,
-        IN OUT OLECMDTEXT *pCmdText  OPTIONAL)
+        IN OUT OLECMDTEXT *pCmdText  OPTIONAL) override
     {
         return E_NOTIMPL;
     }
 
-    virtual HRESULT STDMETHODCALLTYPE Exec(
+    STDMETHODIMP
+    Exec(
         IN const GUID *pguidCmdGroup  OPTIONAL,
         IN DWORD nCmdID,
         IN DWORD nCmdExecOpt,
         IN VARIANTARG *pvaIn  OPTIONAL,
-        IN VARIANTARG *pvaOut  OPTIONAL)
+        IN VARIANTARG *pvaOut  OPTIONAL) override
     {
         return E_NOTIMPL;
     }
 
     /*******************************************************************/
 
-    virtual HRESULT STDMETHODCALLTYPE SetClient(IUnknown *punkClient)
+    STDMETHODIMP
+    SetClient(IUnknown *punkClient) override
     {
         return E_NOTIMPL;
     }
 
-    virtual HRESULT STDMETHODCALLTYPE GetClient(IUnknown ** ppunkClient)
+    STDMETHODIMP
+    GetClient(IUnknown ** ppunkClient) override
     {
         return E_NOTIMPL;
     }
 
-    virtual HRESULT STDMETHODCALLTYPE OnPosRectChangeDB(RECT *prc)
+    STDMETHODIMP
+    OnPosRectChangeDB(RECT *prc) override
     {
         return E_NOTIMPL;
     }
 
-    virtual HRESULT STDMETHODCALLTYPE Popup(POINTL *ppt, RECTL *prcExclude, MP_POPUPFLAGS dwFlags)
+    // *** IMenuPopup methods ***
+
+    STDMETHODIMP
+    Popup(POINTL *ppt, RECTL *prcExclude, MP_POPUPFLAGS dwFlags) override
     {
         return E_NOTIMPL;
     }
 
-    virtual HRESULT STDMETHODCALLTYPE OnSelect(DWORD dwSelectType)
+    STDMETHODIMP
+    OnSelect(DWORD dwSelectType) override
     {
         return E_NOTIMPL;
     }
 
-    virtual HRESULT STDMETHODCALLTYPE SetSubMenu(IMenuPopup *pmp, BOOL fSet)
+    STDMETHODIMP
+    SetSubMenu(IMenuPopup *pmp, BOOL fSet) override
     {
         if (!fSet)
         {

@@ -106,7 +106,7 @@ DllMain(HANDLE hDll,
         {
             /* Set no filter initially */
             GlobalTopLevelExceptionFilter = RtlEncodePointer(NULL);
-            
+
             /* Enable the Rtl thread pool and timer queue to use proper Win32 thread */
             RtlSetThreadPoolStartFunc(BaseCreateThreadPoolThread, BaseExitThreadPoolThread);
 
@@ -128,11 +128,11 @@ DllMain(HANDLE hDll,
             else
             {
                 /* Use the session path */
-                swprintf(SessionDir,
-                         L"%ws\\%ld%ws",
-                         SESSION_DIR,
-                         SessionId,
-                         WIN_OBJ_DIR);
+                _swprintf(SessionDir,
+                          L"%ws\\%lu%ws",
+                          SESSION_DIR,
+                          SessionId,
+                          WIN_OBJ_DIR);
             }
 
             /* Connect to the Base Server */
@@ -174,7 +174,7 @@ DllMain(HANDLE hDll,
             /* Construct the default path (using the static buffer) */
             Status = RtlStringCbPrintfW(BaseDefaultPathBuffer,
                                      sizeof(BaseDefaultPathBuffer),
-                                     L".;%wZ;%wZ\\system;%wZ;",
+                                     L"%wZ;%wZ\\system;%wZ;",
                                      &BaseWindowsSystemDirectory,
                                      &BaseWindowsDirectory,
                                      &BaseWindowsDirectory);

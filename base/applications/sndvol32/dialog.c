@@ -1,8 +1,10 @@
 /*
- * COPYRIGHT:   See COPYING in the top level directory
  * PROJECT:     ReactOS Sound Volume Control
- * FILE:        base/applications/sndvol32/dialog.c
- * PROGRAMMERS: Johannes Anderwald
+ * LICENSE:     LGPL-2.1-or-later (https://spdx.org/licenses/LGPL-2.1-or-later)
+ * PURPOSE:     Dialog control routines
+ * COPYRIGHT:   Copyright 2011 Johannes Anderwald <johannes.anderwald@reactos.org>
+ *              Copyright 2018-2019 Eric Kohl <eric.kohl@reactos.org>
+ *              Copyright 2026 Vitaly Orekhov <vkvo2000@vivaldi.net>
  */
 
 #include "sndvol32.h"
@@ -180,7 +182,7 @@ AddDialogControl(
     *OutWnd = hwnd;
 
     /* check if this the track bar */
-    if (!wcsicmp(ClassName, L"msctls_trackbar32"))
+    if (!_wcsicmp(ClassName, L"msctls_trackbar32"))
     {
         if (DialogItem->style & TBS_VERT)
         {
@@ -229,12 +231,12 @@ AddDialogControl(
                 SendMessage(hwnd, TBM_SETTIC, 0, (LPARAM)i);
         }
     }
-    else if (!wcsicmp(ClassName, L"static"))
+    else if (!_wcsicmp(ClassName, L"static"))
     {
         /* Set font */
         SendMessageW(hwnd, WM_SETFONT, (WPARAM)hFont, TRUE);
     }
-    else if (!wcsicmp(ClassName, L"button"))
+    else if (!_wcsicmp(ClassName, L"button"))
     {
         if (DialogItem->id == IDC_LINE_SWITCH)
         {
@@ -338,7 +340,7 @@ LoadDialog(
     LPWORD Offset;
     WORD FontSize;
     WCHAR FontName[100];
-    WORD Length;
+    SIZE_T Length;
     int width;
 
     DWORD units = GetDialogBaseUnits();
@@ -765,22 +767,20 @@ LoadDialogCtrls(
     }
 }
 
-VOID
-UpdateDialogLineSwitchControl(
+HWND
+GetLineDialogControl(
     PPREFERENCES_CONTEXT PrefContext,
     LPMIXERLINE Line,
-    LONG fValue)
+    DWORD dwDialogID)
 {
     DWORD Index;
-    DWORD wID;
-    HWND hDlgCtrl;
-    WCHAR LineName[MIXER_LONG_NAME_CHARS];
 
     /* find the index of this line */
     for (Index = 0; Index < PrefContext->MixerWindow->DialogCount; Index++)
     {
         /* get id */
-        wID = (Index + 1) * IDC_LINE_NAME;
+        WCHAR LineName[MIXER_LONG_NAME_CHARS];
+        DWORD wID = (Index + 1) * IDC_LINE_NAME;
 
         if (GetDlgItemText(PrefContext->MixerWindow->hWnd, wID, LineName, MIXER_LONG_NAME_CHARS) == 0)
         {
@@ -789,26 +789,41 @@ UpdateDialogLineSwitchControl(
         }
 
         /* check if the line name matches */
-        if (!wcsicmp(LineName, Line->szName))
+        if (!_wcsicmp(LineName, Line->szName))
         {
             /* found matching line name */
-            wID = (Index + 1) * IDC_LINE_SWITCH;
+            wID = (Index + 1) * dwDialogID;
 
-            /* get dialog control */
-            hDlgCtrl = GetDlgItem(PrefContext->MixerWindow->hWnd, wID);
-
-            if (hDlgCtrl != NULL)
-            {
-                /* check state */
-                if (SendMessageW(hDlgCtrl, BM_GETCHECK, 0, 0) != fValue)
-                {
-                    /* update control state */
-                    SendMessageW(hDlgCtrl, BM_SETCHECK, (WPARAM)fValue, 0);
-                }
-            }
-            break;
+            return GetDlgItem(PrefContext->MixerWindow->hWnd, wID);
         }
     }
+
+    return NULL;
+}
+
+VOID
+UpdateDialogLineSwitchControl(
+    PPREFERENCES_CONTEXT PrefContext,
+    LPMIXERLINE Line,
+    LONG fValue)
+{
+    HWND hDlgCtrl = GetLineDialogControl(PrefContext, Line, IDC_LINE_SWITCH);
+
+    if (hDlgCtrl != NULL && SendMessageW(hDlgCtrl, BM_GETCHECK, 0, 0) != fValue)
+        SendMessageW(hDlgCtrl, BM_SETCHECK, (WPARAM)fValue, 0);
+}
+
+DWORD
+GetDialogLineSliderCurrentPosition(
+    PPREFERENCES_CONTEXT PrefContext,
+    LPMIXERLINE Line,
+    DWORD dwDialogID)
+{
+    HWND hDlgCtrl = GetLineDialogControl(PrefContext, Line, dwDialogID);
+
+    return hDlgCtrl != NULL
+        ? SendMessageW(hDlgCtrl, TBM_GETPOS, 0, 0)
+        : 0;
 }
 
 VOID
@@ -818,43 +833,9 @@ UpdateDialogLineSliderControl(
     DWORD dwDialogID,
     DWORD Position)
 {
-    DWORD Index;
-    DWORD wID;
-    HWND hDlgCtrl;
-    WCHAR LineName[MIXER_LONG_NAME_CHARS];
+    HWND hDlgCtrl = GetLineDialogControl(PrefContext, Line, dwDialogID);
+    BOOL isPositionChanged = GetDialogLineSliderCurrentPosition(PrefContext, Line, dwDialogID) != Position;
 
-    /* find the index of this line */
-    for (Index = 0; Index < PrefContext->MixerWindow->DialogCount; Index++)
-    {
-        /* get id */
-        wID = (Index + 1) * IDC_LINE_NAME;
-
-        if (GetDlgItemText(PrefContext->MixerWindow->hWnd, wID, LineName, MIXER_LONG_NAME_CHARS) == 0)
-        {
-            /* failed to retrieve id */
-            continue;
-        }
-
-        /* check if the line name matches */
-        if (!wcsicmp(LineName, Line->szName))
-        {
-            /* found matching line name */
-            wID = (Index + 1) * dwDialogID;
-
-            /* get dialog control */
-            hDlgCtrl = GetDlgItem(PrefContext->MixerWindow->hWnd, wID);
-
-            if (hDlgCtrl != NULL)
-            {
-                /* check state */
-                LRESULT OldPosition = SendMessageW(hDlgCtrl, TBM_GETPOS, 0, 0);
-                if (OldPosition != Position)
-                {
-                    /* update control state */
-                    SendMessageW(hDlgCtrl, TBM_SETPOS, (WPARAM)TRUE, Position);
-                }
-            }
-            break;
-        }
-    }
+    if (hDlgCtrl != NULL && isPositionChanged)
+        SendMessageW(hDlgCtrl, TBM_SETPOS, (WPARAM)TRUE, Position);
 }

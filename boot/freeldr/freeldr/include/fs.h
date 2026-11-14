@@ -32,9 +32,14 @@ typedef struct tagDEVVTBL
 } DEVVTBL;
 
 #define MAX_FDS 60
+#define INVALID_FILE_ID ((ULONG)-1)
 
 ARC_STATUS ArcOpen(CHAR* Path, OPENMODE OpenMode, ULONG* FileId);
-ARC_STATUS ArcClose(ULONG FileId);
+
+ARC_STATUS
+ArcClose(
+    _In_ ULONG FileId);
+
 ARC_STATUS ArcRead(ULONG FileId, VOID* Buffer, ULONG N, ULONG* Count);
 ARC_STATUS ArcSeek(ULONG FileId, LARGE_INTEGER* Position, SEEKMODE SeekMode);
 ARC_STATUS ArcGetFileInformation(ULONG FileId, FILEINFORMATION* Information);
@@ -48,12 +53,21 @@ FsOpenFile(
     IN OPENMODE OpenMode,
     OUT PULONG FileId);
 
+ARC_STATUS
+FsGetVolumeSize(
+    _In_ ULONG DeviceId,
+    _Out_ PULONGLONG VolumeSize);
+
 ULONG FsGetNumPathParts(PCSTR Path);
 VOID  FsGetFirstNameFromPath(PCHAR Buffer, PCSTR Path);
 
-VOID FsRegisterDevice(CHAR* Prefix, const DEVVTBL* FuncTable);
+BOOLEAN
+FsRegisterDevice(
+    _In_ PCSTR DeviceName,
+    _In_ const DEVVTBL* FuncTable);
+
 PCWSTR FsGetServiceName(ULONG FileId);
-VOID  FsSetDeviceSpecific(ULONG FileId, VOID* Specific);
-VOID* FsGetDeviceSpecific(ULONG FileId);
+VOID  FsSetDeviceSpecific(ULONG FileId, PVOID Specific);
+PVOID FsGetDeviceSpecific(ULONG FileId);
 ULONG FsGetDeviceId(ULONG FileId);
 VOID  FsInit(VOID);

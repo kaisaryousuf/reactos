@@ -1,13 +1,14 @@
 
 add_definitions(-D_MIDL_USE_GUIDDEF_)
 
-include_directories(${CMAKE_CURRENT_SOURCE_DIR})
-
 list(APPEND SOURCE
 #   access.idl
+    activation.idl
     activaut.idl
     activdbg.idl
     activscp.idl
+    amstream.idl
+    amvideo.idl
     asptlb.idl
 #   asynot.idl
 #   asysta.idl
@@ -21,6 +22,7 @@ list(APPEND SOURCE
     bits2_0.idl
     bits2_5.idl
     bits3_0.idl
+    bits5_0.idl
 #   cmdbas.idl
 #   cmdtxt.idl
     comcat.idl
@@ -29,26 +31,74 @@ list(APPEND SOURCE
     cor.idl
     cordebug.idl
 #   crtrow.idl
+    ctffunc.idl
     ctxtcall.idl
+    d2d1_1.idl
+    d2d1_2.idl
+    d2d1_3.idl
+    d2d1.idl
+    d2d1effectauthor.idl
+    d2d1effects_1.idl
+    d2d1effects_2.idl
+    d2d1effects.idl
+    d3d9on12.idl
+    d3d10_1.idl
+    d3d10.idl
+    d3d10effect.idl
+    d3d10sdklayers.idl
+    d3d10shader.idl
+    d3d11_1.idl
+    d3d11_2.idl
+    d3d11_3.idl
+    d3d11_4.idl
+    d3d11.idl
+    d3d11on12.idl
+    d3d11sdklayers.idl
+    d3d12.idl
+    d3d12sdklayers.idl
+    d3d12shader.idl
+    d3d12video.idl
+    d3dx11core.idl
+    ddstream.idl
 #   dbccmd.idl
 #   dbcses.idl
 #   dbdsad.idl
 #   dbinit.idl
 #   dbprop.idl
 #   dbs.idl
+    dcommon.idl
     devenum.idl
     devicetopology.idl
     dimm.idl
     dispex.idl
+    dmodshow.idl
     docobj.idl
     docobjectservice.idl
     downloadmgr.idl
     drmexternals.idl
+    dwrite_1.idl
+    dwrite_2.idl
+    dwrite_3.idl
+    dwrite.idl
+    dxgi.idl
+    dxgi1_2.idl
+    dxgi1_3.idl
+    dxgi1_4.idl
+    dxgi1_5.idl
+    dxgi1_6.idl
+    dxgicommon.idl
+    dxgidebug.idl
+    dxgiformat.idl
+    dxgitype.idl
+    dxva2api.idl
+    dxvahd.idl
 #   dyngraph.idl
+    emptyvc.idl
     endpointvolume.idl
     exdisp.idl
     fusion.idl
     hlink.idl
+    hstring.idl
     htiface.idl
     htiframe.idl
     httprequest.idl
@@ -60,6 +110,7 @@ list(APPEND SOURCE
     indexsrv.idl
     inputscope.idl
     inseng.idl
+    inspectable.idl
     mediaobj.idl
     metahost.idl
     mfidl.idl
@@ -68,7 +119,9 @@ list(APPEND SOURCE
     mimeinfo.idl
     mimeole.idl
     mlang.idl
+    mmc.idl
     mmdeviceapi.idl
+    msaatext.idl
     mscoree.idl
     msctf.idl
     msdadc.idl
@@ -85,6 +138,7 @@ list(APPEND SOURCE
     oaidl.idl
     objectarray.idl
     objidl.idl
+    objidlbase.idl
     objsafe.idl
     ocidl.idl
     ocmm.idl
@@ -97,12 +151,15 @@ list(APPEND SOURCE
     propidl.idl
     propsys.idl
     pstore.idl
+    restrictederrorinfo.idl
     richole.idl
+    roparameterizediid.idl
 #   row.idl
 #   rowchg.idl
 #   rstbas.idl
 #   rstinf.idl
 #   rstloc.idl
+    rtworkq.idl
     sensevts.idl
     servprov.idl
 #   sesprp.idl
@@ -121,6 +178,8 @@ list(APPEND SOURCE
     tuner.idl
     txcoord.idl
     txdtc.idl
+    uiautomationclient.idl
+    uiautomationcore.idl
     unknwn.idl
     urlhist.idl
     urlmon.idl
@@ -137,6 +196,7 @@ list(APPEND SOURCE
     wincodec.idl
     wincodecsdk.idl
     winsxs.idl
+    wmcodecdsp.idl
     wmdrmsdk.idl
     wmiutils.idl
     wmsbuffer.idl
@@ -156,6 +216,7 @@ add_custom_target(stdole2 DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/stdole2.tlb)
 add_idl_headers(d3d_idl_headers d3dcommon.idl)
 
 add_iid_library(adsiid iads.idl transact.idl)
+add_iid_library(mmc_uuids mmc.idl)
 add_iid_library(wuguid wuapi.idl)
 add_iid_library(xml_uuids msxml2.idl)
 

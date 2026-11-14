@@ -62,7 +62,7 @@ tranirq_Constructor(IN PVOID DeviceExtension,
     if ((ULONG_PTR)InterfaceData != CmResourceTypeInterrupt)
     {
         /* Fail this invalid request */
-        DPRINT1("PCI - IRQ trans constructor doesn't like %p in InterfaceSpecificData\n",
+        DPRINT1("PCIX - IRQ trans constructor doesn't like %p in InterfaceSpecificData\n",
                 InterfaceData);
         return STATUS_INVALID_PARAMETER_3;
     }
@@ -81,13 +81,13 @@ tranirq_Constructor(IN PVOID DeviceExtension,
     }
     else
     {
-        /* It's not, so we have to get the root bus' bus number instead */
-        #if 0 // when have PDO commit
-        ParentBus = FdoExtension->PhysicalDeviceObject->DeviceExtension->ParentFdoExtension->BaseBus;
+        /* It's not, so the translator is rooted on the bus the bridge sits on */
+        PPCI_PDO_EXTENSION PdoExtension = FdoExtension->PhysicalDeviceObject->DeviceExtension;
+        ASSERT_PDO(PdoExtension);
+        ParentBus = PdoExtension->ParentFdoExtension->BaseBus;
         ParentInterface = PCIBus;
         DPRINT1("      Is bridge FDO, parent bus %x, secondary bus %x\n",
                 ParentBus, BaseBus);
-        #endif
     }
 
     /* Now call the legacy HAL interface to get the correct translator */

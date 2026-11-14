@@ -4,12 +4,12 @@
 
 LANGUAGE LANG_NEUTRAL, SUBLANG_NEUTRAL
 
-IDI_ICON  ICON  DISCARDABLE  "res/icon_circles.ico"
+IDI_ICON ICON "res/icon_circles.ico"
 
 #define REACTOS_VERSION_DLL
-#define REACTOS_STR_FILE_DESCRIPTION    "Circles ScreenSaver\0"
-#define REACTOS_STR_INTERNAL_NAME       "circles\0"
-#define REACTOS_STR_ORIGINAL_FILENAME   "circles.scr\0"
+#define REACTOS_STR_FILE_DESCRIPTION    "Circles ScreenSaver"
+#define REACTOS_STR_INTERNAL_NAME       "circles"
+#define REACTOS_STR_ORIGINAL_FILENAME   "circles.scr"
 
 #include <reactos/version.rc>
 
@@ -18,6 +18,9 @@ IDI_ICON  ICON  DISCARDABLE  "res/icon_circles.ico"
 /* UTF-8 */
 #pragma code_page(65001)
 
+#ifdef LANGUAGE_CS_CZ
+    #include "lang/cs-CZ.rc"
+#endif
 #ifdef LANGUAGE_DE_DE
     #include "lang/de-DE.rc"
 #endif
@@ -33,6 +36,9 @@ IDI_ICON  ICON  DISCARDABLE  "res/icon_circles.ico"
 #ifdef LANGUAGE_IT_IT
     #include "lang/it-IT.rc"
 #endif
+#ifdef LANGUAGE_JA_JP
+    #include "lang/ja-JP.rc"
+#endif
 #ifdef LANGUAGE_NO_NO
     #include "lang/no-NO.rc"
 #endif
@@ -45,6 +51,9 @@ IDI_ICON  ICON  DISCARDABLE  "res/icon_circles.ico"
 #ifdef LANGUAGE_RU_RU
     #include "lang/ru-RU.rc"
 #endif
+#ifdef LANGUAGE_TR_TR
+    #include "lang/tr-TR.rc"
+#endif
 #ifdef LANGUAGE_SK_SK
     #include "lang/sk-SK.rc"
 #endif
@@ -53,6 +62,9 @@ IDI_ICON  ICON  DISCARDABLE  "res/icon_circles.ico"
 #endif
 #ifdef LANGUAGE_ZH_CN
     #include "lang/zh-CN.rc"
+#endif
+#ifdef LANGUAGE_ZH_HK
+    #include "lang/zh-HK.rc"
 #endif
 #ifdef LANGUAGE_ZH_TW
     #include "lang/zh-TW.rc"

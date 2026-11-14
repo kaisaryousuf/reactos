@@ -41,9 +41,9 @@ InitializeConfiguration(
     PortConfig->SlotNumber = SlotNumber;
     PortConfig->AdapterInterfaceType = InitData->AdapterInterfaceType;
 
-    PortConfig->MaximumTransferLength = -1; //SP_UNINITIALIZED_VALUE;
-    PortConfig->DmaChannel = -1; //SP_UNINITIALIZED_VALUE;
-    PortConfig->DmaPort = -1; //SP_UNINITIALIZED_VALUE;
+    PortConfig->MaximumTransferLength = SP_UNINITIALIZED_VALUE;
+    PortConfig->DmaChannel = SP_UNINITIALIZED_VALUE;
+    PortConfig->DmaPort = SP_UNINITIALIZED_VALUE;
 
     PortConfig->InterruptMode = LevelSensitive;
 
@@ -61,11 +61,11 @@ InitializeConfiguration(
     PortConfig->ReceiveEvent = InitData->ReceiveEvent;
     PortConfig->RealModeInitialized = FALSE;
     PortConfig->BufferAccessScsiPortControlled = TRUE;
-    PortConfig->MaximumNumberOfTargets = 128;
+    PortConfig->MaximumNumberOfTargets = SCSI_MAXIMUM_TARGETS_PER_BUS;
 
     PortConfig->SpecificLuExtensionSize = InitData->SpecificLuExtensionSize;
     PortConfig->SrbExtensionSize = InitData->SrbExtensionSize;
-    PortConfig->MaximumNumberOfLogicalUnits = 1;
+    PortConfig->MaximumNumberOfLogicalUnits = SCSI_MAXIMUM_LOGICAL_UNITS;
     PortConfig->WmiDataProvider = TRUE;
 
     PortConfig->NumberOfAccessRanges = InitData->NumberOfAccessRanges;
@@ -82,8 +82,27 @@ InitializeConfiguration(
                       PortConfig->NumberOfAccessRanges * sizeof(ACCESS_RANGE));
     }
 
-    for (i = 0; i < 7; i++)
-        PortConfig->InitiatorBusId[i] = 0xff;
+    for (i = 0; i < RTL_NUMBER_OF(PortConfig->InitiatorBusId); i++)
+    {
+        PortConfig->InitiatorBusId[i] = (CCHAR)SP_UNINITIALIZED_VALUE;
+    }
+
+    /* Default per-adapter outstanding IO limit, as per storport documentation. */
+    PortConfig->MaxNumberOfIO = 1000;
+
+    /* Only a Win8 or later init data block carries the request format flags */
+    PortConfig->SrbType = SRB_TYPE_SCSI_REQUEST_BLOCK;
+    if (InitData->HwInitializationDataSize >=
+        RTL_SIZEOF_THROUGH_FIELD(HW_INITIALIZATION_DATA, SrbTypeFlags) &&
+        TEST_FLAG(InitData->SrbTypeFlags, SRB_TYPE_FLAG_STORAGE_REQUEST_BLOCK))
+    {
+        PortConfig->SrbType = SRB_TYPE_STORAGE_REQUEST_BLOCK;
+    }
+
+    /* Bus, target and LUN is the only addressing we hand out */
+    PortConfig->AddressType = STORAGE_ADDRESS_TYPE_BTL8;
+
+    DPRINT1("SrbType: %u\n", PortConfig->SrbType);
 
     return STATUS_SUCCESS;
 }
@@ -105,6 +124,10 @@ AssignResourcesToConfiguration(
 
     DPRINT1("AssignResourceToConfiguration(%p %p %lu)\n",
             PortConfiguration, ResourceList, NumberOfAccessRanges);
+
+    /* A virtual miniport sits on a bus that hands out no resources at all */
+    if (ResourceList == NULL)
+        return;
 
     FullDescriptor = &ResourceList->List[0];
     for (i = 0; i < ResourceList->Count; i++)
@@ -146,43 +169,50 @@ AssignResourcesToConfiguration(
                     break;
 
                 case CmResourceTypeInterrupt:
-                    DPRINT1("Interrupt: Level %lu  Vector %lu\n",
-                            PartialDescriptor->u.Interrupt.Level,
-                            PartialDescriptor->u.Interrupt.Vector);
+                {
+                    KINTERRUPT_MODE Mode;
+                    ULONG Level;
+                    ULONG Vector;
+
+                    /* A message interrupt is always edge triggered and has no line */
+                    if (TEST_FLAG(PartialDescriptor->Flags, CM_RESOURCE_INTERRUPT_MESSAGE))
+                    {
+                        Mode = Latched;
+                        Level = 0;
+                        Vector = PartialDescriptor->u.MessageInterrupt.Raw.Vector;
+
+                        DPRINT1("Message interrupt: %u messages  Vector %lu\n",
+                                PartialDescriptor->u.MessageInterrupt.Raw.MessageCount,
+                                Vector);
+                    }
+                    else
+                    {
+                        if (TEST_FLAG(PartialDescriptor->Flags, CM_RESOURCE_INTERRUPT_LATCHED))
+                            Mode = Latched;
+                        else
+                            Mode = LevelSensitive;
+
+                        Level = PartialDescriptor->u.Interrupt.Level;
+                        Vector = PartialDescriptor->u.Interrupt.Vector;
+
+                        DPRINT1("Interrupt: Level %lu  Vector %lu\n", Level, Vector);
+                    }
+
                     if (Interrupt == 0)
                     {
-                        /* Copy interrupt data */
-                        PortConfiguration->BusInterruptLevel = PartialDescriptor->u.Interrupt.Level;
-                        PortConfiguration->BusInterruptVector = PartialDescriptor->u.Interrupt.Vector;
-
-                        /* Set interrupt mode accordingly to the resource */
-                        if (PartialDescriptor->Flags == CM_RESOURCE_INTERRUPT_LATCHED)
-                        {
-                            PortConfiguration->InterruptMode = Latched;
-                        }
-                        else if (PartialDescriptor->Flags == CM_RESOURCE_INTERRUPT_LEVEL_SENSITIVE)
-                        {
-                            PortConfiguration->InterruptMode = LevelSensitive;
-                        }
+                        PortConfiguration->BusInterruptLevel = Level;
+                        PortConfiguration->BusInterruptVector = Vector;
+                        PortConfiguration->InterruptMode = Mode;
                     }
                     else if (Interrupt == 1)
                     {
-                        /* Copy interrupt data */
-                        PortConfiguration->BusInterruptLevel2 = PartialDescriptor->u.Interrupt.Level;
-                        PortConfiguration->BusInterruptVector2 = PartialDescriptor->u.Interrupt.Vector;
-
-                        /* Set interrupt mode accordingly to the resource */
-                        if (PartialDescriptor->Flags == CM_RESOURCE_INTERRUPT_LATCHED)
-                        {
-                            PortConfiguration->InterruptMode2 = Latched;
-                        }
-                        else if (PartialDescriptor->Flags == CM_RESOURCE_INTERRUPT_LEVEL_SENSITIVE)
-                        {
-                            PortConfiguration->InterruptMode2 = LevelSensitive;
-                        }
+                        PortConfiguration->BusInterruptLevel2 = Level;
+                        PortConfiguration->BusInterruptVector2 = Vector;
+                        PortConfiguration->InterruptMode2 = Mode;
                     }
                     Interrupt++;
                     break;
+                }
 
                 case CmResourceTypeDma:
                     DPRINT1("Dma: Channel: %lu  Port: %lu\n",
@@ -224,7 +254,7 @@ AssignResourcesToConfiguration(
         }
 
         /* Advance to next CM_FULL_RESOURCE_DESCRIPTOR block in memory. */
-        FullDescriptor = (PCM_FULL_RESOURCE_DESCRIPTOR)(FullDescriptor->PartialResourceList.PartialDescriptors + 
+        FullDescriptor = (PCM_FULL_RESOURCE_DESCRIPTOR)(FullDescriptor->PartialResourceList.PartialDescriptors +
                                                         FullDescriptor->PartialResourceList.Count);
     }
 }
@@ -246,9 +276,21 @@ MiniportInitialize(
     Miniport->DeviceExtension = DeviceExtension;
     Miniport->InitData = InitData;
 
+    /* Win7 virtual miniports used a shorter structure, Win8 ones set a feature flag */
+    Miniport->IsVirtual = (InitData->HwInitializationDataSize == HW_INIT_DATA_SIZE_VIRTUAL_LEGACY) ||
+                          ((InitData->HwInitializationDataSize == sizeof(*InitData)) &&
+                           (InitData->FeatureSupport & STOR_FEATURE_VIRTUAL_MINIPORT));
+    DPRINT1("Miniport is %s\n", Miniport->IsVirtual ? "virtual" : "physical");
+
     /* Calculate the miniport device extension size */
-    Size = sizeof(MINIPORT_DEVICE_EXTENSION) +
-           Miniport->InitData->DeviceExtensionSize;
+    Status = RtlULongAdd(sizeof(*MiniportExtension),
+                         Miniport->InitData->DeviceExtensionSize,
+                         &Size);
+    if (!NT_SUCCESS(Status))
+    {
+        DPRINT1("Invalid miniport extension size %lx\n", Miniport->InitData->DeviceExtensionSize);
+        return Status;
+    }
 
     /* Allocate and initialize the miniport device extension */
     MiniportExtension = ExAllocatePoolWithTag(NonPagedPool,
@@ -283,19 +325,41 @@ NTSTATUS
 MiniportFindAdapter(
     _In_ PMINIPORT Miniport)
 {
+    PFDO_DEVICE_EXTENSION DeviceExtension = Miniport->DeviceExtension;
     BOOLEAN Reserved = FALSE;
     ULONG Result;
     NTSTATUS Status;
 
     DPRINT1("MiniportFindAdapter(%p)\n", Miniport);
 
-    /* Call the miniport HwFindAdapter routine */
-    Result = Miniport->InitData->HwFindAdapter(&Miniport->MiniportExtension->HwDeviceExtension,
-                                               NULL,
-                                               NULL,
-                                               NULL,
-                                               &Miniport->PortConfig,
-                                               &Reserved);
+    /* HwFindAdapter is typeless since Win8, a virtual miniport puts a PVIRTUAL_HW_FIND_ADAPTER there */
+    if (Miniport->IsVirtual)
+    {
+        PVIRTUAL_HW_FIND_ADAPTER FindAdapter;
+
+        FindAdapter = (PVIRTUAL_HW_FIND_ADAPTER)Miniport->InitData->HwFindAdapter;
+
+        Result = FindAdapter(&Miniport->MiniportExtension->HwDeviceExtension,
+                             DeviceExtension->PhysicalDevice,
+                             DeviceExtension->Device,
+                             DeviceExtension->LowerDevice,
+                             NULL,
+                             &Miniport->PortConfig,
+                             &Reserved);
+    }
+    else
+    {
+        PHW_FIND_ADAPTER FindAdapter;
+
+        FindAdapter = (PHW_FIND_ADAPTER)Miniport->InitData->HwFindAdapter;
+
+        Result = FindAdapter(&Miniport->MiniportExtension->HwDeviceExtension,
+                             NULL,
+                             NULL,
+                             NULL,
+                             &Miniport->PortConfig,
+                             &Reserved);
+    }
     DPRINT1("HwFindAdapter() returned %lu\n", Result);
 
     /* Convert the result to a status code */
@@ -337,13 +401,34 @@ MiniportHwInitialize(
 {
     BOOLEAN Result;
 
-    DPRINT1("MiniportHwInitialize(%p)\n", Miniport);
+    DPRINT("MiniportHwInitialize(%p)\n", Miniport);
 
     /* Call the miniport HwInitialize routine */
     Result = Miniport->InitData->HwInitialize(&Miniport->MiniportExtension->HwDeviceExtension);
-    DPRINT1("HwInitialize() returned %u\n", Result);
+    DPRINT("HwInitialize() returned %u\n", Result);
 
     return Result ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
+}
+
+
+/**
+ * @brief Tells the miniport the adapter is going away.
+ */
+VOID
+NTAPI
+MiniportFreeAdapterResources(
+    _In_ PMINIPORT Miniport)
+{
+    if (Miniport->MiniportExtension == NULL ||
+        Miniport->InitData->HwInitializationDataSize != sizeof(*Miniport->InitData) ||
+        Miniport->InitData->HwFreeAdapterResources == NULL)
+    {
+        return;
+    }
+
+    DPRINT1("MiniportFreeAdapterResources(%p)\n", Miniport);
+
+    Miniport->InitData->HwFreeAdapterResources(&Miniport->MiniportExtension->HwDeviceExtension);
 }
 
 
@@ -353,11 +438,180 @@ MiniportHwInterrupt(
 {
     BOOLEAN Result;
 
-    DPRINT1("MiniportHwInterrupt(%p)\n",
+    DPRINT("MiniportHwInterrupt(%p)\n",
             Miniport);
 
     Result = Miniport->InitData->HwInterrupt(&Miniport->MiniportExtension->HwDeviceExtension);
-    DPRINT1("HwInterrupt() returned %u\n", Result);
+    DPRINT("HwInterrupt() returned %u\n", Result);
+
+    return Result;
+}
+
+
+/**
+ * @brief Asks the miniport which adapter control requests it handles.
+ */
+VOID
+NTAPI
+MiniportQueryAdapterControl(
+    _In_ PMINIPORT Miniport)
+{
+    PSCSI_SUPPORTED_CONTROL_TYPE_LIST List;
+    SCSI_ADAPTER_CONTROL_STATUS Result;
+    ULONG Length;
+    ULONG Type;
+
+    Miniport->AdapterControlSupportedBitmap = 0;
+
+    if (Miniport->InitData->HwAdapterControl == NULL)
+        return;
+
+    Length = sizeof(*List) +
+             (ScsiAdapterControlMax * sizeof(List->SupportedTypeList[0]));
+
+    List = ExAllocatePoolZero(NonPagedPool, Length, TAG_MINIPORT_DATA);
+    if (List == NULL)
+        return;
+
+    List->MaxControlType = ScsiAdapterControlMax;
+
+    Result = Miniport->InitData->HwAdapterControl(&Miniport->MiniportExtension->HwDeviceExtension,
+                                                  ScsiQuerySupportedControlTypes,
+                                                  List);
+    if (Result == ScsiAdapterControlSuccess)
+    {
+        for (Type = 0; Type < ScsiAdapterControlMax; Type++)
+        {
+            C_ASSERT(ScsiAdapterControlMax <= RTL_BITS_OF(Miniport->AdapterControlSupportedBitmap));
+
+            if (List->SupportedTypeList[Type])
+            {
+                DPRINT1("Adapter control %lu supported\n", Type);
+                Miniport->AdapterControlSupportedBitmap |= 1 << Type;
+            }
+        }
+    }
+
+    ExFreePoolWithTag(List, TAG_MINIPORT_DATA);
+}
+
+
+/**
+ * @brief Sends one adapter control request, if the miniport claimed it.
+ */
+SCSI_ADAPTER_CONTROL_STATUS
+NTAPI
+MiniportAdapterControl(
+    _In_ PMINIPORT Miniport,
+    _In_ SCSI_ADAPTER_CONTROL_TYPE ControlType,
+    _In_opt_ PVOID Parameters)
+{
+    DPRINT("MiniportAdapterControl(%p %u %p)\n",
+            Miniport, ControlType, Parameters);
+
+    ASSERT(ControlType < ScsiAdapterControlMax);
+    if (!(Miniport->AdapterControlSupportedBitmap & (1 << ControlType)))
+    {
+        return ScsiAdapterControlUnsuccessful;
+    }
+
+    return Miniport->InitData->HwAdapterControl(&Miniport->MiniportExtension->HwDeviceExtension,
+                                                ControlType,
+                                                Parameters);
+}
+
+
+/**
+ * @brief Asks the miniport which unit control requests it handles.
+ */
+VOID
+NTAPI
+MiniportQueryUnitControl(
+    _In_ PMINIPORT Miniport)
+{
+    PSCSI_SUPPORTED_CONTROL_TYPE_LIST List;
+    SCSI_UNIT_CONTROL_STATUS Result;
+    ULONG Length;
+    ULONG Type;
+
+    Miniport->UnitControlSupportedBitmap = 0;
+
+    if (Miniport->InitData->HwInitializationDataSize <
+        RTL_SIZEOF_THROUGH_FIELD(HW_INITIALIZATION_DATA, HwUnitControl) ||
+        Miniport->InitData->HwUnitControl == NULL)
+    {
+        return;
+    }
+
+    Length = sizeof(*List) +
+             (ScsiUnitControlMax * sizeof(List->SupportedTypeList[0]));
+
+    List = ExAllocatePoolZero(NonPagedPool, Length, TAG_MINIPORT_DATA);
+    if (List == NULL)
+        return;
+
+    List->MaxControlType = ScsiUnitControlMax;
+
+    Result = Miniport->InitData->HwUnitControl(&Miniport->MiniportExtension->HwDeviceExtension,
+                                               ScsiQuerySupportedUnitControlTypes,
+                                               List);
+    if (Result == ScsiUnitControlSuccess)
+    {
+        for (Type = 0; Type < ScsiUnitControlMax; Type++)
+        {
+            C_ASSERT(ScsiUnitControlMax <= RTL_BITS_OF(Miniport->UnitControlSupportedBitmap));
+
+            if (List->SupportedTypeList[Type])
+            {
+                DPRINT1("Unit control %lu supported\n", Type);
+                Miniport->UnitControlSupportedBitmap |= 1 << Type;
+            }
+        }
+    }
+
+    ExFreePoolWithTag(List, TAG_MINIPORT_DATA);
+}
+
+
+/**
+ * @brief Sends one unit control request, if the miniport claimed it.
+ */
+SCSI_UNIT_CONTROL_STATUS
+NTAPI
+MiniportUnitControl(
+    _In_ PMINIPORT Miniport,
+    _In_ SCSI_UNIT_CONTROL_TYPE ControlType,
+    _In_opt_ PVOID Parameters)
+{
+    DPRINT("MiniportUnitControl(%p %u %p)\n",
+            Miniport, ControlType, Parameters);
+
+    ASSERT(ControlType < ScsiUnitControlMax);
+    if (!(Miniport->UnitControlSupportedBitmap & (1 << ControlType)))
+    {
+        return ScsiUnitControlNotSupported;
+    }
+
+    return Miniport->InitData->HwUnitControl(&Miniport->MiniportExtension->HwDeviceExtension,
+                                             ControlType,
+                                             Parameters);
+}
+
+
+BOOLEAN
+NTAPI
+MiniportHwMSInterrupt(
+    _In_ PMINIPORT Miniport,
+    _In_ ULONG MessageId)
+{
+    BOOLEAN Result;
+
+    DPRINT("MiniportHwMSInterrupt(%p %lu)\n",
+            Miniport, MessageId);
+
+    Result = Miniport->PortConfig.HwMSInterruptRoutine(&Miniport->MiniportExtension->HwDeviceExtension,
+                                                       MessageId);
+    DPRINT("HwMSInterruptRoutine() returned %u\n", Result);
 
     return Result;
 }
@@ -370,11 +624,11 @@ MiniportStartIo(
 {
     BOOLEAN Result;
 
-    DPRINT1("MiniportHwStartIo(%p %p)\n",
+    DPRINT("MiniportHwStartIo(%p %p)\n",
             Miniport, Srb);
 
     Result = Miniport->InitData->HwStartIo(&Miniport->MiniportExtension->HwDeviceExtension, Srb);
-    DPRINT1("HwStartIo() returned %u\n", Result);
+    DPRINT("HwStartIo() returned %u\n", Result);
 
     return Result;
 }

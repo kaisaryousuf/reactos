@@ -418,6 +418,7 @@ AhciStartPort (
  * @param SystemArgument2
  */
 VOID
+NTAPI
 AhciCommandCompletionDpcRoutine (
     __in PSTOR_DPC Dpc,
     __in PVOID HwDeviceExtension,
@@ -480,6 +481,7 @@ AhciCommandCompletionDpcRoutine (
  * return TRUE if intialization was successful
  */
 BOOLEAN
+NTAPI
 AhciHwPassiveInitialize (
     __in PVOID DeviceExtension
     )
@@ -806,7 +808,7 @@ AhciHwStartIo (
     {
         case SRB_FUNCTION_PNP:
             {
-                // https://msdn.microsoft.com/windows/hardware/drivers/storage/handling-srb-function-pnp
+                // https://learn.microsoft.com/en-us/previous-versions/windows/drivers/storage/handling-srb-function-pnp
                 // If the function member of an SRB is set to SRB_FUNCTION_PNP,
                 // the SRB is a structure of type SCSI_PNP_REQUEST_BLOCK.
 
@@ -843,7 +845,7 @@ AhciHwStartIo (
             break;
         case SRB_FUNCTION_EXECUTE_SCSI:
             {
-                // https://msdn.microsoft.com/en-us/windows/hardware/drivers/storage/handling-srb-function-execute-scsi
+                // https://learn.microsoft.com/en-us/previous-versions/windows/drivers/storage/handling-srb-function-execute-scsi
                 // On receipt of an SRB_FUNCTION_EXECUTE_SCSI request, a miniport driver's HwScsiStartIo
                 // routine does the following:
                 //

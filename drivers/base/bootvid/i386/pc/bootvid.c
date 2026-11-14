@@ -1,11 +1,18 @@
+/*
+ * PROJECT:     ReactOS Boot Video Driver for VGA-compatible cards
+ * LICENSE:     GPL-2.0-or-later (https://spdx.org/licenses/GPL-2.0-or-later)
+ * PURPOSE:     Main file
+ * COPYRIGHT:   Copyright 2007 Alex Ionescu <alex.ionescu@reactos.org>
+ *              Copyright 2019 Hermès Bélusca-Maïto <hermes.belusca-maito@reactos.org>
+ */
+
 #include "precomp.h"
 
 /* PRIVATE FUNCTIONS *********************************************************/
 
 static BOOLEAN
-NTAPI
 VgaInterpretCmdStream(
-    _In_ PUSHORT CmdStream)
+    _In_ const USHORT* CmdStream)
 {
     USHORT Cmd;
     UCHAR Major, Minor;
@@ -14,9 +21,6 @@ VgaInterpretCmdStream(
     UCHAR Index;
     UCHAR Value;
     USHORT ShortValue;
-
-    /* First make sure that we have a Command Stream */
-    if (!CmdStream) return TRUE;
 
     /* Loop as long as we have commands */
     while (*CmdStream != EOD)
@@ -56,7 +60,7 @@ VgaInterpretCmdStream(
                     Count = *CmdStream++;
 
                     /* Write the USHORT to the port; the buffer is what's in the command stream */
-                    WRITE_PORT_BUFFER_USHORT((PUSHORT)(VgaRegisterBase + Port), CmdStream, Count);
+                    WRITE_PORT_BUFFER_USHORT((PUSHORT)(VgaRegisterBase + Port), (PUSHORT)CmdStream, Count);
 
                     /* Move past the buffer in the command stream */
                     CmdStream += Count;
@@ -169,12 +173,21 @@ VgaInterpretCmdStream(
 }
 
 static BOOLEAN
-NTAPI
 VgaIsPresent(VOID)
 {
     UCHAR OrgGCAddr, OrgReadMap, OrgBitMask;
     UCHAR OrgSCAddr, OrgMemMode;
     UCHAR i;
+
+#if (NTDDI_VERSION >= NTDDI_WIN7)
+    /* Check whether the current platform supports IO port access
+     * and fail if not, since we won't be able to use VGA IO ports */
+    if ((HALPRIVATEDISPATCH->Version >= 13) &&
+        HalQueryIoPortAccessSupported && !HalQueryIoPortAccessSupported())
+    {
+        return FALSE;
+    }
+#endif
 
     /* Remember the original state of the Graphics Controller Address register */
     OrgGCAddr = __inpb(VGA_BASE_IO_PORT + GRAPH_ADDRESS_PORT);
@@ -354,9 +367,6 @@ VgaIsPresent(VOID)
 
 /* PUBLIC FUNCTIONS **********************************************************/
 
-/*
- * @implemented
- */
 BOOLEAN
 NTAPI
 VidInitialize(
@@ -437,7 +447,9 @@ VidInitialize(
     /* Set the VGA Memory Base */
     VgaBase = Base;
 
-    /* Now check if we have to set the mode */
+    VgaGCState = VGA_GC_STATE_UNINITIALIZED;
+
+    /* Check whether we have to set the video mode */
     if (SetMode)
     {
         /* Clear the current position */
@@ -457,30 +469,20 @@ VidInitialize(
         }
     }
 
-    /* VGA is ready */
     return TRUE;
 }
 
-/*
- * @implemented
- */
 VOID
-NTAPI
-VidResetDisplay(
-    _In_ BOOLEAN HalReset)
+ResetDisplay(
+    _In_ BOOLEAN SetMode)
 {
-    /* Clear the current position */
-    VidpCurrentX = 0;
-    VidpCurrentY = 0;
+    VgaGCState = VGA_GC_STATE_UNINITIALIZED;
 
-    /* Clear the screen with HAL if we were asked to */
-    if (HalReset)
+    /* Reset the video mode with HAL if requested */
+    if (SetMode && !HalResetDisplay())
     {
-        if (!HalResetDisplay())
-        {
-            /* The HAL didn't handle the display, fully re-initialize the VGA */
-            VgaInterpretCmdStream(VGA_640x480);
-        }
+        /* The HAL didn't handle the display, fully re-initialize the VGA */
+        VgaInterpretCmdStream(VGA_640x480);
     }
 
     /* Always re-initialize the AC registers */

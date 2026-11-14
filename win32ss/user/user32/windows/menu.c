@@ -42,14 +42,6 @@ WINE_DEFAULT_DEBUG_CHANNEL(menu);
 #define IS_STRING_ITEM(flags) (MF_STRING == MENU_ITEM_TYPE(flags))
 #define IS_MAGIC_BITMAP(id) ((id) && ((INT_PTR)(id) < 12) && ((INT_PTR)(id) >= -1))
 
-#define IS_SYSTEM_MENU(MenuInfo)  \
-	(0 == ((MenuInfo)->fFlags & MNF_POPUP) && 0 != ((MenuInfo)->fFlags & MNF_SYSMENU))
-
-#define IS_SYSTEM_POPUP(MenuInfo) \
-	(0 != ((MenuInfo)->fFlags & MNF_POPUP) && 0 != ((MenuInfo)->fFlags & MNF_SYSMENU))
-
-#define IS_BITMAP_ITEM(flags) (MF_BITMAP == MENU_ITEM_TYPE(flags))
-
 /*********************************************************************
  * PopupMenu class descriptor
  */
@@ -57,8 +49,8 @@ const struct builtin_class_descr POPUPMENU_builtin_class =
 {
     WC_MENU,                     /* name */
     CS_SAVEBITS | CS_DBLCLKS,                  /* style  */
-    NULL,                                      /* FIXME - procA */
-    PopupMenuWndProcW,                         /* FIXME - procW */
+    &pfnClientA.pfnMenuWndProc,                /* procA */
+    &pfnClientW.pfnMenuWndProc,                /* procW */
     sizeof(MENUINFO *),                        /* extra */
     (LPCWSTR) IDC_ARROW,                       /* cursor */
     (HBRUSH)(COLOR_MENU + 1)                   /* brush */

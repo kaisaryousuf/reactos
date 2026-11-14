@@ -15,12 +15,10 @@ Signature = "$Windows NT$"
 _1 = %cdname%,%cdtagfile%,,""
 
 [SourceDisksNames.x86]
-;1 = %cdname%,%cdtagfilei%,,\i386
-1 = %cdname%,%cdtagfilei%,,\reactos
+1 = %cdname%,%cdtagfilei%,,\i386
 
 [SourceDisksNames.amd64]
-;1 = %cdname%,%cdtagfilea%,,\amd64
-1 = %cdname%,%cdtagfilei%,,\reactos
+1 = %cdname%,%cdtagfilea%,,\amd64
 
 ;
 ; The directories listed in the [Directories] or [WinntDirectories] sections
@@ -43,7 +41,7 @@ _1 = %cdname%,%cdtagfile%,,""
 
 [DiskSpaceRequirements]
 ; Required free system partition disk space in MB
-FreeSysPartDiskSpace=450
+FreeSysPartDiskSpace = 450
 
 ;
 ; The [SourceDisksFiles] section lists all the files available to the
@@ -87,10 +85,10 @@ FreeSysPartDiskSpace=450
 ; "MouseDrivers.Load" sections.
 ;
 [SourceDisksFiles]
-acpi.sys     = 1,,,,,,,4,1,,,1,4
 nmidebug.sys = 1,,,,,,x,4,,,,1,4
 sacdrv.sys   = 1,,,,,,x,4,,,,1,4
-uniata.sys   = 1,,,,,,x,4,,,,1,4
+;uniata.sys   = 1,,,,,,x,4,,,,1,4
+atapi.sys    = 1,,,,,,x,4,,,,1,4
 buslogic.sys = 1,,,,,,x,4,,,,1,4
 blue.sys     = 1,,,,,,x,4,,,,1,4
 vgafonts.cab = 1,,,,,,,1,,,,1,1
@@ -100,7 +98,7 @@ c_1252.nls   = 1,,,,,,,2,,,,1,2
 cdfs.sys     = 1,,,,,,x,4,,,,1,4
 cdrom.sys    = 1,,,,,,x,4,,,,1,4
 classpnp.sys = 1,,,,,,,4,,,,1,4
-isapnp.sys   = 1,,,,,,,4,,,,1,4
+isapnp.sys   = 1,,,,,,x,4,,,,1,4
 kdcom.dll    = 1,,,,,,,2,,,,1,2
 kdvbox.dll   = 1,,,,,,,2,,,,1,2
 disk.sys     = 1,,,,,,x,4,,,,1,4
@@ -112,10 +110,13 @@ hidusb.sys   = 1,,,,,,,4,,,,1,4
 usbccgp.sys  = 1,,,,,,x,4,,,,1,4
 usbd.sys     = 1,,,,,,,4,,,,1,4
 usbhub.sys   = 1,,,,,,x,4,,,,1,4
+usbhub3.sys  = 1,,,,,,x,4,,,,1,4
 usbport.sys  = 1,,,,,,,4,,,,1,4
 usbuhci.sys  = 1,,,,,,x,4,,,,1,4
 usbohci.sys  = 1,,,,,,x,4,,,,1,4
 usbehci.sys  = 1,,,,,,x,4,,,,1,4
+usbxhci.sys  = 1,,,,,,x,4,,,,1,4
+ucx01000.sys = 1,,,,,,x,4,,,,1,4
 usbstor.sys  = 1,,,,,,x,4,,,,1,4
 kbdhid.sys   = 1,,,,,,,4,,,,1,4
 kbdclass.sys = 1,,,,,,x,4,,,,1,4
@@ -125,8 +126,9 @@ scsiport.sys = 1,,,,,,,4,,,,1,4
 storport.sys = 1,,,,,,,4,,,,1,4
 fastfat.sys  = 1,,,,,,x,4,,,,1,4
 btrfs.sys    = 1,,,,,,x,4,,,,1,4
+ntfs.sys     = 1,,,,,,x,4,,,,1,4
 ramdisk.sys  = 1,,,,,,x,4,,,,1,4
-pciide.sys   = 1,,,,,,,4,,,,1,4
+pciide.sys   = 1,,,,,,x,4,,,,1,4
 pciidex.sys  = 1,,,,,,,4,,,,1,4
 pcix.sys     = 1,,,,,,,4,,,,1,4
 pcmcia.sys   = 1,,,,,,,4,,,,1,4
@@ -136,10 +138,15 @@ wmilib.sys   = 1,,,,,,,4,,,,1,4
 ksecdd.sys   = 1,,,,,,,4,,,,1,4
 mountmgr.sys = 1,,,,,,x,4,,,,1,4
 partmgr.sys  = 1,,,,,,x,4,,,,1,4
+wdfldr.sys   = 1,,,,,,,4,,,,1,4
+wdf01000.sys = 1,,,,,,x,4,,,,1,4
 
 [SourceDisksFiles.x86]
+acpi.sys     = 1,,,,,,,4,1,,,1,4
+legide.sys   = 1,,,,,,,4,,,,1,4
 
 [SourceDisksFiles.amd64]
+acpi.sys     = 1,,,,,,x,4,,,,1,4
 
 ;
 ; The [SystemPartitionFiles] section lists all the files
@@ -156,11 +163,15 @@ PCI\CC_0601 = isapnp
 PCI\CC_0604 = pci
 PCI\VEN_104B&CC_0100 = buslogic
 PCI\CC_0101 = pciide
-PCI\CC_0104 = uniata
-PCI\CC_0105 = uniata
-PCI\CC_0106 = uniata
+;PCI\CC_0104 = uniata
+;PCI\CC_0105 = uniata
+;PCI\CC_0106 = uniata
+PCI\CC_0104 = pciide
+PCI\CC_0105 = pciide
+PCI\CC_0106 = pciide
 ;PCI\CC_0106 = storahci
-*PNP0600 = uniata
+;*PNP0600 = uniata
+*PNP0600 = atapi
 USB\CLASS_09 = usbhub
 USB\ROOT_HUB = usbhub
 USB\ROOT_HUB20 = usbhub
@@ -168,12 +179,14 @@ PCI\CC_0C0300 = usbuhci
 PCI\CC_0C0310 = usbohci
 PCI\CC_0C0320 = usbehci
 USB\Class_08&SubClass_06&Prot_50 = usbstor
+USB\Class_08&SubClass_05&Prot_50 = usbstor
 HID_DEVICE_SYSTEM_KEYBOARD = kbdhid,{4D36E96B-E325-11CE-BFC1-08002BE10318}
 USB\COMPOSITE = usbccgp
 GenDisk = disk,{4D36E967-E325-11CE-BFC1-08002BE10318}
 USB\Class_03 = hidusb
 GENERIC_HID_DEVICE = hidusb
 *PNP0303 = i8042prt,{4D36E96B-E325-11CE-BFC1-08002BE10318}
+*PNP030B = i8042prt,{4D36E96B-E325-11CE-BFC1-08002BE10318}
 *nEC1F00 = inport,{4D36E96F-E325-11CE-BFC1-08002BE10318}
 ROOT\SWENUM = swenum
 
@@ -197,9 +210,11 @@ i8042prt = i8042prt.sys
 
 [BusExtenders.Load]
 pciide = pciide.sys
+atapi = atapi.sys
 
 [SCSI.Load]
-uniata = uniata.sys
+;uniata = uniata.sys
+atapi = atapi.sys
 buslogic = buslogic.sys
 storahci = storahci.sys
 disk = disk.sys
@@ -208,14 +223,13 @@ disk = disk.sys
 inport = inport.sys
 
 [Cabinets]
-Cabinet=reactos.cab
+Cabinet = reactos.cab
 
 [SetupData]
 DefaultPath = \ReactOS
 SetupDebugOptions = "/DEBUG /KDSERIAL /DEBUGPORT=COM1 /FIRSTCHANCE"
 ;SetupDebugOptions = "/DEBUG /SOS /DEBUGPORT=SCREEN"
-;SetupDebugOptions = "/DEBUG /DEBUGPORT=BOCHS"
-OsLoadOptions = "/NOGUIBOOT /NODEBUG"
+OsLoadOptions = "/FASTDETECT /NOGUIBOOT /NODEBUG"
 
 [NLS]
 AnsiCodepage     = c_1252.nls
@@ -228,24 +242,30 @@ DefaultLanguage  = 00000409
 pci_up = "Standard PC Uniprocessor"
 ;pci_mp = "Standard PC Multiprocessor"
 acpi_up = "ACPI PC Uniprocessor"
-;acpi_mp = "ACPI PC Multiprocessor"
+acpi_mp = "ACPI PC Multiprocessor"
+apic_up = "Standard APIC PC Uniprocessor"
+aacpi_up = "ACPI APIC PC Uniprocessor"
 xbox = "Original Xbox (x86 based)"
 pc98_up = "NEC PC-98 Uniprocessor"
 
 [Computer.NTamd64]
 x64_up = "Standard x64 Uniprocessor"
+x64_mp = "Standard x64 Multiprocessor"
 
 [Map.Computer.NTx86]
 ;<id> = <pnp id string>
 pci_up = "PC UP"
 ;pci_mp = "PC MP"
 acpi_up = "ACPI UP"
-;acpi_mp = "ACPI MP"
+acpi_mp = "ACPI MP"
+apic_up = "APIC UP"
+aacpi_up = "AAPIC UP"
 xbox = "Xbox"
 pc98_up = "NEC PC-98 UP"
 
 [Map.Computer.NTamd64]
-x64_up = "ACPI UP"
+x64_up = "X64 UP"
+x64_mp = "X64 MP"
 
 [Files.pci_up]
 ntoskrnl.exe = 1,,,,,,,2,,,,1,2
@@ -259,13 +279,22 @@ hal.dll      = 1,,,,,,,2,,,,1,2
 ntoskrnl.exe = 1,,,,,,,2,,,,1,2
 halacpi.dll  = 1,,,,,,,2,,,hal.dll,1,2
 
-;[Files.acpi_mp]
-;ntkrnlmp.exe = 1,,,,,,,2,,,ntoskrnl.exe,1,2
-;halacpi.dll  = 1,,,,,,,2,,,hal.dll,1,2
+[Files.acpi_mp]
+ntkrnlmp.exe = 1,,,,,,,2,,,ntoskrnl.exe,1,2
+halmacpi.dll  = 1,,,,,,,2,,,hal.dll,1,2
+
+[Files.apic_up]
+ntoskrnl.exe = 1,,,,,,,2,,,,1,2
+halapic.dll  = 1,,,,,,,2,,,hal.dll,1,2
+
+[Files.aacpi_up]
+ntoskrnl.exe = 1,,,,,,,2,,,,1,2
+halaacpi.dll  = 1,,,,,,,2,,,hal.dll,1,2
 
 [Files.xbox]
 ntoskrnl.exe = 1,,,,,,,2,,,,1,2
 halxbox.dll  = 1,,,,,,,2,,,hal.dll,1,2
+vfatfs.sys   = 1,,,,,,,4,,,,1,4
 
 [Files.pc98_up]
 ntoskrnl.exe = 1,,,,,,,2,,,,1,2
@@ -275,33 +304,37 @@ halpc98.dll  = 1,,,,,,,2,,,hal.dll,1,2
 ntoskrnl.exe = 1,,,,,,,2,,,,1,2
 hal.dll      = 1,,,,,,,2,,,,1,2
 
+[Files.x64_mp]
+ntkrnlmp.exe = 1,,,,,,,2,,,ntoskrnl.exe,1,2
+halmp.dll    = 1,,,,,,,2,,,hal.dll,1,2
+
 [Display]
 ;<id> = <user friendly name>,<spare>,<service key name>,<width>,<height>,<bpp>
-vga              = "VGA Display (640x480x4)",,Vga,640,480,4
-vbe_640x480x8    = "VESA Display (640x480x8)",,VBE,640,480,8
-vbe_640x480x16   = "VESA Display (640x480x16)",,VBE,640,480,16
-vbe_640x480x24   = "VESA Display (640x480x24)",,VBE,640,480,24
-vbe_640x480x32   = "VESA Display (640x480x32)",,VBE,640,480,32
-vbe_800x600x8    = "VESA Display (800x600x8)",,VBE,800,600,8
-vbe_800x600x16   = "VESA Display (800x600x16)",,VBE,800,600,16
-vbe_800x600x24   = "VESA Display (800x600x24)",,VBE,800,600,24
-vbe              = "VESA Display (800x600x32)",,VBE,800,600,32
-vbe_1024x768x8   = "VESA Display (1024x768x8)",,VBE,1024,768,8
-vbe_1024x768x16  = "VESA Display (1024x768x16)",,VBE,1024,768,16
-vbe_1024x768x24  = "VESA Display (1024x768x24)",,VBE,1024,768,24
-vbe_1024x768x32  = "VESA Display (1024x768x32)",,VBE,1024,768,32
-vbe_1152x864x8   = "VESA Display (1152x864x8)",,VBE,1152,864,8
-vbe_1152x864x16  = "VESA Display (1152x864x16)",,VBE,1152,864,16
-vbe_1152x864x24  = "VESA Display (1152x864x24)",,VBE,1152,864,24
-vbe_1152x864x32  = "VESA Display (1152x864x32)",,VBE,1152,864,32
-vbe_1280x1024x8  = "VESA Display (1280x1024x8)",,VBE,1280,1024,8
-vbe_1280x1024x16 = "VESA Display (1280x1024x16)",,VBE,1280,1024,16
-vbe_1280x1024x24 = "VESA Display (1280x1024x24)",,VBE,1280,1024,24
-vbe_1280x1024x32 = "VESA Display (1280x1024x32)",,VBE,1280,1024,32
-vbe_1600x1200x8  = "VESA Display (1600x1200x8)",,VBE,1600,1200,8
-vbe_1600x1200x16 = "VESA Display (1600x1200x16)",,VBE,1600,1200,16
-vbe_1600x1200x24 = "VESA Display (1600x1200x24)",,VBE,1600,1200,24
-vbe_1600x1200x32 = "VESA Display (1600x1200x32)",,VBE,1600,1200,32
+vga              = "VGA Display (640x480x4)",,VgaSave,640,480,4
+vbe_640x480x8    = "VESA Display (640x480x8)",,vga,640,480,8
+vbe_640x480x16   = "VESA Display (640x480x16)",,vga,640,480,16
+vbe_640x480x24   = "VESA Display (640x480x24)",,vga,640,480,24
+vbe_640x480x32   = "VESA Display (640x480x32)",,vga,640,480,32
+vbe_800x600x8    = "VESA Display (800x600x8)",,vga,800,600,8
+vbe_800x600x16   = "VESA Display (800x600x16)",,vga,800,600,16
+vbe_800x600x24   = "VESA Display (800x600x24)",,vga,800,600,24
+vbe              = "VESA Display (800x600x32)",,vga,800,600,32
+vbe_1024x768x8   = "VESA Display (1024x768x8)",,vga,1024,768,8
+vbe_1024x768x16  = "VESA Display (1024x768x16)",,vga,1024,768,16
+vbe_1024x768x24  = "VESA Display (1024x768x24)",,vga,1024,768,24
+vbe_1024x768x32  = "VESA Display (1024x768x32)",,vga,1024,768,32
+vbe_1152x864x8   = "VESA Display (1152x864x8)",,vga,1152,864,8
+vbe_1152x864x16  = "VESA Display (1152x864x16)",,vga,1152,864,16
+vbe_1152x864x24  = "VESA Display (1152x864x24)",,vga,1152,864,24
+vbe_1152x864x32  = "VESA Display (1152x864x32)",,vga,1152,864,32
+vbe_1280x1024x8  = "VESA Display (1280x1024x8)",,vga,1280,1024,8
+vbe_1280x1024x16 = "VESA Display (1280x1024x16)",,vga,1280,1024,16
+vbe_1280x1024x24 = "VESA Display (1280x1024x24)",,vga,1280,1024,24
+vbe_1280x1024x32 = "VESA Display (1280x1024x32)",,vga,1280,1024,32
+vbe_1600x1200x8  = "VESA Display (1600x1200x8)",,vga,1600,1200,8
+vbe_1600x1200x16 = "VESA Display (1600x1200x16)",,vga,1600,1200,16
+vbe_1600x1200x24 = "VESA Display (1600x1200x24)",,vga,1600,1200,24
+vbe_1600x1200x32 = "VESA Display (1600x1200x32)",,vga,1600,1200,32
 xbox             = "Original Xbox NV2A Framebuffer (640x480x32)",,XboxVmp,640,480,32
 
 [Map.Display]
@@ -368,8 +401,8 @@ Default = "XT-, AT- or extended keyboard (83-105 keys)"
 00003409 = "English (Philippines)"
 0000048F = "Esperanto"
 00000425 = "Estonian"
-;00000438 = "Faeroese"
-;00000429 = "Farsi"
+00000438 = "Faeroese"
+00000429 = "Farsi"
 0000040B = "Finnish"
 00000C0C = "French (Canada)"
 0000040C = "French (France)"
@@ -404,6 +437,7 @@ Default = "XT-, AT- or extended keyboard (83-105 keys)"
 0000042F = "FYRO Macedonian"
 ;0000083E = "Malay (Brunei Darussalam)"
 0000043E = "Malay (Malaysia)"
+00000481 = "Maori"
 ;0000044E = "Marathi"
 ;00000450 = "Mongolian (Mongolia)"
 00000414 = "Norwegian (Bokmal)"
@@ -457,7 +491,6 @@ Default = "XT-, AT- or extended keyboard (83-105 keys)"
 00000490 = "Walon"
 ;00000435 = "Zulu"
 
-
 [KeyboardLayout]
 0000041C = "Albanian"
 00000401 = "Arabic (101)"
@@ -476,6 +509,7 @@ Default = "XT-, AT- or extended keyboard (83-105 keys)"
 00000455 = "Burmese"
 00000C0C = "Canadian French (Legacy)"
 00011009 = "Canadian Multilingual Standard"
+00060409 = "Colemak"
 0000041A = "Croatian"
 00000405 = "Czech"
 00010405 = "Czech (QWERTY)"
@@ -493,23 +527,32 @@ Default = "XT-, AT- or extended keyboard (83-105 keys)"
 0000040C = "French (France)"
 00000437 = "Georgian"
 00000407 = "German (Germany)"
-00030407 = "German (de_ergo)"
-00020407 = "German (NEO-1.1)"
-00010407 = "German (Ristome)"
+00010407 = "German (IBM)"
+00020407 = "German Extended (E1)"
+;00030407 = "German Extended (E2)"
+00060407 = "German (de_ergo)"
+00050407 = "German (NEO-1.1)"
+00040407 = "German (Ristome)"
 00000807 = "German (Swiss)"
 00000408 = "Greek"
 00010408 = "Greek 220"
+00030408 = "Greek (220) Latin"
+00040408 = "Greek (319) Latin"
+00050408 = "Greek Latin"
 00000447 = "Gujarati"
 0000040D = "Hebrew"
 0000040E = "Hungarian"
 0000040F = "Icelandic"
 00001809 = "Irish"
 00000410 = "Italian"
+00010410 = "Italian (142)"
 00000411 = "Japanese"
 00000412 = "Korean"
 0000043F = "Kazakh"
+00000440 = "Kyrgyz Cyrillic"
 0000080A = "Latin American"
 00000426 = "Latvian"
+00000427 = "Lithuanian IBM"
 00010427 = "Lithuanian"
 0000042F = "Macedonian (FYRO)"
 0000044C = "Malayalam"
@@ -522,6 +565,7 @@ Default = "XT-, AT- or extended keyboard (83-105 keys)"
 00010418 = "Romanian (Standard)"
 00000419 = "Russian"
 00010419 = "Russian (Typewriter)"
+0001043B = "Sami Extended Norway"
 00000C1A = "Serbian (Cyrillic)"
 0000081A = "Serbian (Latin)"
 0000041B = "Slovak (QWERTZ)"
@@ -550,17 +594,24 @@ Default = "XT-, AT- or extended keyboard (83-105 keys)"
 00020401 = kbda3.dll
 00020402 = kbdbgt.dll
 00030402 = kbdbga.dll
-00040402 = kbdbgm.dll
+00040402 = kbdbu.dll
 00000405 = kbdcz.dll
 00010405 = kbdcz1.dll
 00000406 = kbdda.dll
+00000429 = kbdfa.dll
 00000407 = kbdgr.dll
 00000807 = kbdsg.dll
-00010407 = kbdgrist.dll
-00020407 = kbdgneo.dll
-00030407 = kbdgerg.dll
+00010407 = kbdgr1.dll
+00020407 = kbdgre1.dll
+;00030407 = kbdgre2.dll
+00050407 = kbdgneo.dll
+00060407 = kbdgerg.dll
+00040407 = kbdgrist.dll
 00000408 = kbdhe.dll
-00010408 = kbdhe.dll
+00010408 = kbdhe220.dll
+00030408 = kbdhela2.dll
+00040408 = kbdhela3.dll
+00050408 = kbdgkl.dll
 00000409 = kbdus.dll
 00000809 = kbduk.dll
 00001809 = kbdir.dll
@@ -570,7 +621,8 @@ Default = "XT-, AT- or extended keyboard (83-105 keys)"
 00030409 = kbdusl.dll
 00040409 = kbdusr.dll
 00050409 = kbdusa.dll
-0000040A = kbdes.dll
+00060409 = kbdcmk.dll
+0000040A = kbdsp.dll
 0000080A = kbdla.dll
 0000040B = kbdfi.dll
 0000040C = kbdfr.dll
@@ -580,11 +632,13 @@ Default = "XT-, AT- or extended keyboard (83-105 keys)"
 0000040E = kbdhu.dll
 0000040F = kbdic.dll
 00000410 = kbdit.dll
-00000411 = kbdja.dll
-00000412 = kbdko.dll
+00010410 = kbdit142.dll
+00000411 = kbdjpn.dll
+00000412 = kbdkor.dll
 00000413 = kbdne.dll
 00000813 = kbdbe.dll
 00000414 = kbdno.dll
+0001043B = kbdsmsno.dll
 00000415 = kbdpl1.dll
 00000816 = kbdpo.dll
 00010416 = kbdbr.dll
@@ -595,8 +649,8 @@ Default = "XT-, AT- or extended keyboard (83-105 keys)"
 0000041A = kbdcr.dll
 0000081A = kbdycl.dll
 00000C1A = kbdycc.dll
-0000041B = kbdsk.dll
-0001041B = kbdsk1.dll
+0000041B = kbdsl.dll
+0001041B = kbdsl1.dll
 0000041C = kbdal.dll
 0000041D = kbdsw.dll
 0000041E = kbdth0.dll
@@ -610,6 +664,7 @@ Default = "XT-, AT- or extended keyboard (83-105 keys)"
 00000423 = kbdblr.dll
 00000425 = kbdest.dll
 00000426 = kbdlv.dll
+00000427 = kbdlt.dll
 00010427 = kbdlt1.dll
 0000042A = kbdvntc.dll
 0000042B = kbdarme.dll
@@ -618,9 +673,12 @@ Default = "XT-, AT- or extended keyboard (83-105 keys)"
 0000082C = kbdaze.dll
 0000042F = kbdmac.dll
 00000437 = kbdgeo.dll
+00000438 = kbdfo.dll
 00000439 = kbdindev.dll
+0000043E = kbdmaori.dll
 0000043F = kbdkaz.dll
 00000843 = kbduzb.dll
+00000440 = kbdkyr.dll
 00000444 = kbdtat.dll
 00000445 = kbdinben.dll
 00000447 = kbdinguj.dll
@@ -637,5 +695,9 @@ AddReg = registry.inf,AddReg
 [HiveInfs.Upgrade]
 DelReg = registry.inf,DelReg
 AddReg = registry.inf,AddReg
+
+[Strings]
+cdname      = "ReactOS Installation Media"
+productname = "ReactOS"
 
 ; EOF

@@ -9,41 +9,7 @@
 #ifndef _NTVDM_H_
 #define _NTVDM_H_
 
-/* INCLUDES *******************************************************************/
-
-#include <stdio.h>
-#include <stdarg.h>
-#include <wchar.h>
-
-/* PSDK/NDK Headers */
-#define WIN32_NO_STATUS
-#include <windef.h>
-#include <winbase.h>
-#include <wingdi.h>
-#include <wincon.h>
-#include <winnls.h>
-#include <winreg.h>
-#include <winuser.h>
-#include <commdlg.h>
-
-#include <subsys/win/vdm.h>
-
-// Do not include stuff that is only defined
-// for backwards compatibility in nt_vdd.h
-#define NO_NTVDD_COMPAT
-#include <vddsvc.h>
-
-DWORD WINAPI SetLastConsoleEventActive(VOID);
-
-#define NTOS_MODE_USER
-#include <ndk/kefuncs.h>
-#include <ndk/mmfuncs.h>
-#include <ndk/obfuncs.h>
-#include <ndk/rtlfuncs.h>
-#include <ndk/rtltypes.h>
-
-/* PSEH for SEH Support */
-#include <pseh/pseh2.h>
+/* BUILD CONFIGURATION ********************************************************/
 
 /*
  * Activate this line if you want to run NTVDM in standalone mode with:
@@ -58,7 +24,7 @@ DWORD WINAPI SetLastConsoleEventActive(VOID);
 
 /*
  * Activate this line if you want advanced hardcoded debug facilities
- * (called interrupts, etc...), that break PC-AT compatibility.
+ * (called interrupts, etc...), that may break PC-AT compatibility.
  * USE AT YOUR OWN RISK! (disabled by default)
  */
 // #define ADVANCED_DEBUGGING
@@ -67,7 +33,50 @@ DWORD WINAPI SetLastConsoleEventActive(VOID);
 #define ADVANCED_DEBUGGING_LEVEL    1
 #endif
 
-#define NULL32 0
+
+/* INCLUDES *******************************************************************/
+
+#include <stdio.h>
+#include <stdarg.h>
+#include <wchar.h>
+
+#ifndef _countof
+#define _countof(_Array) (sizeof(_Array) / sizeof(_Array[0]))
+#endif
+
+/* String widening macro */
+#define __L(x)  L ## x
+#define _L(x)   __L(x)
+#define L(x)    _L(x)
+
+/* PSDK/NDK Headers */
+#define WIN32_NO_STATUS
+#include <windef.h>
+#include <winbase.h>
+#include <wingdi.h>
+#include <wincon.h>
+#include <wincon_undoc.h>
+#include <winnls.h>
+#include <winreg.h>
+#include <winuser.h>
+#include <commdlg.h>
+
+#include <subsys/win/vdm.h>
+
+// Do not include stuff that is only defined
+// for backwards compatibility in nt_vdd.h
+#define NO_NTVDD_COMPAT
+#include <vddsvc.h>
+
+#define NTOS_MODE_USER
+#include <ndk/kefuncs.h>    // For NtQueryPerformanceCounter()
+#include <ndk/rtlfuncs.h>
+
+/* PSEH for SEH Support */
+#include <pseh/pseh2.h>
+
+#include <ntstrsafe.h>
+
 
 /* VARIABLES ******************************************************************/
 
@@ -84,6 +93,10 @@ extern NTVDM_SETTINGS GlobalSettings;
 // Command line of NTVDM
 extern INT     NtVdmArgc;
 extern WCHAR** NtVdmArgv;
+
+/* Full directory where NTVDM resides, or the SystemRoot\System32 path */
+extern WCHAR NtVdmPath[MAX_PATH];
+extern ULONG NtVdmPathSize; // Length without NULL terminator.
 
 extern HWND hConsoleWnd;
 

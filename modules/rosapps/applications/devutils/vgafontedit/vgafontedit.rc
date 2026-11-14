@@ -54,6 +54,9 @@ IDI_DOC                   ICON      "res/doc.ico"
 #ifdef LANGUAGE_IT_IT
     #include "lang/it-IT.rc"
 #endif
+#ifdef LANGUAGE_JA_JP
+    #include "lang/ja-JP.rc"
+#endif
 #ifdef LANGUAGE_NO_NO
     #include "lang/no-NO.rc"
 #endif
@@ -66,11 +69,17 @@ IDI_DOC                   ICON      "res/doc.ico"
 #ifdef LANGUAGE_RU_RU
     #include "lang/ru-RU.rc"
 #endif
+#ifdef LANGUAGE_TR_TR
+    #include "lang/tr-TR.rc"
+#endif
 #ifdef LANGUAGE_UK_UA
     #include "lang/uk-UA.rc"
 #endif
 #ifdef LANGUAGE_ZH_CN
     #include "lang/zh-CN.rc"
+#endif
+#ifdef LANGUAGE_ZH_HK
+    #include "lang/zh-HK.rc"
 #endif
 #ifdef LANGUAGE_ZH_TW
     #include "lang/zh-TW.rc"

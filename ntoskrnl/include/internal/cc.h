@@ -193,6 +193,7 @@ typedef struct _ROS_SHARED_CACHE_MAP
     LIST_ENTRY CacheMapVacbListHead;
     BOOLEAN PinAccess;
     KSPIN_LOCK CacheMapLock;
+    KGUARDED_MUTEX FlushCacheLock;
 #if DBG
     BOOLEAN Trace; /* enable extra trace output for this cache map and it's VACBs */
 #endif
@@ -287,6 +288,7 @@ extern LAZY_WRITER LazyWriter;
 #define NODE_TYPE_PRIVATE_MAP    0x02FE
 #define NODE_TYPE_SHARED_MAP     0x02FF
 
+CODE_SEG("INIT")
 VOID
 NTAPI
 CcPfInitializePrefetcher(
@@ -309,7 +311,10 @@ CcMdlWriteComplete2(
 );
 
 NTSTATUS
-CcRosFlushVacb(PROS_VACB Vacb, PIO_STATUS_BLOCK Iosb);
+CcRosFlushVacb(
+    _In_ PROS_VACB Vacb,
+    _Out_opt_ PIO_STATUS_BLOCK Iosb
+);
 
 NTSTATUS
 CcRosGetVacb(
@@ -327,6 +332,7 @@ CcRosEnsureVacbResident(
     _In_ ULONG Length
 );
 
+CODE_SEG("INIT")
 VOID
 NTAPI
 CcInitView(VOID);
@@ -335,6 +341,7 @@ VOID
 NTAPI
 CcShutdownLazyWriter(VOID);
 
+CODE_SEG("INIT")
 BOOLEAN
 CcInitializeCacheManager(VOID);
 
@@ -352,7 +359,7 @@ VOID
 CcRosMarkDirtyVacb(
     PROS_VACB Vacb);
 
-VOID
+BOOLEAN
 CcRosUnmarkDirtyVacb(
     PROS_VACB Vacb,
     BOOLEAN LockViews);
@@ -503,3 +510,7 @@ CcRosVacbDecRefCount(
 }
 #define CcRosVacbGetRefCount(vacb) InterlockedCompareExchange((PLONG)&(vacb)->ReferenceCount, 0, 0)
 #endif
+
+BOOLEAN
+CcRosFreeOneUnusedVacb(
+    VOID);

@@ -1,7 +1,7 @@
 /*
  *    Translated by Caemyr - Olaf Siejka (Apr, 2008)
  *    Use ReactOS forum PM or IRC to contact me
- *    http://www.reactos.org
+ *    https://reactos.org
  *    IRC: irc.freenode.net #reactos-pl
  *    UTF-8 conversion by Caemyr (May, 2011)
  */
@@ -16,4 +16,14 @@ BEGIN
         MENUITEM SEPARATOR
         MENUITEM "&Wyjście", ID_EXIT
     END
+END
+
+STRINGTABLE
+BEGIN
+    IDS_IME_ON "Input System (IME) - ON"
+    IDS_IME_OFF "Input System (IME) - OFF"
+    IDS_SOFTKBD_ON "Soft Keyboard - ON"
+    IDS_SOFTKBD_OFF "Soft Keyboard - OFF"
+    IDS_SHOWTOOLBAR "Show Toolbar"
+    IDS_INPUTSYSTEM "Input System (IME) configuration..."
 END

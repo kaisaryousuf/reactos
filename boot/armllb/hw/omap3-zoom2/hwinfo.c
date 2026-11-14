@@ -10,7 +10,13 @@
 
 TIMEINFO LlbTime;
 
-#define BCD_INT(bcd) (((bcd & 0xf0) >> 4) * 10 + (bcd &0x0f))
+static
+UCHAR
+BCD_INT(
+    _In_ UCHAR Bcd)
+{
+    return ((Bcd & 0xF0) >> 4) * 10 + (Bcd & 0x0F);
+}
 
 ULONG
 NTAPI
@@ -38,14 +44,14 @@ NTAPI
 LlbHwGetSerialUart(VOID)
 {
     return 0;
-} 
+}
 
 ULONG
 LlbHwRtcRead(VOID)
 {
     /* Issue the GET_TIME request on the RTC control register */
     LlbHwOmap3TwlWrite1(0x4B, 0x29, 0x41);
-    
+
     /* Read the BCD registers and convert them */
     LlbTime.Second = BCD_INT(LlbHwOmap3TwlRead1(0x4B, 0x1C));
     LlbTime.Minute = BCD_INT(LlbHwOmap3TwlRead1(0x4B, 0x1D));

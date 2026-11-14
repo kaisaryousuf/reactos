@@ -1,32 +1,78 @@
+/*
+ * PROJECT:     ReactOS Kernel
+ * LICENSE:     BSD - See COPYING.ARM in the top level directory
+ * PURPOSE:     Boot Video Driver support header
+ * COPYRIGHT:   Copyright 2007 Alex Ionescu (alex.ionescu@reactos.org)
+ *              Copyright 2019-2022 Hermès Bélusca-Maïto
+ */
+
 #pragma once
 
-// Native definitions from BOOTVID (Boot Video Driver).
+/* Native definitions from BOOTVID (Boot Video Driver) */
 #include "bootvid/bootvid.h"
 
 //
 // Driver Initialization
 //
+CODE_SEG("INIT")
 BOOLEAN
 NTAPI
 InbvDriverInitialize(
-    IN PLOADER_PARAMETER_BLOCK LoaderBlock,
-    IN ULONG Count
+    _In_ PLOADER_PARAMETER_BLOCK LoaderBlock,
+    _In_ ULONG Count
 );
 
 extern BOOLEAN InbvBootDriverInstalled;
 
+INBV_DISPLAY_STATE
+NTAPI
+InbvGetDisplayState(VOID);
+
+VOID
+NTAPI
+InbvAcquireLock(VOID);
+
+VOID
+NTAPI
+InbvReleaseLock(VOID);
+
 PUCHAR
 NTAPI
 InbvGetResourceAddress(
-    IN ULONG ResourceNumber
+    _In_ ULONG ResourceNumber
+);
+
+//
+// Display Functions
+//
+VOID
+NTAPI
+InbvBitBlt(
+    _In_ PUCHAR Buffer,
+    _In_ ULONG X,
+    _In_ ULONG Y
 );
 
 VOID
 NTAPI
-InbvBitBlt(
-    IN PUCHAR Buffer,
-    IN ULONG X,
-    IN ULONG Y
+InbvBufferToScreenBlt(
+    _In_reads_bytes_(Height * Stride) PUCHAR Buffer,
+    _In_ ULONG X,
+    _In_ ULONG Y,
+    _In_ ULONG Width,
+    _In_ ULONG Height,
+    _In_ ULONG Stride
+);
+
+VOID
+NTAPI
+InbvScreenToBufferBlt(
+    _Out_writes_bytes_all_(Height * Stride) PUCHAR Buffer,
+    _In_ ULONG X,
+    _In_ ULONG Y,
+    _In_ ULONG Width,
+    _In_ ULONG Height,
+    _In_ ULONG Stride
 );
 
 //
@@ -34,9 +80,15 @@ InbvBitBlt(
 //
 VOID
 NTAPI
-InbvIndicateProgress(
-    VOID
+InbvSetProgressBarCoordinates(
+    _In_ ULONG Left,
+    _In_ ULONG Top
 );
+
+CODE_SEG("INIT")
+VOID
+NTAPI
+InbvIndicateProgress(VOID);
 
 VOID
 NTAPI
@@ -48,34 +100,7 @@ InbvSetProgressBarSubset(
 VOID
 NTAPI
 InbvUpdateProgressBar(
-    IN ULONG Progress
-);
-
-//
-// Boot Splash-Screen Functions
-//
-VOID
-NTAPI
-InbvRotBarInit(
-    VOID
-);
-
-VOID
-NTAPI
-DisplayBootBitmap(
-    IN BOOLEAN TextMode
-);
-
-VOID
-NTAPI
-DisplayFilter(
-    IN PCHAR *String
-);
-
-VOID
-NTAPI
-FinalizeBootLogo(
-    VOID
+    _In_ ULONG Percentage
 );
 
 //
@@ -84,42 +109,36 @@ FinalizeBootLogo(
 VOID
 NTAPI
 InbvPortEnableFifo(
-    IN ULONG PortId,
-    IN BOOLEAN Enable
-);
+    _In_ ULONG PortId,
+    _In_ BOOLEAN Enable);
 
 BOOLEAN
 NTAPI
 InbvPortPollOnly(
-    IN ULONG PortId
-);
+    _In_ ULONG PortId);
 
 BOOLEAN
 NTAPI
 InbvPortGetByte(
-    IN ULONG PortId,
-    OUT PUCHAR Byte
-);
+    _In_ ULONG PortId,
+    _Out_ PUCHAR Byte);
 
 VOID
 NTAPI
 InbvPortPutByte(
-    IN ULONG PortId,
-    IN UCHAR Byte
-);
-
-VOID
-NTAPI
-InbvPortTerminate(
-    IN ULONG PortId
-);
+    _In_ ULONG PortId,
+    _In_ UCHAR Byte);
 
 BOOLEAN
 NTAPI
 InbvPortInitialize(
-    IN ULONG BaudRate,
-    IN ULONG PortNumber,
-    IN PUCHAR PortAddress,
-    OUT PULONG PortId,
-    IN BOOLEAN IsMMIODevice
-);
+    _In_ ULONG BaudRate,
+    _In_ ULONG PortNumber,
+    _In_ PUCHAR PortAddress,
+    _Out_ PULONG PortId,
+    _In_ BOOLEAN IsMMIODevice);
+
+VOID
+NTAPI
+InbvPortTerminate(
+    _In_ ULONG PortId);

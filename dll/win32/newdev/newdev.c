@@ -1,7 +1,7 @@
 /*
  * New device installer (newdev.dll)
  *
- * Copyright 2005-2006 Hervé Poussineau (hpoussin@reactos.org)
+ * Copyright 2005-2006 HervÃ© Poussineau (hpoussin@reactos.org)
  *           2005 Christoph von Wittich (Christoph@ActiveVB.de)
  *           2009 Colin Finck (colin@reactos.org)
  *
@@ -46,19 +46,20 @@ UpdateDriverForPlugAndPlayDevicesW(
     OUT PBOOL bRebootRequired OPTIONAL)
 {
     DEVINSTDATA DevInstData;
+    SP_DEVINSTALL_PARAMS InstallParams;
     DWORD i;
     LPWSTR Buffer = NULL;
     DWORD BufferSize;
     LPCWSTR CurrentHardwareId; /* Pointer into Buffer */
+    DWORD Property;
     BOOL FoundHardwareId, FoundAtLeastOneDevice = FALSE;
+    BOOL RebootRequired = FALSE;
     BOOL ret = FALSE;
 
     DevInstData.hDevInfo = INVALID_HANDLE_VALUE;
 
     TRACE("UpdateDriverForPlugAndPlayDevicesW(%p %s %s 0x%x %p)\n",
         hwndParent, debugstr_w(HardwareId), debugstr_w(FullInfPath), InstallFlags, bRebootRequired);
-
-    /* FIXME: InstallFlags bRebootRequired ignored! */
 
     /* Check flags */
     if (InstallFlags & ~(INSTALLFLAG_FORCE | INSTALLFLAG_READONLY | INSTALLFLAG_NONINTERACTIVE))
@@ -86,51 +87,58 @@ UpdateDriverForPlugAndPlayDevicesW(
             break;
         }
 
-        /* Get Hardware ID */
-        HeapFree(GetProcessHeap(), 0, Buffer);
-        Buffer = NULL;
-        BufferSize = 0;
-        while (!SetupDiGetDeviceRegistryPropertyW(
-            DevInstData.hDevInfo,
-            &DevInstData.devInfoData,
-            SPDRP_HARDWAREID,
-            NULL,
-            (PBYTE)Buffer,
-            BufferSize,
-            &BufferSize))
-        {
-            if (GetLastError() == ERROR_FILE_NOT_FOUND)
-            {
-                Buffer = NULL;
-                break;
-            }
-            else if (GetLastError() != ERROR_INSUFFICIENT_BUFFER)
-            {
-                TRACE("SetupDiGetDeviceRegistryPropertyW() failed with error 0x%x\n", GetLastError());
-                goto cleanup;
-            }
-            /* This error was expected */
-            HeapFree(GetProcessHeap(), 0, Buffer);
-            Buffer = HeapAlloc(GetProcessHeap(), 0, BufferSize);
-            if (!Buffer)
-            {
-                TRACE("HeapAlloc() failed\n", GetLastError());
-                SetLastError(ERROR_NOT_ENOUGH_MEMORY);
-                goto cleanup;
-            }
-        }
-        if (Buffer == NULL)
-            continue;
-
-        /* Check if we match the given hardware ID */
+        /* Match Hardware ID */
         FoundHardwareId = FALSE;
-        for (CurrentHardwareId = Buffer; *CurrentHardwareId != UNICODE_NULL; CurrentHardwareId += wcslen(CurrentHardwareId) + 1)
+        Property = SPDRP_HARDWAREID;
+        while (TRUE)
         {
-            if (wcscmp(CurrentHardwareId, HardwareId) == 0)
+            /* Get IDs data */
+            Buffer = NULL;
+            BufferSize = 0;
+            while (!SetupDiGetDeviceRegistryPropertyW(DevInstData.hDevInfo,
+                                                      &DevInstData.devInfoData,
+                                                      Property,
+                                                      NULL,
+                                                      (PBYTE)Buffer,
+                                                      BufferSize,
+                                                      &BufferSize))
             {
-                FoundHardwareId = TRUE;
+                if (GetLastError() == ERROR_FILE_NOT_FOUND)
+                {
+                    break;
+                }
+                else if (GetLastError() != ERROR_INSUFFICIENT_BUFFER)
+                {
+                    TRACE("SetupDiGetDeviceRegistryPropertyW() failed with error 0x%x\n", GetLastError());
+                    goto cleanup;
+                }
+                /* This error was expected */
+                HeapFree(GetProcessHeap(), 0, Buffer);
+                Buffer = HeapAlloc(GetProcessHeap(), 0, BufferSize);
+                if (!Buffer)
+                {
+                    TRACE("HeapAlloc() failed\n", GetLastError());
+                    SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+                    goto cleanup;
+                }
+            }
+            if (Buffer)
+            {
+                /* Check if we match the given hardware ID */
+                for (CurrentHardwareId = Buffer; *CurrentHardwareId != UNICODE_NULL; CurrentHardwareId += wcslen(CurrentHardwareId) + 1)
+                {
+                    if (_wcsicmp(CurrentHardwareId, HardwareId) == 0)
+                    {
+                        FoundHardwareId = TRUE;
+                        break;
+                    }
+                }
+            }
+            if (FoundHardwareId || Property == SPDRP_COMPATIBLEIDS)
+            {
                 break;
             }
+            Property = SPDRP_COMPATIBLEIDS;
         }
         if (!FoundHardwareId)
             continue;
@@ -179,11 +187,24 @@ UpdateDriverForPlugAndPlayDevicesW(
             continue;
         }
 
+        /* Do we need to reboot? */
+        InstallParams.cbSize = sizeof(InstallParams);
+        if (SetupDiGetDeviceInstallParams(DevInstData.hDevInfo,
+                                          &DevInstData.devInfoData,
+                                          &InstallParams))
+        {
+            if (InstallParams.Flags & (DI_NEEDRESTART | DI_NEEDREBOOT))
+                RebootRequired = TRUE;
+        }
+
         FoundAtLeastOneDevice = TRUE;
     }
 
     if (FoundAtLeastOneDevice)
     {
+        if (bRebootRequired)
+            *bRebootRequired = RebootRequired;
+
         SetLastError(NO_ERROR);
         ret = TRUE;
     }
@@ -359,7 +380,7 @@ SearchDriverRecursive(
         wcscat(DirPath, L"\\");
 
     wcscpy(PathWithPattern, DirPath);
-    wcscat(PathWithPattern, L"\\*");
+    wcscat(PathWithPattern, L"*");
 
     for (hFindFile = FindFirstFileW(PathWithPattern, &wfd);
         ok && hFindFile != INVALID_HANDLE_VALUE;
@@ -406,6 +427,14 @@ SearchDriverRecursive(
     if (hFindFile != INVALID_HANDLE_VALUE)
         FindClose(hFindFile);
     return retval;
+}
+
+BOOL
+CheckBestDriver(
+    _In_ PDEVINSTDATA DevInstData,
+    _In_ PCWSTR pszDir)
+{
+    return SearchDriverRecursive(DevInstData, pszDir);
 }
 
 BOOL
@@ -457,6 +486,7 @@ PrepareFoldersToScan(
     DWORD CustomTextLength = 0;
     DWORD LengthNeeded = 0;
     LPWSTR Buffer;
+    INT idx = (INT)SendMessageW(hwndCombo, CB_GETCURSEL, 0, 0);
 
     /* Calculate length needed to store the search paths */
     if (IncludeRemovableDevices)
@@ -476,7 +506,8 @@ PrepareFoldersToScan(
     }
     if (IncludeCustomPath)
     {
-        CustomTextLength = 1 + ComboBox_GetTextLength(hwndCombo);
+        CustomTextLength = 1 + ((idx != CB_ERR) ?
+        (INT)SendMessageW(hwndCombo, CB_GETLBTEXTLEN, idx, 0) : ComboBox_GetTextLength(hwndCombo));
         LengthNeeded += CustomTextLength;
     }
 
@@ -503,14 +534,16 @@ PrepareFoldersToScan(
                 nType = GetDriveTypeW(drive);
                 if (nType == DRIVE_REMOVABLE || nType == DRIVE_CDROM)
                 {
-                    Buffer += 1 + swprintf(Buffer, drive);
+                    Buffer += 1 + _swprintf(Buffer, drive);
                 }
             }
         }
     }
     if (IncludeCustomPath)
     {
-        Buffer += 1 + GetWindowTextW(hwndCombo, Buffer, CustomTextLength);
+        Buffer += 1 + ((idx != CB_ERR) ?
+        SendMessageW(hwndCombo, CB_GETLBTEXT, idx, (LPARAM)Buffer) :
+        GetWindowTextW(hwndCombo, Buffer, CustomTextLength));
     }
     *Buffer = '\0';
 

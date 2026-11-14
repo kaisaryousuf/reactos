@@ -18,7 +18,7 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-/* 
+/*
 This file implements the CMenuFocusManager class.
 
 This class manages the shell menus, by overriding the hot-tracking behaviour.
@@ -169,7 +169,7 @@ HRESULT CMenuFocusManager::PopFromArray(StackEntryType * pType, CMenuBand ** pMb
     {
         if (pMb) *pMb = m_bandStack[m_bandCount].mb;
     }
-    
+
     return S_OK;
 }
 
@@ -338,7 +338,7 @@ LRESULT CMenuFocusManager::ProcessMouseMove(MSG* msg)
     StackEntry * entry = NULL;
     if (IsTrackedWindow(child, &entry) == S_OK)
     {
-        TRACE("MouseMove");
+        TRACE("MouseMove\n");
     }
 
     BOOL isTracking = FALSE;
@@ -347,6 +347,23 @@ LRESULT CMenuFocusManager::ProcessMouseMove(MSG* msg)
         ScreenToClient(child, &pt);
         iHitTestResult = SendMessageW(child, TB_HITTEST, 0, (LPARAM) &pt);
         isTracking = entry->mb->_IsTracking();
+
+        if (iHitTestResult < -1)
+        {
+            // TB_HITTEST would return negative numbers for separators
+            iHitTestResult = -iHitTestResult;
+        }
+        else if (iHitTestResult == -1)
+        {
+            // TB_HITTEST would return -1 in two cases:
+            // 1. the mouse is outside the toolbar;
+            // 2. the mouse is over the first item, and that item is a separator.
+            // Confirm the second scenario by checking first item's rect.
+            RECT rc;
+            SendMessageW(child, TB_GETITEMRECT, 1, (LPARAM)&rc);
+            if (PtInRect(&rc, pt))
+                iHitTestResult = 1;
+        }
 
         if (SendMessage(child, WM_USER_ISTRACKEDITEM, iHitTestResult, 0) == S_FALSE)
         {
@@ -559,7 +576,7 @@ LRESULT CMenuFocusManager::GetMsgHook(INT nCode, WPARAM hookWParam, LPARAM hookL
     BOOL isLButton = FALSE;
     if (nCode < 0)
         return CallNextHookEx(m_hGetMsgHook, nCode, hookWParam, hookLParam);
-    
+
     if (nCode == HC_ACTION)
     {
         BOOL callNext = TRUE;
@@ -577,6 +594,7 @@ LRESULT CMenuFocusManager::GetMsgHook(INT nCode, WPARAM hookWParam, LPARAM hookL
             break;
 
         case WM_NCLBUTTONDOWN:
+        case WM_LBUTTONDBLCLK:
         case WM_LBUTTONDOWN:
             isLButton = TRUE;
             TRACE("LB\n");

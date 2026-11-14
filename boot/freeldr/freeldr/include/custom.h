@@ -19,10 +19,6 @@
 
 #pragma once
 
-#define HAS_OPTION_MENU_EDIT_CMDLINE
-#define HAS_OPTION_MENU_CUSTOM_BOOT
-#define HAS_OPTION_MENU_REBOOT
-
 #ifdef HAS_OPTION_MENU_CUSTOM_BOOT
 VOID OptionMenuCustomBoot(VOID);
 #endif
@@ -30,16 +26,8 @@ VOID OptionMenuCustomBoot(VOID);
 #if defined(_M_IX86) || defined(_M_AMD64)
 
 VOID
-EditCustomBootDisk(
-    IN OUT OperatingSystemItem* OperatingSystem);
-
-VOID
-EditCustomBootPartition(
-    IN OUT OperatingSystemItem* OperatingSystem);
-
-VOID
-EditCustomBootSectorFile(
-    IN OUT OperatingSystemItem* OperatingSystem);
+EditCustomBootSector(
+    _Inout_ OperatingSystemItem* OperatingSystem);
 
 VOID
 EditCustomBootLinux(
@@ -51,7 +39,3 @@ VOID
 EditCustomBootReactOS(
     IN OUT OperatingSystemItem* OperatingSystem,
     IN BOOLEAN IsSetup);
-
-#ifdef HAS_OPTION_MENU_REBOOT
-VOID OptionMenuReboot(VOID);
-#endif

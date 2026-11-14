@@ -49,7 +49,7 @@ HidClassAddDevice(
     InterlockedIncrement((PLONG)&HidClassDeviceNumber);
 
     /* construct device name */
-    swprintf(CharDeviceName, L"\\Device\\_HID%08x", HidClassDeviceNumber);
+    _swprintf(CharDeviceName, L"\\Device\\_HID%08x", HidClassDeviceNumber);
 
     /* initialize device name */
     RtlInitUnicodeString(&DeviceName, CharDeviceName);
@@ -439,7 +439,7 @@ HidClass_ReadCompleteIrp(
     //
     // remove from pending list
     //
-    RemoveEntryList(&Irp->Tail.Overlay.ListEntry);
+    RemoveEntryList(&IrpContext->PendingLink);
 
     //
     // is list empty
@@ -761,7 +761,7 @@ HidClass_Read(
     //
     // insert irp into pending list
     //
-    InsertTailList(&Context->ReadPendingIrpListHead, &NewIrp->Tail.Overlay.ListEntry);
+    InsertTailList(&Context->ReadPendingIrpListHead, &NewIrpContext->PendingLink);
 
     //
     // set completion routine
@@ -1123,7 +1123,7 @@ HidClass_Power(
 {
     PHIDCLASS_COMMON_DEVICE_EXTENSION CommonDeviceExtension;
     CommonDeviceExtension = DeviceObject->DeviceExtension;
- 
+
     if (CommonDeviceExtension->IsFDO)
     {
         IoCopyCurrentIrpStackLocationToNext(Irp);

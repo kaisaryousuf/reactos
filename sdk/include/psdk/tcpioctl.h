@@ -60,6 +60,9 @@
 #endif
 #define MAX_PHYSADDR_SIZE               8
 
+#define TCP_MIB_STAT_ID                 1
+#define UDP_MIB_STAT_ID                 1
+
 /* Address Object Options */
 #define AO_OPTION_TTL                1
 #define AO_OPTION_MCASTTTL           2
@@ -102,6 +105,10 @@
 
 /* TCP connection options */
 #define TCP_SOCKET_NODELAY 1
+
+/* ReactOS specific */
+#define TCP_SOCKET_KEEPALIVE 2
+#define TCP_SOCKET_KEEPALIVEVALS 3
 
 typedef struct IFEntry
 {

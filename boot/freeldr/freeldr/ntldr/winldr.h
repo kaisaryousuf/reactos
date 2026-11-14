@@ -48,19 +48,19 @@ typedef struct _LOADER_SYSTEM_BLOCK
     LOADER_PARAMETER_BLOCK LoaderBlock;
     LOADER_PARAMETER_EXTENSION Extension;
     SETUP_LOADER_BLOCK SetupBlock;
-#ifdef _M_IX86
     HEADLESS_LOADER_BLOCK HeadlessLoaderBlock;
-#endif
     NLS_DATA_BLOCK NlsDataBlock;
     CHAR LoadOptions[MAX_OPTIONS_LENGTH+1];
     CHAR ArcBootDeviceName[MAX_PATH+1];
-    // CHAR ArcHalDeviceName[MAX_PATH];
+    CHAR ArcHalDeviceName[MAX_PATH+1];
     CHAR NtBootPathName[MAX_PATH+1];
     CHAR NtHalPathName[MAX_PATH+1];
     ARC_DISK_INFORMATION ArcDiskInformation;
+    LOADER_PERFORMANCE_DATA LoaderPerformanceData;
 } LOADER_SYSTEM_BLOCK, *PLOADER_SYSTEM_BLOCK;
 
 extern PLOADER_SYSTEM_BLOCK WinLdrSystemBlock;
+/**/extern PCWSTR BootFileSystem;/**/
 
 
 // conversion.c
@@ -71,8 +71,21 @@ VOID List_PaToVa(_In_ LIST_ENTRY *ListEntry);
 #endif
 VOID ConvertConfigToVA(PCONFIGURATION_COMPONENT_DATA Start);
 
-
 // winldr.c
+extern BOOLEAN SosEnabled;
+#ifdef _M_IX86
+extern BOOLEAN PaeModeOn;
+#endif
+
+VOID
+NtLdrOutputLoadMsg(
+    _In_ PCSTR FileName,
+    _In_opt_ PCSTR Description);
+
+VOID
+NtLdrNormalizeOptions(
+    _Inout_ PSTR LoadOptions);
+
 PVOID WinLdrLoadModule(PCSTR ModuleName, PULONG Size,
                        TYPE_OF_MEMORY MemoryType);
 
@@ -90,25 +103,26 @@ WinLdrInitSystemHive(
 BOOLEAN WinLdrScanSystemHive(IN OUT PLOADER_PARAMETER_BLOCK LoaderBlock,
                              IN PCSTR SystemRoot);
 
-// winldr.c
-VOID
-WinLdrInitializePhase1(PLOADER_PARAMETER_BLOCK LoaderBlock,
-                       PCSTR Options,
-                       PCSTR SystemPath,
-                       PCSTR BootPath,
-                       USHORT VersionToBoot);
 BOOLEAN
-WinLdrLoadNLSData(IN OUT PLOADER_PARAMETER_BLOCK LoaderBlock,
-                  IN PCSTR DirectoryPath,
-                  IN PCSTR AnsiFileName,
-                  IN PCSTR OemFileName,
-                  IN PCSTR LanguageFileName);
-BOOLEAN
-WinLdrAddDriverToList(LIST_ENTRY *BootDriverListHead,
-                      PWSTR RegistryPath,
-                      PWSTR ImagePath,
-                      PWSTR ServiceName);
+WinLdrLoadNLSData(
+    _Inout_ PLOADER_PARAMETER_BLOCK LoaderBlock,
+    _In_ PCSTR DirectoryPath,
+    _In_ PCUNICODE_STRING AnsiFileName,
+    _In_ PCUNICODE_STRING OemFileName,
+    _In_ PCUNICODE_STRING LangFileName, // CaseTable
+    _In_ PCUNICODE_STRING OemHalFileName);
 
+BOOLEAN
+WinLdrAddDriverToList(
+    _Inout_ PLIST_ENTRY DriverListHead,
+    _In_ BOOLEAN InsertAtHead,
+    _In_ PCWSTR DriverName,
+    _In_opt_ PCWSTR ImagePath,
+    _In_opt_ PCWSTR GroupName,
+    _In_ ULONG ErrorControl,
+    _In_ ULONG Tag);
+
+// winldr.c
 VOID
 WinLdrpDumpMemoryDescriptors(PLOADER_PARAMETER_BLOCK LoaderBlock);
 
@@ -120,16 +134,18 @@ WinLdrpDumpArcDisks(PLOADER_PARAMETER_BLOCK LoaderBlock);
 
 ARC_STATUS
 LoadAndBootWindowsCommon(
-    IN USHORT OperatingSystemVersion,
-    IN PLOADER_PARAMETER_BLOCK LoaderBlock,
-    IN PCSTR BootOptions,
-    IN PCSTR BootPath);
+    _In_ USHORT OperatingSystemVersion,
+    _In_ PLOADER_PARAMETER_BLOCK LoaderBlock,
+    _In_ PCSTR BootOptions,
+    _In_ PCSTR SystemPartition,
+    _In_ PCSTR BootPath);
 
 VOID
 WinLdrSetupMachineDependent(PLOADER_PARAMETER_BLOCK LoaderBlock);
 
 VOID
-WinLdrSetProcessorContext(VOID);
+WinLdrSetProcessorContext(
+    _In_ USHORT OperatingSystemVersion);
 
 // arch/xxx/winldr.c
 BOOLEAN

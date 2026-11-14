@@ -14,6 +14,27 @@ static BOOL Setup = FALSE;
 
 /* FUNCTIONS *****************************************************************/
 
+BOOL FASTCALL UserIsDBCSEnabled(VOID)
+{
+    return NLS_MB_CODE_PAGE_TAG;
+}
+
+BOOL FASTCALL UserIsIMMEnabled(VOID)
+{
+    if (NLS_MB_CODE_PAGE_TAG)
+        return TRUE;
+
+    return !!RegGetSectionDWORD(L"IMM", L"LoadIMM", FALSE);
+}
+
+BOOL FASTCALL UserIsCTFIMEEnabled(VOID)
+{
+    if (RegGetSectionDWORD(L"IMM", L"DontLoadCTFIME", FALSE))
+        return FALSE;
+
+    return UserIsIMMEnabled();
+}
+
 BOOL
 NTAPI
 InitMetrics(VOID)
@@ -33,16 +54,16 @@ InitMetrics(VOID)
         ZwClose(hKey);
     }
 
-    /* FIXME: HACK, due to missing PDEV on first init */
-    if (!gppdevPrimary)
+    /* FIXME: HACK, due to missing MDEV on first init */
+    if (!gpmdev)
     {
         Width = 640;
         Height = 480;
     }
     else
     {
-        Width = gppdevPrimary->gdiinfo.ulHorzRes;
-        Height = gppdevPrimary->gdiinfo.ulVertRes;
+        Width = gpmdev->ppdevGlobal->gdiinfo.ulHorzRes;
+        Height = gpmdev->ppdevGlobal->gdiinfo.ulVertRes;
     }
 
     /* Screen sizes */
@@ -128,15 +149,9 @@ InitMetrics(VOID)
     piSysMet[SM_CYMENUSIZE] = gspv.ncm.iMenuHeight;     // 18;
 
     /* Mouse */
-    piSysMet[SM_MOUSEPRESENT] = 1;
-    piSysMet[SM_MOUSEWHEELPRESENT] = 1;
-    piSysMet[SM_CMOUSEBUTTONS] = 2;
     piSysMet[SM_SWAPBUTTON] = gspv.bMouseBtnSwap ? 1 : 0;
     piSysMet[SM_CXDOUBLECLK] = gspv.iDblClickWidth;
     piSysMet[SM_CYDOUBLECLK] = gspv.iDblClickHeight;
-#if (_WIN32_WINNT >= 0x0600)
-    piSysMet[SM_MOUSEHORIZONTALWHEELPRESENT] = 0;
-#endif
 
     /* Version info */
     piSysMet[SM_TABLETPC] = 0;
@@ -150,12 +165,12 @@ InitMetrics(VOID)
     piSysMet[SM_NETWORK] = 3;
     piSysMet[SM_SLOWMACHINE] = 0;
     piSysMet[SM_SECURE] = 0;
-    piSysMet[SM_DBCSENABLED] = 0;
+    piSysMet[SM_DBCSENABLED] = NLS_MB_CODE_PAGE_TAG;
     piSysMet[SM_SHOWSOUNDS] = gspv.bShowSounds;
     piSysMet[SM_MIDEASTENABLED] = 0;
     piSysMet[SM_CMONITORS] = 1;
     piSysMet[SM_SAMEDISPLAYFORMAT] = 1;
-    piSysMet[SM_IMMENABLED] = 0;
+    piSysMet[SM_IMMENABLED] = NLS_MB_CODE_PAGE_TAG;
 
     /* Reserved */
     piSysMet[SM_RESERVED1] = 0;
@@ -169,7 +184,15 @@ InitMetrics(VOID)
     piSysMet[90] = 0;
 #endif
 
-    gpsi->dwSRVIFlags |= SRVINFO_METRICS;
+    if (UserIsDBCSEnabled())
+        gpsi->dwSRVIFlags |= SRVINFO_DBCSENABLED; /* DBCS Support */
+
+    if (UserIsIMMEnabled())
+        gpsi->dwSRVIFlags |= SRVINFO_IMM32; /* IME Support */
+
+    if (UserIsCTFIMEEnabled())
+        gpsi->dwSRVIFlags |= SRVINFO_CTFIME_ENABLED; /* CTF IME support */
+
     Setup = TRUE;
 
     return TRUE;
@@ -182,6 +205,12 @@ UserGetSystemMetrics(ULONG Index)
     ASSERT(gpsi);
     ASSERT(Setup);
     TRACE("UserGetSystemMetrics(%lu)\n", Index);
+
+    if (Index == SM_DBCSENABLED)
+        return !!(gpsi->dwSRVIFlags & SRVINFO_DBCSENABLED);
+
+    if (Index == SM_IMMENABLED)
+        return !!(gpsi->dwSRVIFlags & SRVINFO_IMM32);
 
     /* Get metrics from array */
     if (Index < SM_CMETRICS)
@@ -205,6 +234,5 @@ UserGetSystemMetrics(ULONG Index)
     ERR("UserGetSystemMetrics() called with invalid index %lu\n", Index);
     return 0;
 }
-
 
 /* EOF */

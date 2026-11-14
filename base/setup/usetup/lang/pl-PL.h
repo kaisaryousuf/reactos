@@ -8,6 +8,7 @@
  *      IRC: irc.freenode.net #reactos-pl;
  *      Updated by Wojo664 (July, 2014)
  *      Updated by Saibamen (July, 2015)
+ *      Updated by Piotr Hetnarowicz (June, 2021)
  */
 
 #pragma once
@@ -939,59 +940,6 @@ static MUI_ENTRY plPLSuccessPageEntries[] =
     }
 };
 
-static MUI_ENTRY plPLBootPageEntries[] =
-{
-    {
-        4,
-        3,
-        " Instalator ReactOS " KERNEL_VERSION_STR " ",
-        TEXT_STYLE_UNDERLINE,
-        TEXT_ID_STATIC
-    },
-    {
-        6,
-        8,
-        "Instalator systemu ReactOS nie mo\276e zainstalowa\206",
-        TEXT_STYLE_NORMAL,
-        TEXT_ID_STATIC
-    },
-    {
-        6,
-        9,
-        "mened\276era rozruchu na dysku twardym",
-        TEXT_STYLE_NORMAL,
-        TEXT_ID_STATIC
-    },
-    {
-        6,
-        13,
-        "W\210\242\276 sformatowan\245 dyskietk\251 do nap\251du A:",
-        TEXT_STYLE_NORMAL,
-        TEXT_ID_STATIC
-    },
-    {
-        6,
-        14,
-        "i nacisnij klawisz ENTER.",
-        TEXT_STYLE_NORMAL,
-        TEXT_ID_STATIC
-    },
-    {
-        0,
-        0,
-        "ENTER = Kontynuacja   F3 = Wyj\230cie",
-        TEXT_TYPE_STATUS | TEXT_PADDING_BIG,
-        TEXT_ID_STATIC
-    },
-    {
-        0,
-        0,
-        NULL,
-        0
-    }
-
-};
-
 static MUI_ENTRY plPLSelectPartitionEntries[] =
 {
     {
@@ -1032,7 +980,7 @@ static MUI_ENTRY plPLSelectPartitionEntries[] =
     {
         8,
         15,
-        "\x07  Naci\230nij P, by utworzy\206 partycj\251 podstawow\245.",
+        "\x07  Naci\230nij C, by utworzy\206 partycj\251 podstawow\245/logiczn\245.",
         TEXT_STYLE_NORMAL,
         TEXT_ID_STATIC
     },
@@ -1046,13 +994,6 @@ static MUI_ENTRY plPLSelectPartitionEntries[] =
     {
         8,
         19,
-        "\x07  Naci\230nij L, by utworzy\206 partycj\251 logiczn\245.",
-        TEXT_STYLE_NORMAL,
-        TEXT_ID_STATIC
-    },
-    {
-        8,
-        21,
         "\x07  Naci\230nij D, by usun\245\206 istniej\245c\245 partycj\251.",
         TEXT_STYLE_NORMAL,
         TEXT_ID_STATIC
@@ -1320,7 +1261,7 @@ static MUI_ENTRY plPLFormatPartitionEntries[] =
     },
     {
         6,
-        10,
+        16,
         "Instalator sformatuje teraz partycj\251. Naci\230nij ENTER, aby kontynuowa\206.",
         TEXT_STYLE_NORMAL,
         TEXT_ID_FORMAT_PROMPT
@@ -1328,7 +1269,7 @@ static MUI_ENTRY plPLFormatPartitionEntries[] =
     {
         0,
         0,
-        "ENTER = Kontynuacja   F3 = Wyj\230cie",
+        "ENTER = Kontynuacja   ESC = Anulowanie   F3 = Wyj\230cie",
         TEXT_TYPE_STATUS | TEXT_PADDING_BIG,
         0
     },
@@ -1475,7 +1416,7 @@ static MUI_ENTRY plPLFileCopyEntries[] =
     }
 };
 
-static MUI_ENTRY plPLBootLoaderEntries[] =
+static MUI_ENTRY plPLBootLoaderSelectPageEntries[] =
 {
     {
         4,
@@ -1487,7 +1428,7 @@ static MUI_ENTRY plPLBootLoaderEntries[] =
     {
         6,
         8,
-        "Instalator musi teraz zainstalowa\206 mened\276er rozruchu",
+        "Please select where Setup should install the bootloader:",
         TEXT_STYLE_NORMAL,
         TEXT_ID_STATIC
     },
@@ -1544,9 +1485,16 @@ static MUI_ENTRY plPLBootLoaderInstallPageEntries[] =
         TEXT_ID_STATIC
     },
     {
+        6,
+        8,
+        "Instalator musi teraz zainstalowa\206 mened\276er rozruchu.",
+        TEXT_STYLE_NORMAL,
+        TEXT_ID_STATIC
+    },
+    {
         0,
         0,
-        "Installing the bootloader onto the media, please wait...",
+        "Instalacja mened\276era rozruchu na no\230niku, prosz\251 czeka\206...",
         TEXT_TYPE_STATUS | TEXT_PADDING_BIG,
         TEXT_ID_STATIC
     },
@@ -1556,6 +1504,52 @@ static MUI_ENTRY plPLBootLoaderInstallPageEntries[] =
         NULL,
         0
     }
+};
+
+static MUI_ENTRY plPLBootLoaderRemovableDiskPageEntries[] =
+{
+    {
+        4,
+        3,
+        " Instalator ReactOS " KERNEL_VERSION_STR " ",
+        TEXT_STYLE_UNDERLINE,
+        TEXT_ID_STATIC
+    },
+    {
+        6,
+        8,
+        "Instalator musi teraz zainstalowa\206 mened\276er rozruchu.",
+        TEXT_STYLE_NORMAL,
+        TEXT_ID_STATIC
+    },
+    {
+        6,
+        13,
+        "W\210\242\276 sformatowan\245 dyskietk\251 do nap\251du A:",
+        TEXT_STYLE_NORMAL,
+        TEXT_ID_STATIC
+    },
+    {
+        6,
+        14,
+        "i nacisnij klawisz ENTER.",
+        TEXT_STYLE_NORMAL,
+        TEXT_ID_STATIC
+    },
+    {
+        0,
+        0,
+        "ENTER = Kontynuacja   F3 = Wyj\230cie",
+        TEXT_TYPE_STATUS | TEXT_PADDING_BIG,
+        TEXT_ID_STATIC
+    },
+    {
+        0,
+        0,
+        NULL,
+        0
+    }
+
 };
 
 static MUI_ENTRY plPLKeyboardSettingsEntries[] =
@@ -1815,19 +1809,22 @@ static MUI_ENTRY plPLRegistryEntries[] =
         4,
         3,
         " Instalator ReactOS " KERNEL_VERSION_STR " ",
-        TEXT_STYLE_UNDERLINE
+        TEXT_STYLE_UNDERLINE,
+        TEXT_ID_STATIC
     },
     {
         6,
         8,
         "Instalator uaktualnia w\210a\230nie konfiguracj\251 systemu.",
-        TEXT_STYLE_NORMAL
+        TEXT_STYLE_NORMAL,
+        TEXT_ID_STATIC
     },
     {
         0,
         0,
         "Tworzenie ga\210\251zi rejestru...",
-        TEXT_TYPE_STATUS | TEXT_PADDING_BIG
+        TEXT_TYPE_STATUS | TEXT_PADDING_BIG,
+        TEXT_ID_STATIC
     },
     {
         0,
@@ -1848,7 +1845,7 @@ MUI_ERROR plPLErrorEntries[] =
         // ERROR_NOT_INSTALLED
         "System ReactOS nie zosta\210 w pe\210ni zainstalowany na twoim\n"
         "komputerze. Je\230li wyjdziesz teraz, trzeba b\251dzie\n"
-        "ponownie uruchomi\206 instalator, by zainstalowa\206 system ReactOS.\n"
+        "ponownie uruchomi\206 instalatora, by zainstalowa\206 system ReactOS.\n"
         "\n"
         "  \x07  Naci\230nij ENTER, aby kontynuowa\206 instalacj\251.\n"
         "  \x07  Naci\230nij F3, aby wyj\230\206 z instalatora.",
@@ -1939,13 +1936,6 @@ MUI_ERROR plPLErrorEntries[] =
         // ERROR_NEW_PARTITION,
         "Nie mo\276na utworzy\206 nowej partycji w miejscu ju\276\n"
         "istniej\245cej!\n"
-        "\n"
-        "  * Naci\230nij dowolny klawisz, aby kontynuowa\206.",
-        NULL
-    },
-    {
-        // ERROR_DELETE_SPACE,
-        "Nie mo\276na usun\245\206 nieprzydzielonego miejsca, gdzie nie ma \276adnej partycji!\n"
         "\n"
         "  * Naci\230nij dowolny klawisz, aby kontynuowa\206.",
         NULL
@@ -2188,8 +2178,8 @@ MUI_PAGE plPLPages[] =
         plPLKeyboardSettingsEntries
     },
     {
-        BOOT_LOADER_PAGE,
-        plPLBootLoaderEntries
+        BOOTLOADER_SELECT_PAGE,
+        plPLBootLoaderSelectPageEntries
     },
     {
         LAYOUT_SETTINGS_PAGE,
@@ -2204,12 +2194,12 @@ MUI_PAGE plPLPages[] =
         plPLSuccessPageEntries
     },
     {
-        BOOT_LOADER_INSTALLATION_PAGE,
+        BOOTLOADER_INSTALL_PAGE,
         plPLBootLoaderInstallPageEntries
     },
     {
-        BOOT_LOADER_FLOPPY_PAGE,
-        plPLBootPageEntries
+        BOOTLOADER_REMOVABLE_DISK_PAGE,
+        plPLBootLoaderRemovableDiskPageEntries
     },
     {
         REGISTRY_PAGE,
@@ -2226,25 +2216,27 @@ MUI_STRING plPLStrings[] =
     {STRING_PLEASEWAIT,
      "   Prosz\251 czeka\206..."},
     {STRING_INSTALLCREATEPARTITION,
-     "  ENTER = Instalacja   P = Partycja podstawowa   E = Rozszerzona   F3 = Wyj\230cie"},
+     "  ENTER = Instalacja   C = Partycja podstawowa   E = Rozszerzona   F3 = Wyj\230cie"},
     {STRING_INSTALLCREATELOGICAL,
-     "   ENTER = Instalacja   L = Utworzenie partycji logicznej   F3 = Wyj\230cie"},
+     "   ENTER = Instalacja   C = Utworzenie partycji logicznej   F3 = Wyj\230cie"},
     {STRING_INSTALLDELETEPARTITION,
      "   ENTER = Instalacja   D = Usuni\251cie partycji   F3 = Wyj\230cie"},
     {STRING_DELETEPARTITION,
      "   D = Usuni\251cie partycji   F3 = Wyj\230cie"},
     {STRING_PARTITIONSIZE,
      "Rozmiar nowej partycji:"},
-    {STRING_CHOOSENEWPARTITION,
+    {STRING_CHOOSE_NEW_PARTITION,
      "Wybrane: utworzenie nowej partycji podstawowej na"},
     {STRING_CHOOSE_NEW_EXTENDED_PARTITION,
      "Wybrane: utworzenie nowej partycji rozszerzonej na"},
     {STRING_CHOOSE_NEW_LOGICAL_PARTITION,
      "Wybrane: utworzenie nowej partycji logicznej na"},
-    {STRING_HDDSIZE,
+    {STRING_HDPARTSIZE,
     "Prosz\251 wprowadzi\206 rozmiar nowej partycji w megabajtach."},
     {STRING_CREATEPARTITION,
      "   ENTER = Utworzenie partycji   ESC = Anulowanie   F3 = Wyj\230cie"},
+    {STRING_NEWPARTITION,
+    "Instalator utworzy\210 now\245 partycj\251"},
     {STRING_PARTFORMAT,
     "Nast\251puj\245ca partycja zostanie sformatowana."},
     {STRING_NONFORMATTEDPART,
@@ -2282,7 +2274,7 @@ MUI_STRING plPLStrings[] =
     {STRING_KEYBOARDSETTINGSUPDATE,
     "   Zmiana uk\210adu klawiatury..."},
     {STRING_CODEPAGEINFOUPDATE,
-    "   Dodawanie informacji o stronie kodowej do rejestru..."},
+    "   Dodawanie informacji o stronie kodowej..."},
     {STRING_DONE,
     "   Uko\344czone..."},
     {STRING_REBOOTCOMPUTER2,
@@ -2295,30 +2287,28 @@ MUI_STRING plPLStrings[] =
     "Najcz\251stsz\245 tego przyczyn\245 jest u\276ycie klawiatury USB.\r\n"},
     {STRING_CONSOLEFAIL3,
     "Nie s\245 obecnie w pe\210ni obs\210ugiwane.\r\n"},
-    {STRING_FORMATTINGDISK,
-    "Instalator formatuje tw\242j dysk"},
+    {STRING_FORMATTINGPART,
+    "Instalator formatuje partycj\251..."},
     {STRING_CHECKINGDISK,
-    "Instalator sprawdza tw\242j dysk"},
+    "Instalator sprawdza dysk..."},
     {STRING_FORMATDISK1,
     " Formatuj partycj\251 w systemie plik\242w %S (szybkie formatowanie) "},
     {STRING_FORMATDISK2,
     " Formatuj partycj\251 w systemie plik\242w %S "},
     {STRING_KEEPFORMAT,
     " Zachowaj obecny system plik\242w (bez zmian) "},
-    {STRING_HDINFOPARTCREATE_1,
+    {STRING_HDDISK1,
     "%s."},
-    {STRING_HDINFOPARTDELETE_1,
+    {STRING_HDDISK2,
     "na: %s."},
     {STRING_PARTTYPE,
     "Typ 0x%02x"},
-    {STRING_HDDINFO_1,
+    {STRING_HDDINFO1,
     // "Dysk twardy %lu (%I64u %s), Port=%hu, Szyna=%hu, Id=%hu (%wZ) [%s]"
     "%I64u %s Dysk twardy %lu (Port=%hu, Szyna=%hu, Id=%hu) na %wZ [%s]"},
-    {STRING_HDDINFO_2,
+    {STRING_HDDINFO2,
     // "Dysk twardy %lu (%I64u %s), Port=%hu, Szyna=%hu, Id=%hu [%s]"
     "%I64u %s Dysk twardy %lu (Port=%hu, Szyna=%hu, Id=%hu) [%s]"},
-    {STRING_NEWPARTITION,
-    "Instalator utworzy\210 now\245 partycj\251"},
     {STRING_UNPSPACE,
     "Miejsce poza partycjami"},
     {STRING_MAXSIZE,

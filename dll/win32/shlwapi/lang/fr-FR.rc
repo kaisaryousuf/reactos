@@ -18,14 +18,11 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-/* UTF-8 */
-#pragma code_page(65001)
-
 LANGUAGE LANG_FRENCH, SUBLANG_NEUTRAL
 
 STRINGTABLE
 {
-    IDS_BYTES_FORMAT    "%ld bytes"
+    IDS_BYTES_FORMAT    "%ld octets"
     IDS_TIME_INTERVAL_HOURS    " h"
     IDS_TIME_INTERVAL_MINUTES  " min"
     IDS_TIME_INTERVAL_SECONDS  " s"
@@ -36,6 +33,11 @@ STRINGTABLE
     IDS_TB_FORMAT "%s To"
     IDS_PB_FORMAT "%s Po"
     IDS_EB_FORMAT "%s Eo"
+    IDS_RESTRICTED "This operation has been cancelled due to restrictions on this computer. Please contact your system administrator."
+    IDS_RESTRICTIONS "Restrictions"
+    IDS_ANY_FILE "%s File"
+    IDS_FILE "File"
+    IDS_FOLDER "Folder"
 #endif
 }
 

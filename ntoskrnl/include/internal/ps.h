@@ -66,9 +66,59 @@
 #define PSP_MAX_CREATE_PROCESS_NOTIFY           8
 
 //
-// Maximum Job Scheduling Classes
+// Job Scheduling Classes
 //
+// The default is 5 per Yosifovich, P., "Windows 10 System Programming, Part 1"
+#define PSP_JOB_SCHEDULING_CLASS_DEFAULT        5
 #define PSP_JOB_SCHEDULING_CLASSES              10
+
+//
+// Valid Job Object Limits
+//
+#define PSP_JOB_BASIC_LIMIT_VALID_FLAGS     \
+    (JOB_OBJECT_LIMIT_WORKINGSET |          \
+     JOB_OBJECT_LIMIT_PROCESS_TIME |        \
+     JOB_OBJECT_LIMIT_JOB_TIME |            \
+     JOB_OBJECT_LIMIT_ACTIVE_PROCESS |      \
+     JOB_OBJECT_LIMIT_AFFINITY |            \
+     JOB_OBJECT_LIMIT_PRIORITY_CLASS |      \
+     JOB_OBJECT_LIMIT_PRESERVE_JOB_TIME |   \
+     JOB_OBJECT_LIMIT_SCHEDULING_CLASS)
+#define PSP_JOB_EXTENDED_LIMIT_VALID_FLAGS          \
+    (PSP_JOB_BASIC_LIMIT_VALID_FLAGS |              \
+     JOB_OBJECT_LIMIT_PROCESS_MEMORY |              \
+     JOB_OBJECT_LIMIT_JOB_MEMORY |                  \
+     JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION |  \
+     JOB_OBJECT_LIMIT_BREAKAWAY_OK |                \
+     JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK |         \
+     JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE)
+
+//
+// Process Quota Threshold Values
+//
+#define PSP_NON_PAGED_POOL_QUOTA_THRESHOLD              0x10000
+#define PSP_PAGED_POOL_QUOTA_THRESHOLD                  0x80000
+
+//
+// Flags for JobStatus in EPROCESS
+//
+// These are based on the layout of bit fields in the Flags2 set
+// introduced in version 6.0
+//
+// More information:
+// https://www.geoffchappell.com/studies/windows/km/ntoskrnl/inc/ntos/ps/eprocess/flags2.htm
+//
+#define PSP_JOB_NOT_REALLY_ACTIVE   0x00000001
+#define PSP_JOB_ACCOUNTING_FOLDED   0x00000002
+
+//
+// Job Flags
+//
+// More information:
+// https://www.geoffchappell.com/studies/windows/km/ntoskrnl/inc/ntos/ps/ejob/jobflags.htm
+//
+#define PSP_JOB_CLOSE_DONE      0x00000001
+#define PSP_JOB_TERMINATING     0x00000080
 
 //
 // Thread "Set/Get Context" Context Structure
@@ -84,16 +134,17 @@ typedef struct _GET_SET_CTX_CONTEXT
 //
 // Initialization Functions
 //
-VOID
-NTAPI
-PspShutdownProcessManager(
-    VOID
-);
-
+CODE_SEG("INIT")
 BOOLEAN
 NTAPI
 PsInitSystem(
     IN PLOADER_PARAMETER_BLOCK LoaderBlock
+);
+
+VOID
+NTAPI
+PsShutdownSystem(
+    VOID
 );
 
 //
@@ -120,15 +171,10 @@ PspMapSystemDll(
     IN BOOLEAN UseLargePages
 );
 
+CODE_SEG("INIT")
 NTSTATUS
 NTAPI
 PsLocateSystemDll(
-    VOID
-);
-
-NTSTATUS
-NTAPI
-PspGetSystemDllEntryPoints(
     VOID
 );
 
@@ -142,8 +188,8 @@ PsChangeQuantumTable(
 NTSTATUS
 NTAPI
 PsReferenceProcessFilePointer(
-    IN PEPROCESS Process,
-    OUT PFILE_OBJECT *FileObject
+    _In_ PEPROCESS Process,
+    _Outptr_ PFILE_OBJECT *FileObject
 );
 
 //
@@ -262,6 +308,16 @@ PspDeleteProcess(
     IN PVOID ObjectBody
 );
 
+NTSTATUS
+NTAPI
+PspThreadOpen(
+    _In_ OB_OPEN_REASON Reason,
+    _In_ KPROCESSOR_MODE AccessMode,
+    _In_opt_ PEPROCESS Process,
+    _In_ PVOID ObjectBody,
+    _Inout_ PACCESS_MASK GrantedAccess,
+    _In_ ULONG HandleCount);
+
 VOID
 NTAPI
 PspDeleteThread(
@@ -290,14 +346,45 @@ PsIdleThreadMain(
 VOID
 NTAPI
 PspInheritQuota(
-    IN PEPROCESS Process,
-    IN PEPROCESS ParentProcess
+    _In_ PEPROCESS Process,
+    _In_ PEPROCESS ParentProcess
 );
 
 VOID
 NTAPI
-PspDestroyQuotaBlock(
-    IN PEPROCESS Process
+PspDereferenceQuotaBlock(
+    _In_opt_ PEPROCESS Process,
+    _In_ PEPROCESS_QUOTA_BLOCK QuotaBlock
+);
+
+NTSTATUS
+NTAPI
+PsReturnProcessPageFileQuota(
+    _In_ PEPROCESS Process,
+    _In_ SIZE_T Amount
+);
+
+NTSTATUS
+NTAPI
+PsChargeProcessPageFileQuota(
+    _In_ PEPROCESS Process,
+    _In_ SIZE_T Amount
+);
+
+VOID
+NTAPI
+PsReturnSharedPoolQuota(
+    _In_ PEPROCESS_QUOTA_BLOCK QuotaBlock,
+    _In_ SIZE_T AmountToReturnPaged,
+    _In_ SIZE_T AmountToReturnNonPaged
+);
+
+PEPROCESS_QUOTA_BLOCK
+NTAPI
+PsChargeSharedPoolQuota(
+    _In_ PEPROCESS Process,
+    _In_ SIZE_T AmountToChargePaged,
+    _In_ SIZE_T AmountToChargeNonPaged
 );
 
 NTSTATUS
@@ -338,20 +425,40 @@ PspQueryDescriptorThread(
 //
 // Job Routines
 //
+typedef NTSTATUS
+(NTAPI *PJOB_ENUMERATOR_CALLBACK)(
+    _In_ PEPROCESS Process,
+    _In_opt_ PVOID Context
+);
+
+NTSTATUS
+NTAPI
+PspEnumerateProcessesInJob(
+    _In_ PEJOB Job,
+    _In_ PJOB_ENUMERATOR_CALLBACK Callback,
+    _In_opt_ PVOID Context
+);
+
+NTSTATUS
+NTAPI
+PspAssignProcessToJob(
+    _In_ PEPROCESS Process,
+    _In_ PEJOB Job
+);
+
 VOID
 NTAPI
 PspExitProcessFromJob(
-    IN PEJOB Job,
-    IN PEPROCESS Process
+    _In_ PEPROCESS Process
 );
 
 VOID
 NTAPI
 PspRemoveProcessFromJob(
-    IN PEPROCESS Process,
-    IN PEJOB Job
+    _In_ PEPROCESS Process
 );
 
+CODE_SEG("INIT")
 VOID
 NTAPI
 PspInitializeJobStructures(
@@ -360,8 +467,35 @@ PspInitializeJobStructures(
 
 VOID
 NTAPI
+PspCloseJob(
+    _In_ PEPROCESS Process,
+    _In_ PVOID ObjectBody,
+    _In_ ACCESS_MASK GrantedAccess,
+    _In_ ULONG_PTR ProcessHandleCount,
+    _In_ ULONG_PTR SystemHandleCount
+);
+
+VOID
+NTAPI
 PspDeleteJob(
-    IN PVOID ObjectBody
+    _In_ PVOID ObjectBody
+);
+
+NTSTATUS
+NTAPI
+PspSendJobMessageLocked(
+    _In_ PEJOB Job,
+    _In_ ULONG Message,
+    _In_opt_ PVOID CompletionValue,
+    _In_ BOOLEAN Quota
+);
+
+NTSTATUS
+NTAPI
+PspInvokeW32JobCallout(
+    _In_ PEJOB Job,
+    _In_ PSW32JOBCALLOUTTYPE CalloutType,
+    _In_opt_ PVOID Data
 );
 
 //
@@ -391,23 +525,6 @@ PspGetOrSetContextKernelRoutine(
     IN OUT PVOID* SystemArgument2
 );
 
-//
-// Process Quotas
-//
-NTSTATUS
-NTAPI
-PsReturnProcessPageFileQuota(
-    IN PEPROCESS Process,
-    IN SIZE_T Amount
-);
-
-NTSTATUS
-NTAPI
-PsChargeProcessPageFileQuota(
-    IN PEPROCESS Process,
-    IN SIZE_T Amount
-);
-
 BOOLEAN
 NTAPI
 PspIsProcessExiting(IN PEPROCESS Process);
@@ -415,6 +532,7 @@ PspIsProcessExiting(IN PEPROCESS Process);
 //
 // Apphelp functions
 //
+CODE_SEG("INIT")
 NTSTATUS
 NTAPI
 ApphelpCacheInitialize(VOID);
@@ -446,6 +564,7 @@ extern ULONG PspThreadNotifyRoutineCount, PspProcessNotifyRoutineCount;
 extern BOOLEAN PsImageNotifyEnabled;
 extern PKWIN32_PROCESS_CALLOUT PspW32ProcessCallout;
 extern PKWIN32_THREAD_CALLOUT PspW32ThreadCallout;
+extern PKWIN32_JOB_CALLOUT PspW32JobCallout;
 extern PVOID PspSystemDllEntryPoint;
 extern PVOID PspSystemDllBase;
 extern BOOLEAN PspUseJobSchedulingClasses;

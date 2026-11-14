@@ -86,37 +86,19 @@ static const struct {
 
 #endif /* !__REACTOS__ */
 
-/*************************************************************************
- * SHCoCreateInstance [SHELL32.102]
- *
- * Equivalent to CoCreateInstance. Under Windows 9x this function could sometimes
- * use the shell32 built-in "mini-COM" without the need to load ole32.dll - see
- * SHLoadOLE for details.
- *
- * Under wine if a "LoadWithoutCOM" value is present or the object resides in
- * shell32.dll the function will load the object manually without the help of ole32
- *
- * NOTES
- *     exported by ordinal
- *
- * SEE ALSO
- *     CoCreateInstance, SHLoadOLE
- */
-HRESULT WINAPI SHCoCreateInstance(
-	LPCWSTR aclsid,
-	const CLSID *clsid,
-	LPUNKNOWN pUnkOuter,
-	REFIID refiid,
-	LPVOID *ppv)
+HRESULT WINAPI SH32_CoCreateInstance(
+    LPCWSTR aclsid,
+    const CLSID *clsid,
+    LPUNKNOWN pUnkOuter,
+    DWORD dwClsCtx,
+    REFIID refiid,
+    LPVOID *ppv)
 {
 	DWORD	hres;
 	CLSID	iid;
 	const	CLSID * myclsid = clsid;
 	WCHAR	sKeyName[MAX_PATH];
-	static const WCHAR sCLSID[] = {'C','L','S','I','D','\\','\0'};
 	WCHAR	sClassID[60];
-	static const WCHAR sInProcServer32[] = {'\\','I','n','p','r','o','c','S','e','r','v','e','r','3','2','\0'};
-	static const WCHAR sLoadWithoutCOM[] = {'L','o','a','d','W','i','t','h','o','u','t','C','O','M','\0'};
 	WCHAR	sDllPath[MAX_PATH];
 	HKEY	hKey = 0;
 	DWORD	dwSize;
@@ -144,16 +126,14 @@ HRESULT WINAPI SHCoCreateInstance(
         }
 
 	/* we look up the dll path in the registry */
-        SHStringFromGUIDW(myclsid, sClassID, sizeof(sClassID)/sizeof(WCHAR));
-	lstrcpyW(sKeyName, sCLSID);
-	lstrcatW(sKeyName, sClassID);
-	lstrcatW(sKeyName, sInProcServer32);
+	SHStringFromGUIDW(myclsid, sClassID, ARRAY_SIZE(sClassID));
+	swprintf( sKeyName, ARRAY_SIZE(sKeyName), L"CLSID\\%s\\InprocServer32", sClassID );
 
 	if (RegOpenKeyExW(HKEY_CLASSES_ROOT, sKeyName, 0, KEY_READ, &hKey))
             return E_ACCESSDENIED;
 
         /* if a special registry key is set, we load a shell extension without help of OLE32 */
-        if (!SHQueryValueExW(hKey, sLoadWithoutCOM, 0, 0, 0, 0))
+        if ((dwClsCtx & CLSCTX_INPROC_SERVER) && !SHQueryValueExW(hKey, L"LoadWithoutCOM", 0, 0, 0, 0))
         {
 	    /* load an external dll without ole32 */
 	    HANDLE hLibrary;
@@ -182,7 +162,7 @@ HRESULT WINAPI SHCoCreateInstance(
 	} else {
 
 	    /* load an external dll in the usual way */
-	    hres = CoCreateInstance(myclsid, pUnkOuter, CLSCTX_INPROC_SERVER, refiid, ppv);
+	    hres = CoCreateInstance(myclsid, pUnkOuter, dwClsCtx, refiid, ppv);
 	}
 
 end:
@@ -197,6 +177,65 @@ end:
 	TRACE("-- instance: %p\n",*ppv);
 	return hres;
 }
+
+/*************************************************************************
+ * SHCoCreateInstance [SHELL32.102]
+ *
+ * Equivalent to CoCreateInstance. Under Windows 9x this function could sometimes
+ * use the shell32 built-in "mini-COM" without the need to load ole32.dll - see
+ * SHLoadOLE for details.
+ *
+ * Under wine if a "LoadWithoutCOM" value is present or the object resides in
+ * shell32.dll the function will load the object manually without the help of ole32
+ *
+ * NOTES
+ *     exported by ordinal
+ *
+ * SEE ALSO
+ *     CoCreateInstance, SHLoadOLE
+ */
+HRESULT WINAPI SHCoCreateInstance(
+    LPCWSTR aclsid,
+    const CLSID *clsid,
+    LPUNKNOWN pUnkOuter,
+    REFIID riid,
+    LPVOID *ppv)
+{
+    return SH32_CoCreateInstance(aclsid, clsid, pUnkOuter, CLSCTX_INPROC_SERVER, riid, ppv);
+}
+
+HRESULT WINAPI SH32_ExtCoCreateInstance(
+    _In_opt_ LPCWSTR aclsid,
+    _In_opt_ const CLSID *clsid,
+    _In_opt_ LPUNKNOWN pUnkOuter,
+    _In_ DWORD dwClsCtx,
+    _In_ REFIID riid,
+    _Out_ LPVOID *ppv)
+{
+    // TODO: Verify that this CLSID is allowed (..\CurrentVersion\Shell Extensions\Approved) if REST_ENFORCESHELLEXTSECURITY is active
+    return SH32_CoCreateInstance(aclsid, clsid, pUnkOuter, dwClsCtx, riid, ppv);
+}
+
+/*************************************************************************
+ * SHCoCreateInstance [SHELL32.866]
+ */
+HRESULT WINAPI SHExtCoCreateInstance(
+    _In_opt_ LPCWSTR aclsid,
+    _In_opt_ const CLSID *clsid,
+    _In_opt_ LPUNKNOWN pUnkOuter,
+    _In_ REFIID riid,
+    _Out_ LPVOID *ppv)
+{
+    return SH32_ExtCoCreateInstance(aclsid, clsid, pUnkOuter, CLSCTX_INPROC_SERVER, riid, ppv);
+}
+
+#if 0
+/*************************************************************************
+ * SHExtCoCreateInstanceCheckCategory [SHELL32.887]
+ */
+// TODO: ICatInformation::IsClassOfCategories?
+// return SH32_ExtCoCreateInstance()
+#endif
 
 #ifndef __REACTOS__
 /*************************************************************************

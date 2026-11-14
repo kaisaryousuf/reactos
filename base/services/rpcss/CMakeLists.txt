@@ -1,8 +1,9 @@
 
 add_rpc_files(server
-    ${REACTOS_SOURCE_DIR}/sdk/include/reactos/wine/epm.idl
-    ${REACTOS_SOURCE_DIR}/sdk/include/reactos/wine/irot.idl)
-    
+    ${REACTOS_SOURCE_DIR}/sdk/include/wine/epm.idl
+    ${REACTOS_SOURCE_DIR}/sdk/include/wine/irot.idl
+    ${REACTOS_SOURCE_DIR}/sdk/include/wine/irpcss.idl)
+
 
 list(APPEND SOURCE
     epmp.c
@@ -11,12 +12,13 @@ list(APPEND SOURCE
     setup.c
     precomp.h
     ${CMAKE_CURRENT_BINARY_DIR}/epm_s.c
-    ${CMAKE_CURRENT_BINARY_DIR}/irot_s.c)
+    ${CMAKE_CURRENT_BINARY_DIR}/irot_s.c
+    ${CMAKE_CURRENT_BINARY_DIR}/irpcss_s.c)
 
-include_directories(${REACTOS_BINARY_DIR}/sdk/include/reactos/wine)
+include_directories(${REACTOS_BINARY_DIR}/sdk/include/wine)
 add_executable(rpcss ${SOURCE} rpcss.rc)
 
-if(USE_CLANG_CL)
+if(CMAKE_C_COMPILER_ID STREQUAL "Clang")
     target_compile_options(rpcss PRIVATE "-Wno-cast-calling-convention")
 endif()
 

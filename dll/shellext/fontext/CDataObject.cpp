@@ -2,13 +2,12 @@
  * PROJECT:     ReactOS Font Shell Extension
  * LICENSE:     GPL-2.0-or-later (https://spdx.org/licenses/GPL-2.0-or-later)
  * PURPOSE:     CFontMenu implementation
- * COPYRIGHT:   Copyright 2019,2020 Mark Jansen (mark.jansen@reactos.org)
+ * COPYRIGHT:   Copyright 2019-2021 Mark Jansen <mark.jansen@reactos.org>
  */
 
 #include "precomp.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(fontext);
-
 
 #if 0
 static inline void DumpDataObjectFormats(IDataObject* pObject)
@@ -34,7 +33,6 @@ static inline void DumpDataObjectFormats(IDataObject* pObject)
 }
 #endif
 
-
 HRESULT _CDataObject_CreateInstance(PCIDLIST_ABSOLUTE folder, UINT cidl, PCUITEMID_CHILD_ARRAY apidl,
                                     REFIID riid, LPVOID* ppvOut)
 {
@@ -58,7 +56,7 @@ HRESULT _CDataObject_CreateInstance(PCIDLIST_ABSOLUTE folder, UINT cidl, PCUITEM
         const FontPidlEntry* fontEntry = _FontFromIL(apidl[n]);
         if (fontEntry)
         {
-            CStringW File = g_FontCache->Filename(fontEntry, true);
+            CStringW File = g_FontCache->Filename(g_FontCache->Find(fontEntry), true);
             if (!File.IsEmpty())
             {
                 // Now append the path (+ nullterminator) to the buffer
@@ -75,7 +73,7 @@ HRESULT _CDataObject_CreateInstance(PCIDLIST_ABSOLUTE folder, UINT cidl, PCUITEM
             }
             else
             {
-                ERR("No file found for %S\n", fontEntry->Name);
+                ERR("No file found for %S\n", fontEntry->Name());
             }
         }
     }
@@ -94,37 +92,8 @@ HRESULT _CDataObject_CreateInstance(PCIDLIST_ABSOLUTE folder, UINT cidl, PCUITEM
     pDrop->pt.x = pDrop->pt.y = 0;
     pDrop-> fNC = NULL;
 
-    // Prepare the format descriptors
-    STGMEDIUM medium = {0};
-    medium.tymed = TYMED_HGLOBAL;
-
-    // Copy the data to an HGLOBAL
-    medium.hGlobal = GlobalAlloc(GHND, offset);
-    if (medium.hGlobal)
-    {
-        LPVOID blob = GlobalLock(medium.hGlobal);
-        if (blob)
-        {
-            CopyMemory(blob, (BYTE*)data, offset);
-            GlobalUnlock(medium.hGlobal);
-
-            CComPtr<IDataObject> spDataObject(*(IDataObject**)ppvOut);
-            if (spDataObject)
-            {
-                FORMATETC etc = { CF_HDROP, NULL, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
-                hr = spDataObject->SetData(&etc, &medium, TRUE);
-            }
-        }
-        else
-        {
-            ERR("Unable to lock the hGlobal?!\n");
-        }
-    }
-    else
-    {
-        ERR("Unable to allocate %u bytes for the hGlobal\n", offset);
-    }
+    hr = DataObject_SetData(*(IDataObject**)ppvOut, CF_HDROP, data, offset);
+    FAILED_UNEXPECTEDLY(hr);
 
     return hr;
 }
-

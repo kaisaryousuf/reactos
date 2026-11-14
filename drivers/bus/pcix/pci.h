@@ -27,6 +27,16 @@
 #define PCI_POOL_TAG    'BicP'
 
 //
+// Tag used for the legacy device routing cache
+//
+#define TAG_PCI_ROUTING 'RicP'
+
+//
+// Tag used for a bridge's preserved configuration
+//
+#define TAG_PCI_PRESERVED 'PicP'
+
+//
 // Checks if the specified FDO is the FDO for the Root PCI Bus
 //
 #define PCI_IS_ROOT_FDO(x)                  ((x)->BusRootFdoExtension == x)
@@ -70,6 +80,35 @@
 #define PCI_HACK_FIXUP_BEFORE_CONFIGURATION 0x00
 #define PCI_HACK_FIXUP_AFTER_CONFIGURATION  0x01
 #define PCI_HACK_FIXUP_BEFORE_UPDATE        0x03
+
+//
+// PCI Legacy Configuration Space Length
+//
+#define PCI_LEGACY_CONFIG_LENGTH            0x100
+
+//
+// Interrupt line register value meaning unknown or not connected
+//
+#define PCI_INTERRUPT_LINE_UNKNOWN          0xFF
+
+//
+// Resizable BAR extended capability, one capability and control register pair per BAR
+//
+#define PCI_RBAR_EXTENDED_CAP_ID            0x0015
+#define PCI_RBAR_MAX_ENTRIES                6
+#define PCI_RBAR_ENTRY_CAPABILITY(n)        (0x04 + ((n) * 8))
+#define PCI_RBAR_ENTRY_CONTROL(n)           (0x08 + ((n) * 8))
+#define PCI_RBAR_CAPABILITY_SIZES_SHIFT     4
+#define PCI_RBAR_CONTROL_BAR_INDEX_MASK     0x00000007
+#define PCI_RBAR_CONTROL_COUNT_MASK         0x000000E0
+#define PCI_RBAR_CONTROL_COUNT_SHIFT        5
+#define PCI_RBAR_CONTROL_SIZE_MASK          (0x3F << 8)
+#define PCI_RBAR_CONTROL_SIZE_SHIFT         8
+
+//
+// PCI Arbiter Interface Version
+//
+#define ARBITER_INTERFACE_VERSION           0
 
 //
 // PCI Debugging Device Support
@@ -161,6 +200,16 @@ typedef struct _PCI_HACK_ENTRY
 } PCI_HACK_ENTRY, *PPCI_HACK_ENTRY;
 
 //
+// Resizable BAR State of a Device, indexed by BAR
+//
+typedef struct _PCI_RESIZABLE_BAR_STATE
+{
+    USHORT CapabilityPtr;
+    ULONG SizeMask[PCI_RBAR_MAX_ENTRIES];
+    UCHAR EntryIndex[PCI_RBAR_MAX_ENTRIES];
+} PCI_RESIZABLE_BAR_STATE, *PPCI_RESIZABLE_BAR_STATE;
+
+//
 // Power State Information for Device Extension
 //
 typedef struct _PCI_POWER_STATE
@@ -229,6 +278,8 @@ typedef struct _PCI_FDO_EXTENSION
         BOOLEAN EnableSERR;
     } HotPlugParameters;
     LONG BusHackFlags;
+    LONG PciPmeInterfaceCount;
+    PCI_ROOT_BUS_HARDWARE_CAPABILITY RootBusHardwareCapability;
 } PCI_FDO_EXTENSION, *PPCI_FDO_EXTENSION;
 
 typedef struct _PCI_FUNCTION_RESOURCES
@@ -236,6 +287,15 @@ typedef struct _PCI_FUNCTION_RESOURCES
     IO_RESOURCE_DESCRIPTOR Limit[7];
     CM_PARTIAL_RESOURCE_DESCRIPTOR Current[7];
 } PCI_FUNCTION_RESOURCES, *PPCI_FUNCTION_RESOURCES;
+
+//
+// Location of a device the kernel debugger talks through
+//
+typedef struct _PCI_DEBUGGING_DEVICE
+{
+    ULONG Bus;
+    PCI_SLOT_NUMBER Slot;
+} PCI_DEBUGGING_DEVICE, *PPCI_DEBUGGING_DEVICE;
 
 typedef union _PCI_HEADER_TYPE_DEPENDENT
 {
@@ -284,9 +344,9 @@ typedef struct _PCI_PDO_EXTENSION
     BOOLEAN SubClass;
     BOOLEAN BaseClass;
     BOOLEAN AdditionalResourceCount;
-    BOOLEAN AdjustedInterruptLine;
+    UCHAR AdjustedInterruptLine;
     BOOLEAN InterruptPin;
-    BOOLEAN RawInterruptLine;
+    UCHAR RawInterruptLine;
     BOOLEAN CapabilitiesPtr;
     BOOLEAN SavedLatencyTimer;
     BOOLEAN SavedCacheLineSize;
@@ -317,6 +377,11 @@ typedef struct _PCI_PDO_EXTENSION
     BOOLEAN TargetAgpCapabilityId;
     USHORT CommandEnables;
     USHORT InitialCommand;
+    USHORT ExpressCapabilityPtr;
+    UCHAR ExpressDeviceType;
+    BOOLEAN IsExtendedConfigReachable;
+    PCI_RESIZABLE_BAR_STATE ResizableBarState;
+    ROUTING_TOKEN RoutingToken;
 } PCI_PDO_EXTENSION, *PPCI_PDO_EXTENSION;
 
 //
@@ -452,10 +517,9 @@ typedef VOID (NTAPI *PCI_CONFIGURATOR_SAVE_CURRENT_SETTINGS)(
     IN struct _PCI_CONFIGURATOR_CONTEXT* Context
 );
 
-typedef VOID (NTAPI *PCI_CONFIGURATOR_CHANGE_RESOURCE_SETTINGS)(
-    IN PPCI_PDO_EXTENSION PdoExtension,
-    IN PPCI_COMMON_HEADER PciData
-);
+typedef NTSTATUS (NTAPI *PCI_CONFIGURATOR_CHANGE_RESOURCE_SETTINGS)(
+    _In_ PPCI_PDO_EXTENSION PdoExtension,
+    _Inout_ PPCI_COMMON_HEADER PciData);
 
 typedef VOID (NTAPI *PCI_CONFIGURATOR_GET_ADDITIONAL_RESOURCE_DESCRIPTORS)(
     IN struct _PCI_CONFIGURATOR_CONTEXT* Context,
@@ -942,6 +1006,10 @@ PciHookHal(
     VOID
 );
 
+VOID
+NTAPI
+PciRestoreHalHooks(VOID);
+
 //
 // PCI Verifier Routines
 //
@@ -950,6 +1018,10 @@ NTAPI
 PciVerifierInit(
     IN PDRIVER_OBJECT DriverObject
 );
+
+VOID
+NTAPI
+PciVerifierRelease(VOID);
 
 PPCI_VERIFIER_DATA
 NTAPI
@@ -1140,10 +1212,10 @@ PciExecuteCriticalSystemRoutine(
 BOOLEAN
 NTAPI
 PciCreateIoDescriptorFromBarLimit(
-    PIO_RESOURCE_DESCRIPTOR ResourceDescriptor,
-    IN PULONG BarArray,
-    IN BOOLEAN Rom
-);
+    _Out_ PIO_RESOURCE_DESCRIPTOR ResourceDescriptor,
+    _In_ ULONG Bar,
+    _In_ ULONG NextBar,
+    _In_ BOOLEAN Rom);
 
 BOOLEAN
 NTAPI
@@ -1164,7 +1236,7 @@ NTSTATUS
 NTAPI
 PciQueryBusInformation(
     IN PPCI_PDO_EXTENSION PdoExtension,
-    IN PPNP_BUS_INFORMATION* Buffer
+    OUT PPNP_BUS_INFORMATION* Buffer
 );
 
 NTSTATUS
@@ -1182,6 +1254,56 @@ NTAPI
 PciGetConfigHandlers(
     IN PPCI_FDO_EXTENSION FdoExtension
 );
+
+VOID
+NTAPI
+PciInitializeEcam(
+    _In_ PPCI_FDO_EXTENSION FdoExtension);
+
+VOID
+NTAPI
+PciReleaseEcam(VOID);
+
+ULONG
+NTAPI
+PciReadDeviceExtendedCapability(
+    _In_ PPCI_PDO_EXTENSION DeviceExtension,
+    _In_ ULONG CapabilityId,
+    _Out_writes_bytes_(Length) PPCI_EXPRESS_ENHANCED_CAPABILITY_HEADER Buffer,
+    _In_ ULONG Length);
+
+VOID
+NTAPI
+PciGetExpressCapabilities(
+    _Inout_ PPCI_PDO_EXTENSION PdoExtension);
+
+VOID
+NTAPI
+PciGetResizableBarCapability(
+    _Inout_ PPCI_PDO_EXTENSION PdoExtension);
+
+ULONG
+NTAPI
+PciAddResizableBarRequirements(
+    _In_ PPCI_PDO_EXTENSION PdoExtension,
+    _In_ ULONG BarIndex,
+    _In_ PIO_RESOURCE_DESCRIPTOR Limit,
+    _Out_writes_opt_(2) PIO_RESOURCE_DESCRIPTOR Descriptors);
+
+VOID
+NTAPI
+PciApplyResizableBarSizes(
+    _In_ PPCI_PDO_EXTENSION PdoExtension);
+
+BOOLEAN
+NTAPI
+PciEcamReadWriteConfig(
+    _In_ ULONG Bus,
+    _In_ PCI_SLOT_NUMBER Slot,
+    _Inout_updates_bytes_(Length) PVOID Buffer,
+    _In_ ULONG Offset,
+    _In_ ULONG Length,
+    _In_ BOOLEAN Read);
 
 VOID
 NTAPI
@@ -1216,6 +1338,21 @@ NTAPI
 PciGetAdjustedInterruptLine(
     IN PPCI_PDO_EXTENSION PdoExtension
 );
+
+//
+// Device Usage Notification Routines
+//
+NTSTATUS
+NTAPI
+PciUpdateDeviceUsage(
+    _Inout_ PPCI_POWER_STATE PowerState,
+    _In_ PIO_STACK_LOCATION IoStackLocation);
+
+NTSTATUS
+NTAPI
+PciSendDeviceUsageToParent(
+    _In_ PPCI_FDO_EXTENSION ParentFdoExtension,
+    _In_ PIO_STACK_LOCATION IoStackLocation);
 
 //
 // State Machine Logic Transition Routines
@@ -1339,6 +1476,38 @@ arbusno_Initializer(
 
 NTSTATUS
 NTAPI
+arbusno_UnpackRequirement(
+    _In_ PIO_RESOURCE_DESCRIPTOR Descriptor,
+    _Out_ PULONGLONG Minimum,
+    _Out_ PULONGLONG Maximum,
+    _Out_ PULONGLONG Length,
+    _Out_ PULONGLONG Alignment
+);
+
+NTSTATUS
+NTAPI
+arbusno_PackResource(
+    _In_ PIO_RESOURCE_DESCRIPTOR Descriptor,
+    _In_ ULONGLONG Start,
+    _Out_ PCM_PARTIAL_RESOURCE_DESCRIPTOR Resource
+);
+
+NTSTATUS
+NTAPI
+arbusno_UnpackResource(
+    _In_ PCM_PARTIAL_RESOURCE_DESCRIPTOR Resource,
+    _Out_ PULONGLONG Start,
+    _Out_ PULONGLONG Length
+);
+
+INT32
+NTAPI
+arbusno_ScoreRequirement(
+    _In_ PIO_RESOURCE_DESCRIPTOR Descriptor
+);
+
+NTSTATUS
+NTAPI
 agpintrf_Initializer(
     IN PVOID Instance
 );
@@ -1446,6 +1615,24 @@ busintrf_Constructor(
     IN PINTERFACE Interface
 );
 
+ULONG
+NTAPI
+PciBusInterface_GetBusData(
+    _In_ PVOID Context,
+    _In_ ULONG WhichSpace,
+    _Out_writes_bytes_(Length) PVOID Buffer,
+    _In_ ULONG Offset,
+    _In_ ULONG Length);
+
+ULONG
+NTAPI
+PciBusInterface_SetBusData(
+    _In_ PVOID Context,
+    _In_ ULONG WhichSpace,
+    _In_reads_bytes_(Length) PVOID Buffer,
+    _In_ ULONG Offset,
+    _In_ ULONG Length);
+
 NTSTATUS
 NTAPI
 ario_Constructor(
@@ -1461,6 +1648,111 @@ VOID
 NTAPI
 ario_ApplyBrokenVideoHack(
     IN PPCI_FDO_EXTENSION FdoExtension
+);
+
+NTSTATUS
+NTAPI
+ario_UnpackRequirement(
+    _In_ PIO_RESOURCE_DESCRIPTOR Descriptor,
+    _Out_ PULONGLONG Minimum,
+    _Out_ PULONGLONG Maximum,
+    _Out_ PULONGLONG Length,
+    _Out_ PULONGLONG Alignment
+);
+
+NTSTATUS
+NTAPI
+ario_PackResource(
+    _In_ PIO_RESOURCE_DESCRIPTOR Descriptor,
+    _In_ ULONGLONG Start,
+    _Out_ PCM_PARTIAL_RESOURCE_DESCRIPTOR Resource
+);
+
+NTSTATUS
+NTAPI
+ario_UnpackResource(
+    _In_ PCM_PARTIAL_RESOURCE_DESCRIPTOR Resource,
+    _Out_ PULONGLONG Start,
+    _Out_ PULONGLONG Length
+);
+
+INT32
+NTAPI
+ario_ScoreRequirement(
+    _In_ PIO_RESOURCE_DESCRIPTOR Descriptor
+);
+
+NTSTATUS
+NTAPI
+armem_UnpackRequirement(
+    _In_ PIO_RESOURCE_DESCRIPTOR Descriptor,
+    _Out_ PULONGLONG Minimum,
+    _Out_ PULONGLONG Maximum,
+    _Out_ PULONGLONG Length,
+    _Out_ PULONGLONG Alignment
+);
+
+NTSTATUS
+NTAPI
+armem_PackResource(
+    _In_ PIO_RESOURCE_DESCRIPTOR Descriptor,
+    _In_ ULONGLONG Start,
+    _Out_ PCM_PARTIAL_RESOURCE_DESCRIPTOR Resource
+);
+
+NTSTATUS
+NTAPI
+armem_UnpackResource(
+    _In_ PCM_PARTIAL_RESOURCE_DESCRIPTOR Resource,
+    _Out_ PULONGLONG Start,
+    _Out_ PULONGLONG Length
+);
+
+INT32
+NTAPI
+armem_ScoreRequirement(
+    _In_ PIO_RESOURCE_DESCRIPTOR Descriptor
+);
+
+VOID
+NTAPI
+PciArbiter_Reference(
+    _In_ PVOID Context
+);
+
+VOID
+NTAPI
+PciArbiter_Dereference(
+    _In_ PVOID Context
+);
+
+NTSTATUS
+NTAPI
+PciArbiterConstructor(
+    _In_ PPCI_FDO_EXTENSION FdoExtension,
+    _In_ PCI_SIGNATURE ArbiterType,
+    _Out_ PARBITER_INTERFACE Interface
+);
+
+NTSTATUS
+NTAPI
+PciArbiter_PreprocessEntry(
+    _In_ PARBITER_INSTANCE Arbiter,
+    _Inout_ PARBITER_ALLOCATION_STATE State
+);
+
+BOOLEAN
+NTAPI
+PciArbiter_FindSuitableRange(
+    _In_ PARBITER_INSTANCE Arbiter,
+    _Inout_ PARBITER_ALLOCATION_STATE State
+);
+
+BOOLEAN
+NTAPI
+PciArbiter_OverrideConflict(
+    _In_ PARBITER_INSTANCE Arbiter,
+    _Inout_ PARBITER_ALLOCATION_STATE State
 );
 
 NTSTATUS
@@ -1582,6 +1874,17 @@ PciSetResources(
     IN BOOLEAN SomethingSomethingDarkSide
 );
 
+BOOLEAN
+NTAPI
+PciIsRequirementDescriptor(
+    _In_ PIO_RESOURCE_DESCRIPTOR Limit);
+
+BOOLEAN
+NTAPI
+PcipIsSameDevice(
+    _In_ PPCI_PDO_EXTENSION DeviceExtension,
+    _In_ PPCI_COMMON_HEADER PciData);
+
 NTSTATUS
 NTAPI
 PciBuildRequirementsList(
@@ -1659,12 +1962,11 @@ Cardbus_ResetDevice(
     IN PPCI_COMMON_HEADER PciData
 );
 
-VOID
+NTSTATUS
 NTAPI
 Cardbus_ChangeResourceSettings(
-    IN PPCI_PDO_EXTENSION PdoExtension,
-    IN PPCI_COMMON_HEADER PciData
-);
+    _In_ PPCI_PDO_EXTENSION PdoExtension,
+    _Inout_ PPCI_COMMON_HEADER PciData);
 
 //
 // PCI Device Support
@@ -1708,12 +2010,11 @@ Device_ResetDevice(
     IN PPCI_COMMON_HEADER PciData
 );
 
-VOID
+NTSTATUS
 NTAPI
 Device_ChangeResourceSettings(
-    IN PPCI_PDO_EXTENSION PdoExtension,
-    IN PPCI_COMMON_HEADER PciData
-);
+    _In_ PPCI_PDO_EXTENSION PdoExtension,
+    _Inout_ PPCI_COMMON_HEADER PciData);
 
 //
 // PCI-to-PCI Bridge Device Support
@@ -1757,12 +2058,11 @@ PPBridge_ResetDevice(
     IN PPCI_COMMON_HEADER PciData
 );
 
-VOID
+NTSTATUS
 NTAPI
 PPBridge_ChangeResourceSettings(
-    IN PPCI_PDO_EXTENSION PdoExtension,
-    IN PPCI_COMMON_HEADER PciData
-);
+    _In_ PPCI_PDO_EXTENSION PdoExtension,
+    _Inout_ PPCI_COMMON_HEADER PciData);
 
 //
 // Bus Number Routines
@@ -1791,12 +2091,17 @@ PciCacheLegacyDeviceRouting(
     OUT PDEVICE_OBJECT *pFoundDeviceObject
 );
 
+VOID
+NTAPI
+PciFreeLegacyDeviceCache(VOID);
+
 //
 // External Resources
 //
 extern SINGLE_LIST_ENTRY PciFdoExtensionListHead;
 extern KEVENT PciGlobalLock;
 extern PPCI_INTERFACE PciInterfaces[];
+extern BOOLEAN PciEcamVerified;
 extern PCI_INTERFACE ArbiterInterfaceBusNumber;
 extern PCI_INTERFACE ArbiterInterfaceMemory;
 extern PCI_INTERFACE ArbiterInterfaceIo;
@@ -1817,8 +2122,10 @@ extern BOOLEAN PciAssignBusNumbers;
 extern BOOLEAN PciEnableNativeModeATA;
 extern PPCI_IRQ_ROUTING_TABLE PciIrqRoutingTable;
 extern BOOLEAN PciRunningDatacenter;
-
-/* Exported by NTOS, should this go in the NDK? */
-extern NTSYSAPI BOOLEAN InitSafeBootMode;
+extern PIO_RESOURCE_REQUIREMENTS_LIST PciZeroIoResourceRequirements;
+extern RTL_RANGE_LIST PciIsaBitExclusionList;
+extern RTL_RANGE_LIST PciVgaAndIsaBitExclusionList;
+extern PCI_DEBUGGING_DEVICE PciDebuggingDevices[MAX_DEBUGGING_DEVICES_SUPPORTED];
+extern ULONG PciDebugPortsCount;
 
 #endif /* _PCIX_PCH_ */

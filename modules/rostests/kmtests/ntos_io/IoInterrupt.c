@@ -14,6 +14,8 @@
 {                                                       \
     if (KmtIsMultiProcessorBuild)                       \
         ok_eq_ulongptr(*(Lock), (Locked) != 0);         \
+    else if (KmtIsCheckedBuild)                         \
+        ok_eq_bool(*(Lock) != 0, (Locked) != 0);        \
     else                                                \
         ok_eq_ulongptr(*(Lock), 0);                     \
 } while (0)
@@ -54,6 +56,9 @@ TestSynchronizeExecution(VOID)
     KSPIN_LOCK ActualLock;
     BOOLEAN Ret;
 
+    if (skip(GetNTVersion() < _WIN32_WINNT_VISTA, "We can't create fake interrupts on Vista+.\n"))
+        return;
+
     RtlFillMemory(&Interrupt, sizeof Interrupt, 0x55);
     Interrupt.ActualLock = &ActualLock;
     KeInitializeSpinLock(Interrupt.ActualLock);
@@ -89,7 +94,34 @@ TestSynchronizeExecution(VOID)
     }
 }
 
+static
+VOID
+TestConnectInterrupt(VOID)
+{
+    PKINTERRUPT InterruptObject;
+    NTSTATUS Status;
+
+    /* If the IoConnectInterrupt() fails, the interrupt object should be set to NULL */
+    InterruptObject = KmtInvalidPointer;
+
+    /* Test for invalid interrupt */
+    Status = IoConnectInterrupt(&InterruptObject,
+                                (PKSERVICE_ROUTINE)TestConnectInterrupt,
+                                NULL,
+                                NULL,
+                                0,
+                                0,
+                                0,
+                                LevelSensitive,
+                                TRUE,
+                                (KAFFINITY)-1,
+                                FALSE);
+    ok_eq_hex(Status, STATUS_INVALID_PARAMETER);
+    ok_eq_pointer(InterruptObject, NULL);
+}
+
 START_TEST(IoInterrupt)
 {
     TestSynchronizeExecution();
+    TestConnectInterrupt();
 }

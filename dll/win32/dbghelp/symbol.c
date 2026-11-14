@@ -19,7 +19,9 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#ifndef NONAMELESSUNION /* Required to avoid a warning when NOT CMAKE_CROSSCOMPILING */
 #define NONAMELESSUNION
+#endif
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -109,7 +111,7 @@ DWORD             symt_ptr2index(struct module* module, const struct symt* sym)
 
 struct symt*      symt_index2ptr(struct module* module, DWORD id)
 {
-#ifdef __x86_64__
+#if defined(__x86_64__) || defined(__arm64__)
     if (!id-- || id >= vector_length(&module->vsymt)) return NULL;
     return *(struct symt**)vector_at(&module->vsymt, id);
 #else

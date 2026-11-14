@@ -93,9 +93,6 @@ ROSDATA USHORT scancode_to_vk[] = {
   /* - 77 - */
   VK_EMPTY, VK_EMPTY, VK_EMPTY, VK_EMPTY,
   VK_EMPTY, VK_EMPTY, VK_EMPTY, VK_EMPTY, /* PA1 */
-  VK_EMPTY,
-  /* - 80 - */
-  0
 };
 
 ROSDATA VSC_VK extcode0_to_vk[] = {
@@ -155,7 +152,7 @@ ROSDATA VK_TO_BIT modifier_keys[] = {
 ROSDATA MODIFIERS modifier_bits = {
   modifier_keys,
   6,
-  { 0, 1, 2, 4, SHFT_INVALID, SHFT_INVALID, 3 } /* Modifier bit order, NONE, SHIFT, CTRL, ALT, MENU, SHIFT + MENU, CTRL + MENU */
+  { 0, 1, 2, 6, SHFT_INVALID, SHFT_INVALID, 3 } /* Modifier bit order, NONE, SHIFT, CTRL, ALT, MENU, SHIFT + MENU, CTRL + MENU */
 };
 
 ROSDATA VK_TO_WCHARS2 key_to_chars_2mod[] = {
@@ -460,7 +457,7 @@ ROSDATA KBDTABLES keyboard_layout_table = {
 
   /* scan code to virtual key maps */
   scancode_to_vk,
-  sizeof(scancode_to_vk) / sizeof(scancode_to_vk[0]),
+  RTL_NUMBER_OF(scancode_to_vk),
   extcode0_to_vk,
   extcode1_to_vk,
 

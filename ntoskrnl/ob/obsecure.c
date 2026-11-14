@@ -576,7 +576,8 @@ ObAssignSecurity(IN PACCESS_STATE AccessState,
                                               NULL,
                                               NULL,
                                               PagedPool,
-                                              &Type->TypeInfo.GenericMapping);
+                                              &Type->TypeInfo.GenericMapping,
+                                              ExGetPreviousMode());
     ObpCalloutEnd(CalloutIrql, "Security", Type, Object);
 
     /* Check for failure and deassign security if so */
@@ -650,7 +651,8 @@ ObGetObjectSecurity(IN PVOID Object,
                                               &Length,
                                               &Header->SecurityDescriptor,
                                               Type->TypeInfo.PoolType,
-                                              &Type->TypeInfo.GenericMapping);
+                                              &Type->TypeInfo.GenericMapping,
+                                              ExGetPreviousMode());
     ObpCalloutEnd(CalloutIrql, "Security", Type, Object);
 
     /* Check for failure */
@@ -672,7 +674,8 @@ ObGetObjectSecurity(IN PVOID Object,
                                               &Length,
                                               &Header->SecurityDescriptor,
                                               Type->TypeInfo.PoolType,
-                                              &Type->TypeInfo.GenericMapping);
+                                              &Type->TypeInfo.GenericMapping,
+                                              ExGetPreviousMode());
     ObpCalloutEnd(CalloutIrql, "Security", Type, Object);
 
     /* Check for failure */
@@ -718,7 +721,7 @@ ObReleaseObjectSecurity(IN PSECURITY_DESCRIPTOR SecurityDescriptor,
     if (MemoryAllocated)
     {
         /* Free it */
-        ExFreePool(SecurityDescriptor);
+        ExFreePoolWithTag(SecurityDescriptor, TAG_SEC_QUERY);
     }
     else
     {
@@ -769,7 +772,8 @@ ObSetSecurityObjectByPointer(IN PVOID Object,
                                             NULL,
                                             &Header->SecurityDescriptor,
                                             Type->TypeInfo.PoolType,
-                                            &Type->TypeInfo.GenericMapping);
+                                            &Type->TypeInfo.GenericMapping,
+                                            ExGetPreviousMode());
 }
 
 /*++
@@ -856,7 +860,8 @@ NtQuerySecurityObject(IN HANDLE Handle,
                                               &Length,
                                               &Header->SecurityDescriptor,
                                               Type->TypeInfo.PoolType,
-                                              &Type->TypeInfo.GenericMapping);
+                                              &Type->TypeInfo.GenericMapping,
+                                              ExGetPreviousMode());
 
     /* Dereference the object */
     ObDereferenceObject(Object);

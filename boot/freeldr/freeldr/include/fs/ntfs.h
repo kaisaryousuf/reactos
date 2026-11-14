@@ -65,6 +65,16 @@
 #define NTFS_FILE_NAME_DOS            2
 #define NTFS_FILE_NAME_WIN32_AND_DOS        3
 
+#define NTFS_FILE_ATTR_NORMAL       0x00
+#define NTFS_FILE_ATTR_READONLY     0x01
+#define NTFS_FILE_ATTR_HIDDEN       0x02
+#define NTFS_FILE_ATTR_SYSTEM       0x04
+// 0x08, 0x10 are unused.
+#define NTFS_FILE_ATTR_ARCHIVE      0x20
+#define NTFS_FILE_ATTR_DIRECTORY    0x10000000
+
+#define NTFS_MFT_MASK 0x0000FFFFFFFFFFFFULL
+
 #include <pshpack1.h>
 typedef struct
 {
@@ -115,6 +125,8 @@ typedef struct
     ULONG        BytesAllocated;
     ULONGLONG        BaseMFTRecord;
     USHORT        NextAttributeInstance;
+    USHORT        Padding;                     // Align to 4 UCHAR boundary (NTFS 3.1+ (Windows XP and above))
+    ULONG        MFTRecordNumber;             // Number of this MFT Record (NTFS 3.1+ (Windows XP and above))
 } NTFS_MFT_RECORD, *PNTFS_MFT_RECORD;
 
 typedef struct
@@ -185,7 +197,7 @@ typedef struct
     USHORT        Reserved;
     UCHAR        FileNameLength;
     UCHAR        FileNameType;
-    WCHAR        FileName[0];
+    WCHAR        FileName[1];
 } NTFS_FILE_NAME_ATTR, *PNTFS_FILE_NAME_ATTR;
 
 typedef struct
@@ -197,7 +209,7 @@ typedef struct
     ULONGLONG    StartingVCN;
     ULONGLONG    BaseFileRef;
     USHORT        AttrId;
-    PWCHAR        Name;
+    WCHAR        Name[1];
 } NTFS_ATTR_LIST_ATTR, *PNTFS_ATTR_LIST_ATTR;
 
 typedef struct
@@ -236,13 +248,18 @@ typedef struct
 
 typedef struct _NTFS_VOLUME_INFO *PNTFS_VOLUME_INFO;
 
-#include <pshpack1.h>
-typedef struct
+typedef struct _NTFS_FILE_HANDLE
 {
-    PNTFS_ATTR_CONTEXT    DataContext;
-    ULONGLONG            Offset;
-    PNTFS_VOLUME_INFO    Volume;
+    PNTFS_VOLUME_INFO Volume;
+    PNTFS_ATTR_CONTEXT DataContext;
+    ULONGLONG Offset;
+    ULONG FileNameLength;
+    UCHAR Attributes;
+    CHAR FileName[RTL_FIELD_SIZE(FILEINFORMATION, FileName)];
 } NTFS_FILE_HANDLE, *PNTFS_FILE_HANDLE;
-#include <poppack.h>
+
+ULONGLONG
+NtfsGetVolumeSize(
+    _In_ ULONG DeviceId);
 
 const DEVVTBL* NtfsMount(ULONG DeviceId);

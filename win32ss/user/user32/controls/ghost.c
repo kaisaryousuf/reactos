@@ -18,8 +18,8 @@ const struct builtin_class_descr GHOST_builtin_class =
 {
     L"Ghost",                   /* name */
     0,                          /* style  */
-    GhostWndProcA,              /* procA */
-    GhostWndProcW,              /* procW */
+    &pfnClientA.pfnGhostWndProc, /* procA */
+    &pfnClientW.pfnGhostWndProc, /* procW */
     0,                          /* extra */
     IDC_WAIT,                   /* cursor */
     NULL                        /* brush */
@@ -331,7 +331,7 @@ Ghost_OnNCPaint(HWND hwnd, HRGN hrgn, BOOL bUnicode)
 {
     HDC hdc;
 
-    // do the default behaivour
+    // do the default behaviour
     if (bUnicode)
         DefWindowProcW(hwnd, WM_NCPAINT, (WPARAM)hrgn, 0);
     else

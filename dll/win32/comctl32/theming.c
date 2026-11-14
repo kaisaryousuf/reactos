@@ -165,10 +165,11 @@ void THEMING_Initialize (void)
         {
 #ifdef __REACTOS__ /* r73803 */
             WARN("Could not re-register class %s: %x\n",
+                debugstr_w (subclasses[i].className), GetLastError ());
 #else
             ERR("Could not re-register class %s: %x\n",
-#endif
                 debugstr_w (subclasses[i].className), GetLastError ());
+#endif
         }
         else
         {
@@ -210,14 +211,4 @@ LRESULT THEMING_CallOriginalClass (HWND wnd, UINT msg, WPARAM wParam, LPARAM lPa
     INT_PTR subclass = (INT_PTR)GetPropW (wnd, (LPCWSTR)MAKEINTATOM(atSubclassProp));
     WNDPROC oldProc = originalProcs[subclass];
     return CallWindowProcW (oldProc, wnd, msg, wParam, lParam);
-}
-
-/***********************************************************************
- * THEMING_SetSubclassData
- *
- * Update the "refData" value of the subclassed window.
- */
-void THEMING_SetSubclassData (HWND wnd, ULONG_PTR refData)
-{
-    SetPropW (wnd, (LPCWSTR)MAKEINTATOM(atRefDataProp), (HANDLE)refData);
 }

@@ -1,10 +1,10 @@
 /*
-* PROJECT:         ReactOS Kernel
-* LICENSE:         GPL - See COPYING in the top level directory
-* FILE:            ntoskrnl/include/internal/io.h
-* PURPOSE:         Internal header for the I/O Manager
-* PROGRAMMERS:     Alex Ionescu (alex.ionescu@reactos.org)
-*/
+ * PROJECT:         ReactOS Kernel
+ * LICENSE:         GPL - See COPYING in the top level directory
+ * FILE:            ntoskrnl/include/internal/io.h
+ * PURPOSE:         Internal header for the I/O Manager
+ * PROGRAMMERS:     Alex Ionescu (alex.ionescu@reactos.org)
+ */
 
 #include "ntdddisk.h"
 
@@ -80,6 +80,10 @@
 // Unable to create symbolic link pointing to the RAM disk device
 //
 #define RD_SYMLINK_CREATE_FAILED 5
+//
+// Unable to create system root path when creating the RAM disk
+//
+#define RD_SYSROOT_INIT_FAILED 6
 
 //
 // Max traversal of reparse points for a single open in IoParseDevice
@@ -114,24 +118,23 @@ typedef struct _FILE_OBJECT_EXTENSION
 // Determines if the IRP is Synchronous
 //
 #define IsIrpSynchronous(Irp, FileObject)               \
-    ((Irp->Flags & IRP_SYNCHRONOUS_API)  ||             \
-     (!(FileObject) ?                                   \
-        FALSE :                                         \
-        FileObject->Flags & FO_SYNCHRONOUS_IO))         \
+    (((Irp)->Flags & IRP_SYNCHRONOUS_API) ||            \
+     (!(FileObject) ? FALSE :                           \
+       (FileObject)->Flags & FO_SYNCHRONOUS_IO))
 
 //
 // Returns the internal Device Object Extension
 //
 #define IoGetDevObjExtension(DeviceObject)              \
     ((PEXTENDED_DEVOBJ_EXTENSION)                       \
-     (DeviceObject->DeviceObjectExtension))             \
+     ((DeviceObject)->DeviceObjectExtension))
 
 //
 // Returns the internal Driver Object Extension
 //
 #define IoGetDrvObjExtension(DriverObject)              \
     ((PEXTENDED_DRIVER_EXTENSION)                       \
-     (DriverObject->DriverExtension))                   \
+     ((DriverObject)->DriverExtension))
 
 /*
  * VOID
@@ -407,27 +410,15 @@ typedef struct _DRIVER_INFORMATION
 } DRIVER_INFORMATION, *PDRIVER_INFORMATION;
 
 //
-// Boot Driver Node
-//
-typedef struct _BOOT_DRIVER_NODE
-{
-    BOOT_DRIVER_LIST_ENTRY ListEntry;
-    UNICODE_STRING Group;
-    UNICODE_STRING Name;
-    ULONG Tag;
-    ULONG ErrorControl;
-} BOOT_DRIVER_NODE, *PBOOT_DRIVER_NODE;
-
-//
 // List of Bus Type GUIDs
 //
 typedef struct _IO_BUS_TYPE_GUID_LIST
 {
-    ULONG GuidCount;
     FAST_MUTEX Lock;
-    GUID Guids[1];
+    ULONG AllocatedCount;
+    ULONG GuidCount;
+    PGUID Guids;
 } IO_BUS_TYPE_GUID_LIST, *PIO_BUS_TYPE_GUID_LIST;
-extern PIO_BUS_TYPE_GUID_LIST IopBusTypeGuidList;
 
 //
 // Shutdown entry for registed devices
@@ -535,7 +526,8 @@ typedef enum _DEVICE_ACTION
     PiActionEnumRootDevices,
     PiActionResetDevice,
     PiActionAddBootDevices,
-    PiActionStartDevice
+    PiActionStartDevice,
+    PiActionQueryState,
 } DEVICE_ACTION;
 
 //
@@ -569,6 +561,15 @@ IopDetectResourceConflict(
 //
 // PNP Routines
 //
+NTSTATUS
+NTAPI
+PipCallDriverAddDevice(
+    IN PDEVICE_NODE DeviceNode,
+    IN BOOLEAN LoadDriver,
+    IN PDRIVER_OBJECT DriverObject
+);
+
+CODE_SEG("INIT")
 NTSTATUS
 NTAPI
 IopInitializePlugPlayServices(
@@ -652,24 +653,33 @@ IopGetDeviceNode(
     IN PDEVICE_OBJECT DeviceObject
 );
 
-NTSTATUS
-IoCreateDriverList(
-    VOID
-);
-
-NTSTATUS
-IoDestroyDriverList(
-    VOID
-);
-
+CODE_SEG("INIT")
 NTSTATUS
 IopInitPlugPlayEvents(VOID);
 
 NTSTATUS
+IopQueueDeviceChangeEvent(
+    _In_ const GUID *EventGuid,
+    _In_ const GUID *InterfaceClassGuid,
+    _In_ PUNICODE_STRING SymbolicLinkName);
+
+NTSTATUS
 IopQueueTargetDeviceEvent(
-    const GUID *Guid,
-    PUNICODE_STRING DeviceIds
-);
+    _In_ const GUID *Guid,
+    _In_ PUNICODE_STRING DeviceIds);
+
+NTSTATUS
+IopQueueDeviceInstallEvent(
+    _In_ const GUID *Guid,
+    _In_ PUNICODE_STRING DeviceId);
+
+NTSTATUS
+IopQueueDevicePropertyChangeEvent(
+    _In_ PCUNICODE_STRING DeviceId);
+
+ULONG
+IopGetDeviceNodeStatus(
+    _In_ PDEVICE_NODE DeviceNode);
 
 NTSTATUS
 NTAPI
@@ -713,12 +723,14 @@ IopCreateDeviceKeyPath(
 //
 // PnP Routines
 //
+CODE_SEG("INIT")
 NTSTATUS
 NTAPI
 IopUpdateRootKey(
     VOID
 );
 
+CODE_SEG("INIT")
 NTSTATUS
 NTAPI
 PiInitCacheGroupInformation(
@@ -761,12 +773,14 @@ PiSetDevNodeText(
 //
 // Initialization Routines
 //
+CODE_SEG("INIT")
 NTSTATUS
 NTAPI
 IopCreateArcNames(
     IN PLOADER_PARAMETER_BLOCK LoaderBlock
 );
 
+CODE_SEG("INIT")
 NTSTATUS
 NTAPI
 IopReassignSystemRoot(
@@ -774,6 +788,7 @@ IopReassignSystemRoot(
     OUT PANSI_STRING NtBootPath
 );
 
+CODE_SEG("INIT")
 BOOLEAN
 NTAPI
 IoInitSystem(
@@ -781,12 +796,10 @@ IoInitSystem(
 );
 
 BOOLEAN
-NTAPI
 IopVerifyDiskSignature(
-    IN PDRIVE_LAYOUT_INFORMATION_EX DriveLayout,
-    IN PARC_DISK_SIGNATURE ArcDiskSignature,
-    OUT PULONG Signature
-);
+    _In_ PDRIVE_LAYOUT_INFORMATION_EX DriveLayout,
+    _In_ PARC_DISK_SIGNATURE ArcDiskSignature,
+    _Out_ PULONG Signature);
 
 BOOLEAN
 NTAPI
@@ -794,6 +807,7 @@ IoInitializeCrashDump(
     IN HANDLE PageFileHandle
 );
 
+CODE_SEG("INIT")
 VOID
 PiInitializeNotifications(
     VOID);
@@ -958,11 +972,13 @@ IopShutdownBaseFileSystems(
 //
 // Boot logging support
 //
+CODE_SEG("INIT")
 VOID
 IopInitBootLog(
     IN BOOLEAN StartBootLog
 );
 
+CODE_SEG("INIT")
 VOID
 IopStartBootLog(
     VOID
@@ -1034,6 +1050,7 @@ RawFsIsRawFileSystemDeviceObject(
     IN PDEVICE_OBJECT DeviceObject
 );
 
+CODE_SEG("INIT")
 NTSTATUS
 NTAPI
 RawFsDriverEntry(
@@ -1052,26 +1069,34 @@ PnpRootDriverEntry(
 );
 
 NTSTATUS
+PnpRootCreateDeviceObject(
+    OUT PDEVICE_OBJECT *DeviceObject);
+
+NTSTATUS
 PnpRootCreateDevice(
     IN PUNICODE_STRING ServiceName,
-    IN OPTIONAL PDRIVER_OBJECT DriverObject,
     OUT PDEVICE_OBJECT *PhysicalDeviceObject,
-    OUT OPTIONAL PUNICODE_STRING FullInstancePath
+    OUT PUNICODE_STRING FullInstancePath
 );
 
 NTSTATUS
 PnpRootRegisterDevice(
     IN PDEVICE_OBJECT DeviceObject);
 
+VOID
+PnpRootInitializeDevExtension(VOID);
+
 //
 // Driver Routines
 //
+CODE_SEG("INIT")
 VOID
 FASTCALL
 IopInitializeBootDrivers(
     VOID
 );
 
+CODE_SEG("INIT")
 VOID
 FASTCALL
 IopInitializeSystemDrivers(
@@ -1176,7 +1201,8 @@ IopGetSetSecurityObject(
     IN OUT PULONG BufferLength,
     OUT PSECURITY_DESCRIPTOR *OldSecurityDescriptor,
     IN POOL_TYPE PoolType,
-    IN OUT PGENERIC_MAPPING GenericMapping
+    IN OUT PGENERIC_MAPPING GenericMapping,
+    IN KPROCESSOR_MODE AccessMode
 );
 
 NTSTATUS
@@ -1208,8 +1234,8 @@ IopCloseFile(
     IN PEPROCESS Process OPTIONAL,
     IN PVOID Object,
     IN ACCESS_MASK GrantedAccess,
-    IN ULONG ProcessHandleCount,
-    IN ULONG SystemHandleCount
+    IN ULONG_PTR ProcessHandleCount,
+    IN ULONG_PTR SystemHandleCount
 );
 
 NTSTATUS
@@ -1305,6 +1331,7 @@ IoSetIoCompletion(
 //
 // Ramdisk Routines
 //
+CODE_SEG("INIT")
 NTSTATUS
 NTAPI
 IopStartRamdisk(
@@ -1315,17 +1342,17 @@ IopStartRamdisk(
 // Configuration Routines
 //
 NTSTATUS
-NTAPI
-IopFetchConfigurationInformation(OUT PWSTR * SymbolicLinkList,
-                                 IN GUID Guid,
-                                 IN ULONG ExpectedInterfaces,
-                                 IN PULONG Interfaces
+IopFetchConfigurationInformation(
+    _Out_ PWSTR* SymbolicLinkList,
+    _In_ GUID Guid,
+    _In_ ULONG ExpectedInterfaces,
+    _Out_ PULONG Interfaces
 );
 
 VOID
-NTAPI
-IopStoreSystemPartitionInformation(IN PUNICODE_STRING NtSystemPartitionDeviceName,
-                                   IN PUNICODE_STRING OsLoaderPathName
+IopStoreSystemPartitionInformation(
+    _In_ PUNICODE_STRING NtSystemPartitionDeviceName,
+    _In_ PUNICODE_STRING OsLoaderPathName
 );
 
 //
@@ -1346,21 +1373,44 @@ PiPerformSyncDeviceAction(
 //
 // PnP notifications
 //
+CODE_SEG("PAGE")
 VOID
 PiNotifyDeviceInterfaceChange(
     _In_ LPCGUID Event,
     _In_ LPCGUID InterfaceClassGuid,
     _In_ PUNICODE_STRING SymbolicLinkName);
 
+CODE_SEG("PAGE")
 VOID
 PiNotifyHardwareProfileChange(
     _In_ LPCGUID Event);
 
+CODE_SEG("PAGE")
 VOID
 PiNotifyTargetDeviceChange(
     _In_ LPCGUID Event,
     _In_ PDEVICE_OBJECT DeviceObject,
     _In_opt_ PTARGET_DEVICE_CUSTOM_NOTIFICATION CustomNotification);
+
+//
+// Device interface registry
+//
+NTSTATUS
+IopOpenDeviceInterfaceKeys(
+    _In_ PCUNICODE_STRING SymbolicLinkName,
+    _In_ ACCESS_MASK DesiredAccess,
+    _Out_opt_ PHANDLE DeviceKey,
+    _Out_opt_ PHANDLE InstanceKey);
+
+//
+// PnP property store
+//
+extern ERESOURCE PpRegistryDeviceResource;
+
+CODE_SEG("PAGE")
+VOID
+PiPropReleaseDevice(
+    _In_ PDEVICE_OBJECT DeviceObject);
 
 //
 // PnP IRPs
@@ -1387,9 +1437,19 @@ PiIrpQueryDeviceRelations(
     _In_ DEVICE_RELATION_TYPE Type);
 
 NTSTATUS
+PiIrpQueryResources(
+    _In_ PDEVICE_NODE DeviceNode,
+    _Out_ PCM_RESOURCE_LIST *Resources);
+
+NTSTATUS
+PiIrpQueryResourceRequirements(
+    _In_ PDEVICE_NODE DeviceNode,
+    _Out_ PIO_RESOURCE_REQUIREMENTS_LIST *Resources);
+
+NTSTATUS
 PiIrpQueryDeviceText(
     _In_ PDEVICE_NODE DeviceNode,
-    _In_ LCID POINTER_ALIGNMENT LocaleId,
+    _In_ LCID LocaleId,
     _In_ DEVICE_TEXT_TYPE Type,
     _Out_ PWSTR *DeviceText);
 
@@ -1405,15 +1465,17 @@ extern POBJECT_TYPE IoCompletionType;
 extern PDEVICE_NODE IopRootDeviceNode;
 extern KSPIN_LOCK IopDeviceTreeLock;
 extern ULONG IopTraceLevel;
+extern ULONG IopCaseInsensitive;
 extern GENERAL_LOOKASIDE IopMdlLookasideList;
 extern GENERIC_MAPPING IopCompletionMapping;
 extern GENERIC_MAPPING IopFileMapping;
 extern POBJECT_TYPE _IoFileObjectType;
 extern HAL_DISPATCH _HalDispatchTable;
 extern LIST_ENTRY IopErrorLogListHead;
+extern ULONG IopAutoReboot;
 extern ULONG IopNumTriageDumpDataBlocks;
 extern PVOID IopTriageDumpDataBlocks[64];
-extern PIO_BUS_TYPE_GUID_LIST PnpBusTypeGuidList;
+extern IO_BUS_TYPE_GUID_LIST PnpBusTypeGuidList;
 extern PDRIVER_OBJECT IopRootDriverObject;
 extern KSPIN_LOCK IopDeviceActionLock;
 extern LIST_ENTRY IopDeviceActionRequestList;

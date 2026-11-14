@@ -150,7 +150,7 @@ GetJobFilePath(PCWSTR pwszExtension, DWORD dwJobID, PWSTR pwszOutput)
     if (pwszOutput)
     {
         CopyMemory(pwszOutput, wszJobDirectory, cchJobDirectory * sizeof(WCHAR));
-        swprintf(&pwszOutput[cchJobDirectory], L"\\%05lu.%s", dwJobID, pwszExtension);
+        _swprintf(&pwszOutput[cchJobDirectory], L"\\%05lu.%s", dwJobID, pwszExtension);
     }
 
     // pwszExtension may be L"SPL" or L"SHD", same length for both!
@@ -205,7 +205,7 @@ InitializeGlobalJobList(void)
         if (!IS_VALID_JOB_ID(dwJobID))
             continue;
 
-        if (wcsicmp(p, L".SHD") != 0)
+        if (_wcsicmp(p, L".SHD") != 0)
             continue;
 
         // This shadow file has a valid name. Construct the full path and try to load it.
@@ -1475,7 +1475,7 @@ FreeJob(PLOCAL_JOB pJob)
     // Free memory for the optional fields if they are present.
     if (pJob->pwszOutputFile)
         DllFreeSplStr(pJob->pwszOutputFile);
-    
+
     if (pJob->pwszPrintProcessorParameters)
         DllFreeSplStr(pJob->pwszPrintProcessorParameters);
 

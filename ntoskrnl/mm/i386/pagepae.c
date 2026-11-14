@@ -2,7 +2,7 @@
  * COPYRIGHT:       See COPYING in the top level directory
  * PROJECT:         ReactOS kernel
  * FILE:            ntoskrnl/mm/i386/pagepae.c
- * PURPOSE:         Low level memory managment manipulation
+ * PURPOSE:         Low level memory management manipulation
  *
  * PROGRAMMERS:     David Welch (welch@cwcom.net)
  */
@@ -892,132 +892,6 @@ MmIsDirtyPage(PEPROCESS Process, PVOID Address)
    else
    {
       return MmGetPageEntryForProcess(Process, Address) & PA_DIRTY ? TRUE : FALSE;
-   }
-}
-
-VOID
-NTAPI
-MmSetCleanPage(PEPROCESS Process, PVOID Address)
-{
-   if (Address < MmSystemRangeStart && Process == NULL)
-   {
-      DPRINT1("MmSetCleanPage is called for user space without a process.\n");
-      ASSERT(FALSE);
-   }
-   if (Ke386Pae)
-   {
-      PULONGLONG Pt;
-      ULONGLONG Pte;
-      ULONGLONG tmpPte;
-
-      Pt = MmGetPageTableForProcessForPAE(Process, Address, FALSE);
-
-      if (Pt == NULL)
-      {
-         ASSERT(FALSE);
-      }
-
-      do
-      {
-         Pte = *Pt;
-         tmpPte = Pte & ~PA_DIRTY;
-      } while (Pte != ExfInterlockedCompareExchange64UL(Pt, &tmpPte, &Pte));
-
-      if (Pte & PA_DIRTY)
-      {
-         MiFlushTlb((PULONG)Pt, Address);
-      }
-      else
-      {
-         MmUnmapPageTable((PULONG)Pt);
-      }
-   }
-   else
-   {
-      PULONG Pt;
-      ULONG Pte;
-
-      Pt = MmGetPageTableForProcess(Process, Address, FALSE);
-
-      if (Pt == NULL)
-      {
-         ASSERT(FALSE);
-      }
-
-      do
-      {
-         Pte = *Pt;
-      } while (Pte != InterlockedCompareExchangeUL(Pt, Pte & ~PA_DIRTY, Pte));
-
-      if (Pte & PA_DIRTY)
-      {
-         MiFlushTlb(Pt, Address);
-      }
-      else
-      {
-         MmUnmapPageTable(Pt);
-      }
-   }
-}
-
-VOID
-NTAPI
-MmSetDirtyPage(PEPROCESS Process, PVOID Address)
-{
-   if (Address < MmSystemRangeStart && Process == NULL)
-   {
-      DPRINT1("MmSetDirtyPage is called for user space without a process.\n");
-      ASSERT(FALSE);
-   }
-   if (Ke386Pae)
-   {
-      PULONGLONG Pt;
-      ULONGLONG Pte;
-      ULONGLONG tmpPte;
-
-      Pt = MmGetPageTableForProcessForPAE(Process, Address, FALSE);
-      if (Pt == NULL)
-      {
-         ASSERT(FALSE);
-      }
-
-      do
-      {
-         Pte = *Pt;
-         tmpPte = Pte | PA_DIRTY;
-      } while (Pte != ExfInterlockedCompareExchange64UL(Pt, &tmpPte, &Pte));
-      if (!(Pte & PA_DIRTY))
-      {
-         MiFlushTlb((PULONG)Pt, Address);
-      }
-      else
-      {
-         MmUnmapPageTable((PULONG)Pt);
-      }
-   }
-   else
-   {
-      PULONG Pt;
-      ULONG Pte;
-
-      Pt = MmGetPageTableForProcess(Process, Address, FALSE);
-      if (Pt == NULL)
-      {
-         ASSERT(FALSE);
-      }
-
-      do
-      {
-         Pte = *Pt;
-      } while (Pte != InterlockedCompareExchangeUL(Pt, Pte | PA_DIRTY, Pte));
-      if (!(Pte & PA_DIRTY))
-      {
-         MiFlushTlb(Pt, Address);
-      }
-      else
-      {
-         MmUnmapPageTable(Pt);
-      }
    }
 }
 

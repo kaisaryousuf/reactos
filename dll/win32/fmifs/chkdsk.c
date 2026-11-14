@@ -8,6 +8,7 @@
  */
 
 #include "precomp.h"
+#include <ntstrsafe.h>
 
 #define NDEBUG
 #include <debug.h>
@@ -30,31 +31,43 @@ Chkdsk(
     UNICODE_STRING usDriveRoot;
     NTSTATUS Status;
     BOOLEAN Success = FALSE;
+    WCHAR DriveName[MAX_PATH];
     WCHAR VolumeName[MAX_PATH];
-    //CURDIR CurDir;
 
-    Provider = GetProvider(Format);
+    Provider = LoadProvider(Format);
     if (!Provider)
     {
         /* Unknown file system */
-        Callback(DONE, 0, &Success);
-        return;
+        goto Quit;
     }
 
-#if 1
-    DPRINT1("Warning: use GetVolumeNameForVolumeMountPointW() instead!\n");
-    swprintf(VolumeName, L"\\??\\%c:", towupper(DriveRoot[0]));
-    RtlCreateUnicodeString(&usDriveRoot, VolumeName);
-    /* Code disabled as long as our storage stack doesn't understand IOCTL_MOUNTDEV_QUERY_DEVICE_NAME */
-#else
-    if (!GetVolumeNameForVolumeMountPointW(DriveRoot, VolumeName, RTL_NUMBER_OF(VolumeName)) ||
-        !RtlDosPathNameToNtPathName_U(VolumeName, &usDriveRoot, NULL, &CurDir))
+    if (!NT_SUCCESS(RtlStringCchCopyW(DriveName, ARRAYSIZE(DriveName), DriveRoot)))
+        goto Quit;
+
+    if (DriveName[wcslen(DriveName) - 1] != L'\\')
     {
-        /* Report an error */
-        Callback(DONE, 0, &Success);
-        return;
+        /* Append the trailing backslash for GetVolumeNameForVolumeMountPointW */
+        if (!NT_SUCCESS(RtlStringCchCatW(DriveName, ARRAYSIZE(DriveName), L"\\")))
+            goto Quit;
+    }
+
+#ifdef __REACTOS__
+    /* We really just want to use the disk drive letter */
+    wcscpy(VolumeName, DriveName);
+#else
+    if (!GetVolumeNameForVolumeMountPointW(DriveName, VolumeName, ARRAYSIZE(VolumeName)))
+    {
+        /* Couldn't get a volume GUID path, try checking using a parameter provided path */
+        DPRINT1("Couldn't get a volume GUID path for drive %S\n", DriveName);
+        wcscpy(VolumeName, DriveName);
     }
 #endif
+
+    if (!RtlDosPathNameToNtPathName_U(VolumeName, &usDriveRoot, NULL, NULL))
+        goto Quit;
+
+    /* Trim the trailing backslash since we will work with a device object */
+    usDriveRoot.Length -= sizeof(WCHAR);
 
     DPRINT("Chkdsk() - %S\n", Format);
     Status = STATUS_SUCCESS;
@@ -72,10 +85,14 @@ Chkdsk(
     if (!Success)
         DPRINT1("Chkdsk() failed with Status 0x%lx\n", Status);
 
-    /* Report success */
-    Callback(DONE, 0, &Success);
-
     RtlFreeUnicodeString(&usDriveRoot);
+
+Quit:
+    if (Provider)
+        UnloadProvider(Provider);
+
+    /* Report result */
+    Callback(DONE, Status, &Success);
 }
 
 /* EOF */

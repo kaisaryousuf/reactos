@@ -3,7 +3,7 @@
  * LICENSE:     GPL - See COPYING in the top level directory
  * FILE:        drivers/input/i8042prt/pnp.c
  * PURPOSE:     IRP_MJ_PNP operations
- * PROGRAMMERS: Copyright 2006-2007 Hervé Poussineau (hpoussin@reactos.org)
+ * PROGRAMMERS: Copyright 2006-2007 HervÃ© Poussineau (hpoussin@reactos.org)
  *              Copyright 2008 Colin Finck (mail@colinfinck.de)
  */
 
@@ -509,6 +509,8 @@ i8042PnpStartDevice(
     BOOLEAN FoundDataPort = FALSE;
     BOOLEAN FoundControlPort = FALSE;
     BOOLEAN FoundIrq = FALSE;
+    PUCHAR DataPort = NULL;
+    PUCHAR ControlPort = NULL;
     ULONG i;
     NTSTATUS Status;
 
@@ -558,14 +560,14 @@ i8042PnpStartDevice(
                      */
                     if (!FoundDataPort)
                     {
-                        PortDeviceExtension->DataPort = ULongToPtr(ResourceDescriptor->u.Port.Start.u.LowPart);
-                        INFO_(I8042PRT, "Found data port: %p\n", PortDeviceExtension->DataPort);
+                        DataPort = ULongToPtr(ResourceDescriptor->u.Port.Start.u.LowPart);
+                        INFO_(I8042PRT, "Found data port: %p\n", DataPort);
                         FoundDataPort = TRUE;
                     }
                     else if (!FoundControlPort)
                     {
-                        PortDeviceExtension->ControlPort = ULongToPtr(ResourceDescriptor->u.Port.Start.u.LowPart);
-                        INFO_(I8042PRT, "Found control port: %p\n", PortDeviceExtension->ControlPort);
+                        ControlPort = ULongToPtr(ResourceDescriptor->u.Port.Start.u.LowPart);
+                        INFO_(I8042PRT, "Found control port: %p\n", ControlPort);
                         FoundControlPort = TRUE;
                     }
                     else
@@ -609,10 +611,18 @@ i8042PnpStartDevice(
         WARN_(I8042PRT, "Some required resources were not found in allocated resources list\n");
         return STATUS_INSUFFICIENT_RESOURCES;
     }
-    else if (DeviceExtension->Type == Mouse && (FoundDataPort || FoundControlPort))
+    else if (DeviceExtension->Type == Mouse && FoundDataPort != FoundControlPort)
     {
-        WARN_(I8042PRT, "Too much resources were provided in allocated resources list\n");
+        WARN_(I8042PRT, "Mouse was given only one of the controller ports\n");
         return STATUS_INVALID_PARAMETER;
+    }
+
+    /* Firmware gives the controller ports to the mouse when it reports no keyboard */
+    if (FoundDataPort && FoundControlPort &&
+        (DeviceExtension->Type == Keyboard || PortDeviceExtension->DataPort == NULL))
+    {
+        PortDeviceExtension->DataPort = DataPort;
+        PortDeviceExtension->ControlPort = ControlPort;
     }
 
     switch (DeviceExtension->Type)
@@ -676,6 +686,7 @@ i8042Pnp(
     IN PDEVICE_OBJECT DeviceObject,
     IN PIRP Irp)
 {
+    PFDO_DEVICE_EXTENSION FdoExtension;
     PIO_STACK_LOCATION Stack;
     ULONG MinorFunction;
     I8042_DEVICE_TYPE DeviceType;
@@ -684,7 +695,8 @@ i8042Pnp(
 
     Stack = IoGetCurrentIrpStackLocation(Irp);
     MinorFunction = Stack->MinorFunction;
-    DeviceType = ((PFDO_DEVICE_EXTENSION)DeviceObject->DeviceExtension)->Type;
+    FdoExtension = DeviceObject->DeviceExtension;
+    DeviceType = FdoExtension->Type;
 
     switch (MinorFunction)
     {
@@ -695,12 +707,19 @@ i8042Pnp(
             /* Call lower driver (if any) */
             if (DeviceType != PhysicalDeviceObject)
             {
-                Status = ForwardIrpAndWait(DeviceObject, Irp);
-                if (NT_SUCCESS(Status))
-                    Status = i8042PnpStartDevice(
-                        DeviceObject,
-                        Stack->Parameters.StartDevice.AllocatedResources,
-                        Stack->Parameters.StartDevice.AllocatedResourcesTranslated);
+                Status = STATUS_UNSUCCESSFUL;
+
+                if (IoForwardIrpSynchronously(FdoExtension->LowerDevice, Irp))
+                {
+                    Status = Irp->IoStatus.Status;
+                    if (NT_SUCCESS(Status))
+                    {
+                        Status = i8042PnpStartDevice(
+                            DeviceObject,
+                            Stack->Parameters.StartDevice.AllocatedResources,
+                            Stack->Parameters.StartDevice.AllocatedResourcesTranslated);
+                    }
+                }
             }
             else
                 Status = STATUS_SUCCESS;

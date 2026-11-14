@@ -4,7 +4,7 @@
  * FILE:            drivers/dd/serial/pnp.c
  * PURPOSE:         Serial IRP_MJ_PNP operations
  *
- * PROGRAMMERS:     Hervé Poussineau (hpoussin@reactos.org)
+ * PROGRAMMERS:     HervÃ© Poussineau (hpoussin@reactos.org)
  */
 /* FIXME: call IoAcquireRemoveLock/IoReleaseRemoveLock around each I/O operation */
 
@@ -34,7 +34,7 @@ SerialAddDeviceInternal(
 	ASSERT(Pdo);
 
 	/* Create new device object */
-	swprintf(DeviceNameBuffer, L"\\Device\\Serial%lu", IoGetConfigurationInformation()->SerialCount);
+	_swprintf(DeviceNameBuffer, L"\\Device\\Serial%lu", IoGetConfigurationInformation()->SerialCount);
 	RtlInitUnicodeString(&DeviceName, DeviceNameBuffer);
 	Status = IoCreateDevice(DriverObject,
 	                        sizeof(SERIAL_DEVICE_EXTENSION),
@@ -265,9 +265,9 @@ SerialPnpStartDevice(
 	}
 
 	/* Create link \DosDevices\COMX -> \Device\SerialX */
-	swprintf(DeviceNameBuffer, L"\\Device\\Serial%lu", DeviceExtension->SerialPortNumber);
-	swprintf(LinkNameBuffer, L"\\DosDevices\\COM%lu", DeviceExtension->ComPort);
-	swprintf(ComPortBuffer, L"COM%lu", DeviceExtension->ComPort);
+	_swprintf(DeviceNameBuffer, L"\\Device\\Serial%lu", DeviceExtension->SerialPortNumber);
+	_swprintf(LinkNameBuffer, L"\\DosDevices\\COM%lu", DeviceExtension->ComPort);
+	_swprintf(ComPortBuffer, L"COM%lu", DeviceExtension->ComPort);
 	RtlInitUnicodeString(&DeviceName, DeviceNameBuffer);
 	RtlInitUnicodeString(&LinkName, LinkNameBuffer);
 	RtlInitUnicodeString(&ComPort, ComPortBuffer);
@@ -296,7 +296,7 @@ SerialPnpStartDevice(
 	/* Write an entry value under HKLM\HARDWARE\DeviceMap\SERIALCOMM */
 	/* This step is not mandatory, so don't exit in case of error */
 	RtlInitUnicodeString(&KeyName, L"\\Registry\\Machine\\HARDWARE\\DeviceMap\\SERIALCOMM");
-	InitializeObjectAttributes(&objectAttributes, &KeyName, OBJ_CASE_INSENSITIVE, NULL, NULL);
+	InitializeObjectAttributes(&objectAttributes, &KeyName, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, NULL, NULL);
 	Status = ZwCreateKey(&hKey, KEY_SET_VALUE, &objectAttributes, 0, NULL, REG_OPTION_VOLATILE, NULL);
 	if (NT_SUCCESS(Status))
 	{
@@ -328,6 +328,7 @@ SerialPnp(
 	IN PDEVICE_OBJECT DeviceObject,
 	IN PIRP Irp)
 {
+	PSERIAL_DEVICE_EXTENSION DeviceExtension;
 	ULONG MinorFunction;
 	PIO_STACK_LOCATION Stack;
 	ULONG_PTR Information = 0;
@@ -354,28 +355,32 @@ SerialPnp(
 		IRP_MN_STOP_DEVICE 0x4
 		IRP_MN_QUERY_STOP_DEVICE 0x5
 		IRP_MN_CANCEL_STOP_DEVICE 0x6
-		IRP_MN_QUERY_DEVICE_RELATIONS / BusRelations (optional) 0x7
-		IRP_MN_QUERY_DEVICE_RELATIONS / RemovalRelations (optional) 0x7
-		IRP_MN_QUERY_INTERFACE (optional) 0x8
-		IRP_MN_QUERY_CAPABILITIES (optional) 0x9
 		IRP_MN_FILTER_RESOURCE_REQUIREMENTS (optional) 0xd
 		IRP_MN_QUERY_PNP_DEVICE_STATE (optional) 0x14
 		IRP_MN_DEVICE_USAGE_NOTIFICATION (required or optional) 0x16
-		IRP_MN_SURPRISE_REMOVAL 0x17
 		*/
 		case IRP_MN_START_DEVICE: /* 0x0 */
 		{
 			TRACE_(SERIAL, "IRP_MJ_PNP / IRP_MN_START_DEVICE\n");
 
-			ASSERT(((PSERIAL_DEVICE_EXTENSION)DeviceObject->DeviceExtension)->PnpState == dsStopped);
-
 			/* Call lower driver */
-			Status = ForwardIrpAndWait(DeviceObject, Irp);
-			if (NT_SUCCESS(Status))
-				Status = SerialPnpStartDevice(
-					DeviceObject,
-					Stack->Parameters.StartDevice.AllocatedResources,
-					Stack->Parameters.StartDevice.AllocatedResourcesTranslated);
+			DeviceExtension = DeviceObject->DeviceExtension;
+			Status = STATUS_UNSUCCESSFUL;
+
+			ASSERT(DeviceExtension->PnpState == dsStopped);
+
+			if (IoForwardIrpSynchronously(DeviceExtension->LowerDevice, Irp))
+			{
+				Status = Irp->IoStatus.Status;
+				if (NT_SUCCESS(Status))
+				{
+					Status = SerialPnpStartDevice(
+						DeviceObject,
+						Stack->Parameters.StartDevice.AllocatedResources,
+						Stack->Parameters.StartDevice.AllocatedResourcesTranslated);
+				}
+			}
+
 			break;
 		}
 		case IRP_MN_QUERY_DEVICE_RELATIONS: /* (optional) 0x7 */
@@ -384,13 +389,45 @@ SerialPnp(
 			{
 				case BusRelations:
 				{
+					PDEVICE_RELATIONS DeviceRelations;
+
 					TRACE_(SERIAL, "IRP_MJ_PNP / IRP_MN_QUERY_DEVICE_RELATIONS / BusRelations\n");
-					return ForwardIrpAndForget(DeviceObject, Irp);
+
+					DeviceRelations = ExAllocatePoolWithTag(PagedPool,
+															FIELD_OFFSET(DEVICE_RELATIONS, Objects),
+															SERIAL_TAG);
+
+					if (!DeviceRelations)
+					{
+						Status = STATUS_INSUFFICIENT_RESOURCES;
+						break;
+					}
+
+					DeviceRelations->Count = 0;
+					Information = (ULONG_PTR)DeviceRelations;
+					Status = STATUS_SUCCESS;
+					break;
 				}
 				case RemovalRelations:
 				{
+					PDEVICE_RELATIONS DeviceRelations;
+
 					TRACE_(SERIAL, "IRP_MJ_PNP / IRP_MN_QUERY_DEVICE_RELATIONS / RemovalRelations\n");
-					return ForwardIrpAndForget(DeviceObject, Irp);
+
+					DeviceRelations = ExAllocatePoolWithTag(PagedPool,
+															FIELD_OFFSET(DEVICE_RELATIONS, Objects),
+															SERIAL_TAG);
+
+					if (!DeviceRelations)
+					{
+						Status = STATUS_INSUFFICIENT_RESOURCES;
+						break;
+					}
+
+					DeviceRelations->Count = 0;
+					Information = (ULONG_PTR)DeviceRelations;
+					Status = STATUS_SUCCESS;
+					break;
 				}
 				default:
 					TRACE_(SERIAL, "IRP_MJ_PNP / IRP_MN_QUERY_DEVICE_RELATIONS / Unknown type 0x%lx\n",
@@ -399,9 +436,71 @@ SerialPnp(
 			}
 			break;
 		}
+		case IRP_MN_QUERY_INTERFACE: /* (optional) 0x8 */
+		{
+			TRACE_(SERIAL, "IRP_MJ_PNP / IRP_MN_QUERY_INTERFACE\n");
+			return ForwardIrpAndForget(DeviceObject, Irp);
+		}
+		case IRP_MN_QUERY_CAPABILITIES: /* (optional) 0x9 */
+		{
+			TRACE_(SERIAL, "IRP_MJ_PNP / IRP_MN_QUERY_CAPABILITIES\n");
+
+			DeviceExtension = DeviceObject->DeviceExtension;
+
+			if (IoForwardIrpSynchronously(DeviceExtension->LowerDevice, Irp))
+			{
+				Status = Irp->IoStatus.Status;
+			}
+			else
+			{
+				Status = STATUS_UNSUCCESSFUL;
+			}
+
+			break;
+		}
 		case IRP_MN_FILTER_RESOURCE_REQUIREMENTS: /* (optional) 0xd */
 		{
 			TRACE_(SERIAL, "IRP_MJ_PNP / IRP_MN_FILTER_RESOURCE_REQUIREMENTS\n");
+			return ForwardIrpAndForget(DeviceObject, Irp);
+		}
+		case IRP_MN_SURPRISE_REMOVAL: /* 0x17 */
+		{
+			WCHAR LinkNameBuffer[32];
+			WCHAR DeviceNameBuffer[32];
+			UNICODE_STRING LinkName;
+			UNICODE_STRING DeviceName;
+            UNICODE_STRING KeyName;
+			OBJECT_ATTRIBUTES ObjectAttributes;
+			HANDLE hKey;
+
+			TRACE_(SERIAL, "IRP_MJ_PNP / IRP_MN_SURPRISE_REMOVAL\n");
+
+			DeviceExtension = DeviceObject->DeviceExtension;
+			DeviceExtension->PnpState = dsSurpriseRemoved;
+
+			IoSetDeviceInterfaceState(&DeviceExtension->SerialInterfaceName, FALSE);
+
+			if (DeviceExtension->Interrupt)
+			{
+				IoDisconnectInterrupt(DeviceExtension->Interrupt);
+				DeviceExtension->Interrupt = NULL;
+			}
+
+			_swprintf(LinkNameBuffer, L"\\DosDevices\\COM%lu", DeviceExtension->ComPort);
+			RtlInitUnicodeString(&LinkName, LinkNameBuffer);
+			IoDeleteSymbolicLink(&LinkName);
+
+			_swprintf(DeviceNameBuffer, L"\\Device\\Serial%lu", DeviceExtension->SerialPortNumber);
+			RtlInitUnicodeString(&DeviceName, DeviceNameBuffer);
+			RtlInitUnicodeString(&KeyName, L"\\Registry\\Machine\\HARDWARE\\DeviceMap\\SERIALCOMM");
+			InitializeObjectAttributes(&ObjectAttributes, &KeyName, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, NULL, NULL);
+
+			if (NT_SUCCESS(ZwOpenKey(&hKey, KEY_SET_VALUE, &ObjectAttributes)))
+			{
+				ZwDeleteValueKey(hKey, &DeviceName);
+				ZwClose(hKey);
+			}
+
 			return ForwardIrpAndForget(DeviceObject, Irp);
 		}
 		default:

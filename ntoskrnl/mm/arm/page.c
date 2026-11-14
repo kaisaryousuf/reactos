@@ -219,22 +219,6 @@ MmIsDirtyPage(IN PEPROCESS Process,
     return FALSE;
 }
 
-VOID
-NTAPI
-MmSetCleanPage(IN PEPROCESS Process,
-               IN PVOID Address)
-{
-    UNIMPLEMENTED_DBGBREAK();
-}
-
-VOID
-NTAPI
-MmSetDirtyPage(IN PEPROCESS Process,
-               IN PVOID Address)
-{
-    UNIMPLEMENTED_DBGBREAK();
-}
-
 BOOLEAN
 NTAPI
 MmIsPagePresent(IN PEPROCESS Process,
@@ -272,7 +256,6 @@ MmSetPageProtect(IN PEPROCESS Process,
     return;
 }
 
-CODE_SEG("INIT")
 VOID
 NTAPI
 MmInitGlobalKernelPageDirectory(VOID)

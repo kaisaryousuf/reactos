@@ -1,20 +1,19 @@
 /*
  * PROJECT:     ReactX Diagnosis Application
  * LICENSE:     LGPL - See COPYING in the top level directory
- * FILE:        base/applications/dxdiag/ddtest.c
  * PURPOSE:     ReactX DirectDraw tests
- * COPYRIGHT:   Copyright 2008 Kamil Hornicek
+ * COPYRIGHT:   Copyright 2008 Kamil Horníček
  *
  */
 
 #include "precomp.h"
 
-BOOL DDPrimarySurfaceTest(HWND hWnd);
-BOOL DDOffscreenBufferTest(HWND hWnd, BOOL Fullscreen);
+BOOL DDPrimarySurfaceTest(GUID *lpDevice, HWND hWnd);
+BOOL DDOffscreenBufferTest(GUID *lpDevice, HWND hWnd, BOOL Fullscreen);
 VOID DDRedrawFrame(LPDIRECTDRAWSURFACE lpDDSurface);
 VOID DDUpdateFrame(LPDIRECTDRAWSURFACE lpDDPrimarySurface ,LPDIRECTDRAWSURFACE lpDDBackBuffer, BOOL Fullscreen, INT *posX, INT *posY, INT *gainX, INT *gainY, RECT *rectDD);
 
-#define TEST_DURATION 10000 
+#define TEST_DURATION 10000
 #define DD_TEST_WIDTH 640
 #define DD_TEST_HEIGHT 480
 #define DD_TEST_STEP 5
@@ -22,7 +21,7 @@ VOID DDUpdateFrame(LPDIRECTDRAWSURFACE lpDDPrimarySurface ,LPDIRECTDRAWSURFACE l
 #define DD_SQUARE_STEP 2
 
 
-BOOL StartDDTest(HWND hWnd, HINSTANCE hInstance, INT resTestDescription, INT resResult, INT TestNr)
+BOOL StartDDTest(GUID *lpDevice, HWND hWnd, HINSTANCE hInstance, INT resTestDescription, INT resResult, INT TestNr)
 {
     WCHAR szTestDescription[256];
     WCHAR szCaption[256];
@@ -42,13 +41,13 @@ BOOL StartDDTest(HWND hWnd, HINSTANCE hInstance, INT resTestDescription, INT res
 
     switch(TestNr){
         case 1:
-            Result = DDPrimarySurfaceTest(hWnd);
+            Result = DDPrimarySurfaceTest(lpDevice, hWnd);
             break;
         case 2:
-            Result = DDOffscreenBufferTest(hWnd, FALSE);
+            Result = DDOffscreenBufferTest(lpDevice, hWnd, FALSE);
             break;
         case 3:
-            Result = DDOffscreenBufferTest(hWnd, TRUE);
+            Result = DDOffscreenBufferTest(lpDevice, hWnd, TRUE);
             break;
         default:
             Result = FALSE;
@@ -68,7 +67,7 @@ BOOL StartDDTest(HWND hWnd, HINSTANCE hInstance, INT resTestDescription, INT res
     return FALSE;
 }
 
-VOID DDTests()
+VOID DDTests(GUID *lpDevice)
 {
     WNDCLASSEX winClass;
     HWND hWnd;
@@ -106,23 +105,23 @@ VOID DDTests()
     if(MessageBox(NULL, szDescription, szCaption, MB_YESNO | MB_ICONQUESTION) == IDNO)
         return;
 
-    StartDDTest(hWnd, hInstance, IDS_DDPRIMARY_DESCRIPTION, IDS_DDPRIMARY_RESULT, 1);
-    StartDDTest(hWnd, hInstance, IDS_DDOFFSCREEN_DESCRIPTION, IDS_DDOFFSCREEN_RESULT, 2);
-    StartDDTest(hWnd, hInstance, IDS_DDFULLSCREEN_DESCRIPTION, IDS_DDFULLSCREEN_RESULT, 3);
+    StartDDTest(lpDevice, hWnd, hInstance, IDS_DDPRIMARY_DESCRIPTION, IDS_DDPRIMARY_RESULT, 1);
+    StartDDTest(lpDevice, hWnd, hInstance, IDS_DDOFFSCREEN_DESCRIPTION, IDS_DDOFFSCREEN_RESULT, 2);
+    StartDDTest(lpDevice, hWnd, hInstance, IDS_DDFULLSCREEN_DESCRIPTION, IDS_DDFULLSCREEN_RESULT, 3);
 
     DestroyWindow(hWnd);
     UnregisterClass(winClass.lpszClassName, hInstance);
 }
 
-BOOL DDPrimarySurfaceTest(HWND hWnd){
-    UINT TimerID;
+BOOL DDPrimarySurfaceTest(GUID *lpDevice, HWND hWnd){
+    UINT_PTR TimerID;
     MSG msg;
 
     LPDIRECTDRAW lpDD = NULL;
     LPDIRECTDRAWSURFACE lpDDSurface = NULL;
     DDSURFACEDESC DDSurfaceDesc;
 
-    if(DirectDrawCreate(NULL, &lpDD, NULL) != DD_OK)
+    if(DirectDrawCreate(lpDevice, &lpDD, NULL) != DD_OK)
         return FALSE;
 
     if(lpDD->lpVtbl->SetCooperativeLevel(lpDD, hWnd, DDSCL_NORMAL) != DD_OK)
@@ -144,7 +143,7 @@ BOOL DDPrimarySurfaceTest(HWND hWnd){
         return FALSE;
     }
 
-    TimerID = SetTimer(hWnd, -1, (UINT)TEST_DURATION, NULL);
+    TimerID = SetTimer(hWnd, 1, (UINT)TEST_DURATION, NULL);
 
     while (TRUE)
     {
@@ -198,7 +197,7 @@ VOID DDRedrawFrame(LPDIRECTDRAWSURFACE lpDDSurface)
 }
 
 
-BOOL DDOffscreenBufferTest(HWND hWnd, BOOL Fullscreen){
+BOOL DDOffscreenBufferTest(GUID *lpDevice, HWND hWnd, BOOL Fullscreen){
     UINT_PTR TimerID, TimerIDUpdate;
     LPDIRECTDRAW lpDD;
     LPDIRECTDRAWSURFACE lpDDPrimarySurface;
@@ -211,7 +210,7 @@ BOOL DDOffscreenBufferTest(HWND hWnd, BOOL Fullscreen){
     POINT wndPoint;
     INT posX = 0, posY = 10, xGain = DD_SQUARE_STEP, yGain = DD_SQUARE_STEP;
 
-    if(DirectDrawCreate(NULL, &lpDD, NULL) != DD_OK)
+    if(DirectDrawCreate(lpDevice, &lpDD, NULL) != DD_OK)
         return FALSE;
 
     ZeroMemory(&DDSurfaceDesc, sizeof(DDSurfaceDesc));
@@ -285,7 +284,7 @@ BOOL DDOffscreenBufferTest(HWND hWnd, BOOL Fullscreen){
     }
 
     /* set our timers, TimerID - for test timeout, TimerIDUpdate - for frame updating */
-    TimerID = SetTimer(hWnd, -1, (UINT)TEST_DURATION, NULL);
+    TimerID = SetTimer(hWnd, 1, (UINT)TEST_DURATION, NULL);
     TimerIDUpdate = SetTimer(hWnd, 2, (UINT)10, NULL);
     (void)TimerIDUpdate;
 
@@ -295,7 +294,7 @@ BOOL DDOffscreenBufferTest(HWND hWnd, BOOL Fullscreen){
         {
             if (msg.message == WM_TIMER)
             {
-                if(msg.wParam == TimerID) 
+                if(msg.wParam == TimerID)
                 {
                     break;
                 }

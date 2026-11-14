@@ -9,9 +9,9 @@
 
 
 #include "precomp.h"
+#include "restypes.h"
 #include "devmgmt.h"
 #include "DeviceView.h"
-
 
 // DATA ********************************************/
 
@@ -41,7 +41,10 @@ CDeviceView::CDeviceView(
     m_hMenu(NULL),
     m_ViewType(DevicesByType),
     m_ShowHidden(false),
-    m_RootNode(NULL)
+    m_RootNode(NULL),
+    m_hRefreshThread(NULL),
+    m_RefreshDirty(false),
+    m_DirtyScanForChanges(false)
 {
     ZeroMemory(&m_ImageListData, sizeof(SP_CLASSIMAGELIST_DATA));
 }
@@ -125,6 +128,27 @@ CDeviceView::OnSize(
 }
 
 LRESULT
+CDeviceView::OnDoubleClick(
+    _In_ LPNMHDR NmHdr
+    )
+{
+    TVHITTESTINFO hitInfo;
+    HTREEITEM hItem;
+
+    GetCursorPos(&hitInfo.pt);
+    ScreenToClient(m_hTreeView, &hitInfo.pt);
+
+    // Check if we are trying to double-click an item
+    hItem = TreeView_HitTest(m_hTreeView, &hitInfo);
+    if (hItem != NULL && (hitInfo.flags & (TVHT_ONITEM | TVHT_ONITEMICON)))
+    {
+        DisplayPropertySheet();
+    }
+
+    return 0;
+}
+
+LRESULT
 CDeviceView::OnRightClick(
     _In_ LPNMHDR NmHdr
     )
@@ -202,20 +226,28 @@ CDeviceView::Refresh(
 
     m_ViewType = Type;
 
+    // Overlapping refreshes free each other's nodes, so let the running one pick this up when it completes
+    if (m_hRefreshThread)
+    {
+        m_RefreshDirty = true;
+        m_DirtyScanForChanges |= ScanForChanges;
+        return;
+    }
+
     RefreshThreadData *ThreadData;
     ThreadData = new RefreshThreadData;
     ThreadData->This = this;
     ThreadData->ScanForChanges = ScanForChanges;
     ThreadData->UpdateView = UpdateView;
 
-    HANDLE hThread;
-    hThread = (HANDLE)_beginthreadex(NULL,
-                                     0,
-                                     RefreshThread,
-                                     ThreadData,
-                                     0,
-                                     NULL);
-    if (hThread) CloseHandle(hThread);
+    m_hRefreshThread = (HANDLE)_beginthreadex(NULL,
+                                              0,
+                                              RefreshThread,
+                                              ThreadData,
+                                              0,
+                                              NULL);
+    if (m_hRefreshThread == NULL)
+        delete ThreadData;
 }
 
 LRESULT
@@ -351,23 +383,11 @@ CDeviceView::GetNextClass(
     if (cr != CR_SUCCESS)
         return false;
 
-    // Check if this is the unknown class
-    if (IsEqualGUID(*ClassGuid, GUID_DEVCLASS_UNKNOWN))
-    {
-        // Get device info for all devices
-        *hDevInfo = SetupDiGetClassDevsW(NULL,
-                                         NULL,
-                                         NULL,
-                                         DIGCF_ALLCLASSES);
-    }
-    else
-    {
-        // We only want the devices for this class
-        *hDevInfo = SetupDiGetClassDevsW(ClassGuid,
-                                         NULL,
-                                         NULL,
-                                         DIGCF_PRESENT);
-    }
+    // We only want the devices for this class
+    *hDevInfo = SetupDiGetClassDevsW(ClassGuid,
+                                     NULL,
+                                     NULL,
+                                     DIGCF_PRESENT);
 
     return (hDevInfo != INVALID_HANDLE_VALUE);
 }
@@ -395,14 +415,18 @@ unsigned int __stdcall CDeviceView::RefreshThread(void *Param)
     // Empty the treeview
     This->EmptyDeviceView();
 
-    // Re-add the root node to the tree
-    if (This->AddRootDevice() == false)
-        return 0;
-
     // Refresh the devices only if requested
     if (ThreadData->ScanForChanges)
     {
         This->RefreshDeviceList();
+    }
+
+    // Re-add the root node to the tree
+    if (This->AddRootDevice() == false)
+    {
+        PostMessageW(This->m_hMainWnd, WM_REFRESH_COMPLETE, 0, 0);
+        delete ThreadData;
+        return 0;
     }
 
     // display the type of view the user wants
@@ -417,6 +441,7 @@ unsigned int __stdcall CDeviceView::RefreshThread(void *Param)
             break;
 
         case ResourcesByType:
+            (VOID)This->ListResourcesByType();
             break;
 
         case ResourcesByConnection:
@@ -425,11 +450,32 @@ unsigned int __stdcall CDeviceView::RefreshThread(void *Param)
 
     This->SelectNode(LastSelectedNode);
 
+    PostMessageW(This->m_hMainWnd, WM_REFRESH_COMPLETE, 0, 0);
     delete ThreadData;
 
     return 0;
 }
 
+VOID
+CDeviceView::OnRefreshComplete()
+{
+    bool ScanForChanges;
+
+    if (m_hRefreshThread == NULL)
+        return;
+
+    CloseHandle(m_hRefreshThread);
+    m_hRefreshThread = NULL;
+
+    // Pick up any changes that came in while the last refresh was running
+    if (m_RefreshDirty)
+    {
+        ScanForChanges = m_DirtyScanForChanges;
+        m_RefreshDirty = false;
+        m_DirtyScanForChanges = false;
+        Refresh(m_ViewType, ScanForChanges, true);
+    }
+}
 
 bool
 CDeviceView::ListDevicesByType()
@@ -449,7 +495,6 @@ CDeviceView::ListDevicesByType()
         bClassSuccess = GetNextClass(ClassIndex, &ClassGuid, &hDevInfo);
         if (bClassSuccess)
         {
-            bool bClassUnknown = false;
             bool AddedParent = false;
             INT DeviceIndex = 0;
             bool MoreItems = false;
@@ -461,10 +506,6 @@ CDeviceView::ListDevicesByType()
                 ClassIndex++;
                 continue;
             }
-
-            // Set a flag is this is the (special case) unknown class
-            if (IsEqualGUID(ClassGuid, GUID_DEVCLASS_UNKNOWN))
-                bClassUnknown = true;
 
             // Check if this is a hidden class
             if (IsEqualGUID(ClassGuid, GUID_DEVCLASS_LEGACYDRIVER) ||
@@ -493,18 +534,6 @@ CDeviceView::ListDevicesByType()
                 if (bSuccess)
                 {
                     MoreItems = true;
-
-                    // The unknown class handle contains all devices on the system,
-                    // and we're just looking for the ones with a null GUID
-                    if (bClassUnknown)
-                    {
-                        if (IsEqualGUID(DeviceInfoData.ClassGuid, GUID_NULL) == FALSE)
-                        {
-                            // This is a known device, we aren't interested in it
-                            DeviceIndex++;
-                            continue;
-                        }
-                    }
 
                     // Get the cached device node
                     DeviceNode = GetDeviceNode(DeviceInfoData.DevInst);
@@ -583,16 +612,190 @@ CDeviceView::ListDevicesByType()
 bool
 CDeviceView::ListDevicesByConnection()
 {
-    // Walk the device tree and add all the devices 
+    // Walk the device tree and add all the devices
     (void)RecurseChildDevices(m_RootNode->GetDeviceInst(), m_hTreeRoot);
 
-    // Expand the root item 
+    // Expand the root item
     (void)TreeView_Expand(m_hTreeView,
                           m_hTreeRoot,
                           TVE_EXPAND);
 
     return true;
 }
+
+bool
+CDeviceView::ListResourcesByType()
+{
+    HTREEITEM hMemoryTreeItem = NULL;
+    HTREEITEM hPortTreeItem = NULL;
+    HTREEITEM hDmaTreeItem = NULL;
+    HTREEITEM hIrqTreeItem = NULL;
+
+    CResourceTypeNode *MemoryNode = new CResourceTypeNode(IDS_TYPE_MEMORY, &m_ImageListData);
+    hMemoryTreeItem = InsertIntoTreeView(m_hTreeRoot,
+                                         MemoryNode);
+
+    CResourceTypeNode *PortNode = new CResourceTypeNode(IDS_TYPE_PORT, &m_ImageListData);
+    hPortTreeItem = InsertIntoTreeView(m_hTreeRoot,
+                                       PortNode);
+
+    CResourceTypeNode *DmaNode = new CResourceTypeNode(IDS_TYPE_DMA, &m_ImageListData);
+    hDmaTreeItem = InsertIntoTreeView(m_hTreeRoot,
+                                      DmaNode);
+
+    CResourceTypeNode *IrqNode = new CResourceTypeNode(IDS_TYPE_IRQ, &m_ImageListData);
+    hIrqTreeItem = InsertIntoTreeView(m_hTreeRoot,
+                                      IrqNode);
+
+    // Walk the device tree and add all the resources
+    (void)RecurseResources(m_RootNode->GetDeviceInst(),
+                           hMemoryTreeItem,
+                           hPortTreeItem,
+                           hDmaTreeItem,
+                           hIrqTreeItem);
+
+    // Sort the resource types alphabetically
+    (void)TreeView_SortChildren(m_hTreeView,
+                                m_hTreeRoot,
+                                0);
+
+    // Expand the root item
+    (void)TreeView_Expand(m_hTreeView,
+                          m_hTreeRoot,
+                          TVE_EXPAND);
+
+    return true;
+}
+
+
+bool
+CDeviceView::RecurseResources(
+    _In_ DEVINST ParentDevice,
+    _In_ HTREEITEM hMemoryTreeItem,
+    _In_ HTREEITEM hPortTreeItem,
+    _In_ HTREEITEM hDmaTreeItem,
+    _In_ HTREEITEM hIrqTreeItem
+    )
+{
+    DEVINST Device;
+    bool bSuccess;
+    ULONG Index;
+
+    // Check if the parent has any child devices
+    if (GetChildDevice(ParentDevice, &Device) == FALSE)
+        return true;
+
+    // Get the cached device node
+    CDeviceNode *DeviceNode;
+    DeviceNode = dynamic_cast<CDeviceNode *>(GetDeviceNode(Device));
+    if (DeviceNode == nullptr)
+    {
+        return false;
+    }
+
+    PCM_RESOURCE_LIST pResourceList = (PCM_RESOURCE_LIST)GetResourceList(DeviceNode->GetDeviceId());
+    if (pResourceList)
+    {
+
+        for (Index = 0; Index < pResourceList->List[0].PartialResourceList.Count; Index++)
+        {
+            PCM_PARTIAL_RESOURCE_DESCRIPTOR Descriptor = &pResourceList->List[0].PartialResourceList.PartialDescriptors[Index];
+
+            if (Descriptor->Type == CmResourceTypeInterrupt)
+            {
+                CResourceNode *resNode = new CResourceNode(DeviceNode, Descriptor, &m_ImageListData);
+                InsertIntoTreeView(hIrqTreeItem, resNode);
+            }
+            else if (Descriptor->Type == CmResourceTypePort)
+            {
+                CResourceNode *resNode = new CResourceNode(DeviceNode, Descriptor, &m_ImageListData);
+                InsertIntoTreeView(hPortTreeItem, resNode);
+            }
+            else if (Descriptor->Type == CmResourceTypeMemory)
+            {
+                CResourceNode *resNode = new CResourceNode(DeviceNode, Descriptor, &m_ImageListData);
+                InsertIntoTreeView(hMemoryTreeItem, resNode);
+            }
+            else if (Descriptor->Type == CmResourceTypeDma)
+            {
+                CResourceNode *resNode = new CResourceNode(DeviceNode, Descriptor, &m_ImageListData);
+                InsertIntoTreeView(hDmaTreeItem, resNode);
+            }
+        }
+
+        HeapFree(GetProcessHeap(), 0, pResourceList);
+    }
+
+    RecurseResources(Device, hMemoryTreeItem, hPortTreeItem, hDmaTreeItem, hIrqTreeItem);
+
+    // Check for siblings
+    for (;;)
+    {
+        // Check if the parent device has anything at the same level
+        bSuccess = GetSiblingDevice(Device, &Device);
+        if (bSuccess == FALSE)
+            break;
+
+        DeviceNode = dynamic_cast<CDeviceNode *>(GetDeviceNode(Device));
+        if (DeviceNode == nullptr)
+        {
+            continue;
+        }
+
+        PCM_RESOURCE_LIST pResourceList = (PCM_RESOURCE_LIST)GetResourceList(DeviceNode->GetDeviceId());
+        if (pResourceList)
+        {
+            for (Index = 0; Index < pResourceList->List[0].PartialResourceList.Count; Index++)
+            {
+                PCM_PARTIAL_RESOURCE_DESCRIPTOR Descriptor = &pResourceList->List[0].PartialResourceList.PartialDescriptors[Index];
+
+                if (Descriptor->Type == CmResourceTypeInterrupt)
+                {
+                    CResourceNode *resNode = new CResourceNode(DeviceNode, Descriptor, &m_ImageListData);
+                    InsertIntoTreeView(hIrqTreeItem, resNode);
+                }
+                else if (Descriptor->Type == CmResourceTypePort)
+                {
+                    CResourceNode *resNode = new CResourceNode(DeviceNode, Descriptor, &m_ImageListData);
+                    InsertIntoTreeView(hPortTreeItem, resNode);
+                }
+                else if (Descriptor->Type == CmResourceTypeMemory)
+                {
+                    CResourceNode *resNode = new CResourceNode(DeviceNode, Descriptor, &m_ImageListData);
+                    InsertIntoTreeView(hMemoryTreeItem, resNode);
+                }
+                else if (Descriptor->Type == CmResourceTypeDma)
+                {
+                    CResourceNode *resNode = new CResourceNode(DeviceNode, Descriptor, &m_ImageListData);
+                    InsertIntoTreeView(hDmaTreeItem, resNode);
+                }
+            }
+
+            HeapFree(GetProcessHeap(), 0, pResourceList);
+        }
+
+        RecurseResources(Device, hMemoryTreeItem, hPortTreeItem, hDmaTreeItem, hIrqTreeItem);
+    }
+
+    (void)TreeView_SortChildren(m_hTreeView,
+                                hMemoryTreeItem,
+                                0);
+
+    (void)TreeView_SortChildren(m_hTreeView,
+                                hPortTreeItem,
+                                0);
+
+    (void)TreeView_SortChildren(m_hTreeView,
+                                hIrqTreeItem,
+                                0);
+
+    (void)TreeView_SortChildren(m_hTreeView,
+                                hDmaTreeItem,
+                                0);
+
+    return true;
+}
+
 
 bool
 CDeviceView::RecurseChildDevices(
@@ -605,7 +808,7 @@ CDeviceView::RecurseChildDevices(
     bool HasProblem = false;
     bool bSuccess;
 
-    // Check if the parent has any child devices 
+    // Check if the parent has any child devices
     if (GetChildDevice(ParentDevice, &Device) == FALSE)
         return true;
 
@@ -620,12 +823,12 @@ CDeviceView::RecurseChildDevices(
     // Don't show hidden devices if not requested
     if ((m_ShowHidden == TRUE) || (!(DeviceNode->IsHidden())))
     {
-        // Add this device to the tree under its parent 
+        // Add this device to the tree under its parent
         hDevItem = InsertIntoTreeView(hParentTreeItem,
                                       DeviceNode);
         if (hDevItem)
         {
-            // Check if this child has any children itself 
+            // Check if this child has any children itself
             if (!RecurseChildDevices(Device, hDevItem))
                 HasProblem = true;
         }
@@ -640,7 +843,7 @@ CDeviceView::RecurseChildDevices(
     // Check for siblings
     for (;;)
     {
-        // Check if the parent device has anything at the same level 
+        // Check if the parent device has anything at the same level
         bSuccess = GetSiblingDevice(Device, &Device);
         if (bSuccess == FALSE)
             break;
@@ -659,12 +862,12 @@ CDeviceView::RecurseChildDevices(
                 HasProblem = true;
             }
 
-            // Add this device to the tree under its parent 
+            // Add this device to the tree under its parent
             hDevItem = InsertIntoTreeView(hParentTreeItem,
                                           DeviceNode);
             if (hDevItem)
             {
-                // Check if this child has any children itself 
+                // Check if this child has any children itself
                 if (!RecurseChildDevices(Device, hDevItem))
                     HasProblem = true;
             }
@@ -853,12 +1056,12 @@ CDeviceView::BuildActionMenuForNode(
     _In_ bool MainMenu
     )
 {
-    // Create a separator structure 
+    // Create a separator structure
     MENUITEMINFOW MenuSeparator = { 0 };
     MenuSeparator.cbSize = sizeof(MENUITEMINFOW);
     MenuSeparator.fType = MFT_SEPARATOR;
 
-    // Setup the 
+    // Setup the
     MENUITEMINFOW MenuItemInfo = { 0 };
     MenuItemInfo.cbSize = sizeof(MENUITEMINFOW);
     MenuItemInfo.fMask = MIIM_ID | MIIM_STRING | MIIM_DATA | MIIM_SUBMENU;
@@ -1011,7 +1214,7 @@ CDeviceView::RecurseFindDevice(
             }
         }
 
-        // This node may have its own children 
+        // This node may have its own children
         FoundItem = RecurseFindDevice(hItem, Node);
         if (FoundItem)
             return FoundItem;

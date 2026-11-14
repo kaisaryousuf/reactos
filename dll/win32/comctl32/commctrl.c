@@ -106,6 +106,8 @@ static const WCHAR strCC32SubclassInfo[] = {
 #define ARCH L"x86"
 #elif defined __x86_64__
 #define ARCH L"amd64"
+#elif defined __aarch64__
+#define ARCH L"arm64"
 #else
 #define ARCH L"none"
 #endif
@@ -678,20 +680,28 @@ void WINAPI DrawStatusTextW (HDC hdc, LPCRECT lprc, LPCWSTR text, UINT style)
 {
     RECT r = *lprc;
     UINT border = BDR_SUNKENOUTER;
+    COLORREF oldbkcolor;
 
     if (style & SBT_POPOUT)
         border = BDR_RAISEDOUTER;
     else if (style & SBT_NOBORDERS)
         border = 0;
 
+    oldbkcolor = SetBkColor (hdc, comctl32_color.clrBtnFace);
+#ifdef __REACTOS__ // HACK for CORE-19854.
     DrawEdge (hdc, &r, border, BF_RECT|BF_ADJUST);
+#else
+    DrawEdge (hdc, &r, border, BF_MIDDLE|BF_RECT|BF_ADJUST);
+#endif
 
     /* now draw text */
     if (text) {
         int oldbkmode = SetBkMode (hdc, TRANSPARENT);
+        COLORREF oldtextcolor;
         UINT align = DT_LEFT;
         int strCnt = 0;
 
+        oldtextcolor = SetTextColor (hdc, comctl32_color.clrBtnText);
         if (style & SBT_RTLREADING)
             FIXME("Unsupported RTL style!\n");
         r.left += 3;
@@ -711,8 +721,11 @@ void WINAPI DrawStatusTextW (HDC hdc, LPCRECT lprc, LPCWSTR text, UINT style)
         } while(*text++);
 
         if (strCnt) DrawTextW (hdc, text - strCnt, -1, &r, align|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
-	SetBkMode(hdc, oldbkmode);
+        SetBkMode (hdc, oldbkmode);
+        SetTextColor (hdc, oldtextcolor);
     }
+
+    SetBkColor (hdc, oldbkcolor);
 }
 
 
@@ -856,7 +869,7 @@ CreateUpDownControl (DWORD style, INT x, INT y, INT cx, INT cy,
  *
  * NOTES
  *     This function is just a dummy - all the controls are registered at
- *     the DLL initialization time. See InitCommonContolsEx for details.
+ *     the DLL initialization time. See InitCommonControlsEx for details.
  */
 
 VOID WINAPI

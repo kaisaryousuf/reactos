@@ -3,6 +3,7 @@
 
 #include <portcls.h>
 #include <mmsystem.h>
+#include <pseh/pseh2.h>
 
 #include "interface.h"
 
@@ -200,6 +201,13 @@ WdmAudMidiCapabilities(
 
 NTSTATUS
 NTAPI
+WdmAudGetPosition(
+    _In_ PDEVICE_OBJECT DeviceObject,
+    _In_ PIRP Irp,
+    _In_ PWDMAUD_DEVICE_INFO DeviceInfo);
+
+NTSTATUS
+NTAPI
 WdmAudFrameSize(
     IN  PDEVICE_OBJECT DeviceObject,
     IN  PIRP Irp,
@@ -307,8 +315,8 @@ WdmAudGetMidiOutDeviceCount(VOID);
 
 NTSTATUS
 WdmAudGetPnpNameByIndexAndType(
-    IN ULONG DeviceIndex, 
-    IN SOUND_DEVICE_TYPE DeviceType, 
+    IN ULONG DeviceIndex,
+    IN SOUND_DEVICE_TYPE DeviceType,
     OUT LPWSTR *Device);
 
 

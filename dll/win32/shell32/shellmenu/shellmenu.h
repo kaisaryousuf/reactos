@@ -49,10 +49,9 @@
 #include <atlcom.h>
 #include <atlwin.h>
 #include <undocshell.h>
-#include <undocuser.h>
 
 #include <shellutils.h>
-#include <rosctrls.h>
+#include <ui/rosctrls.h>
 #include "../shresdef.h"
 
 #include <wine/debug.h>

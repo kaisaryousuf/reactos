@@ -1144,7 +1144,7 @@ co_IntSetWndIcons(VOID)
    IntLoadSystenIcons(Common->hIconBang,     OIC_BANG);
    IntLoadSystenIcons(Common->hIconNote,     OIC_NOTE);
    IntLoadSystenIcons(gpsi->hIconWindows,    OIC_WINLOGO);
-   IntLoadSystenIcons(gpsi->hIconSmWindows,  OIC_WINLOGO+1);
+   IntLoadSystenIcons(gpsi->hIconSmWindows,  OIC_INTERNAL_WINSMALL);
 
    ERR("hIconSmWindows %p hIconWindows %p \n",gpsi->hIconSmWindows,gpsi->hIconWindows);
 
@@ -1245,6 +1245,75 @@ co_UserCBClientPrinterThunk( PVOID pkt, INT InSize, PVOID pvOutData, INT OutSize
    if (OutSize) RtlMoveMemory( pvOutData, ResultPointer, OutSize );
 
    return 0;
+}
+
+DWORD
+APIENTRY
+co_IntImmProcessKey(HWND hWnd, HKL hKL, UINT vKey, LPARAM lParam, DWORD dwHotKeyID)
+{
+    DWORD ret = 0;
+    NTSTATUS Status;
+    ULONG ResultLength = sizeof(DWORD);
+    PVOID ResultPointer = NULL;
+    IMMPROCESSKEY_CALLBACK_ARGUMENTS Common = { hWnd, hKL, vKey, lParam, dwHotKeyID };
+
+    UserLeaveCo();
+    Status = KeUserModeCallback(USER32_CALLBACK_IMMPROCESSKEY,
+                                &Common,
+                                sizeof(Common),
+                                &ResultPointer,
+                                &ResultLength);
+    UserEnterCo();
+
+    if (NT_SUCCESS(Status))
+        ret = *(LPDWORD)ResultPointer;
+
+    return ret;
+}
+
+BOOL
+APIENTRY
+co_ClientImmLoadLayout(
+    _In_ HKL hKL,
+    _Inout_ PIMEINFOEX pImeInfoEx)
+{
+    BOOL ret;
+    NTSTATUS Status;
+    IMMLOADLAYOUT_CALLBACK_ARGUMENTS Common = { hKL };
+    ULONG ResultLength = sizeof(IMMLOADLAYOUT_CALLBACK_OUTPUT);
+    PIMMLOADLAYOUT_CALLBACK_OUTPUT ResultPointer = NULL;
+
+    RtlZeroMemory(pImeInfoEx, sizeof(IMEINFOEX));
+
+    UserLeaveCo();
+    Status = KeUserModeCallback(USER32_CALLBACK_IMMLOADLAYOUT,
+                                &Common,
+                                sizeof(Common),
+                                (PVOID*)&ResultPointer,
+                                &ResultLength);
+    UserEnterCo();
+
+    if (!NT_SUCCESS(Status) || !ResultPointer ||
+        ResultLength != sizeof(IMMLOADLAYOUT_CALLBACK_OUTPUT))
+    {
+        ERR("0x%lX, %p, %lu\n", Status, ResultPointer, ResultLength);
+        return FALSE;
+    }
+
+    _SEH2_TRY
+    {
+        ProbeForRead(ResultPointer, ResultLength, 1);
+        ret = ResultPointer->ret;
+        if (ret)
+            RtlCopyMemory(pImeInfoEx, &ResultPointer->iiex, sizeof(IMEINFOEX));
+    }
+    _SEH2_EXCEPT(EXCEPTION_EXECUTE_HANDLER)
+    {
+        ret = FALSE;
+    }
+    _SEH2_END;
+
+    return ret;
 }
 
 /* EOF */

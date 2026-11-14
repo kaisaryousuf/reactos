@@ -24,12 +24,12 @@ WINE_DEFAULT_DEBUG_CHANNEL (shell);
 
 CExeDropHandler::CExeDropHandler()
 {
-    pclsid = (CLSID *)&CLSID_ExeDropHandler;
+
 }
 
 CExeDropHandler::~CExeDropHandler()
 {
-
+    SHFree(m_PathTarget);
 }
 
 // IDropTarget
@@ -39,6 +39,7 @@ HRESULT WINAPI CExeDropHandler::DragEnter(IDataObject *pDataObject, DWORD dwKeyS
     if (*pdwEffect == DROPEFFECT_NONE)
         return S_OK;
 
+    m_grfKeyState = dwKeyState;
     *pdwEffect = DROPEFFECT_COPY;
     return S_OK;
 }
@@ -46,6 +47,7 @@ HRESULT WINAPI CExeDropHandler::DragEnter(IDataObject *pDataObject, DWORD dwKeyS
 HRESULT WINAPI CExeDropHandler::DragOver(DWORD dwKeyState, POINTL pt, DWORD *pdwEffect)
 {
     TRACE ("(%p)\n", this);
+    m_grfKeyState = dwKeyState;
     *pdwEffect = DROPEFFECT_COPY;
     return S_OK;
 }
@@ -58,7 +60,7 @@ HRESULT WINAPI CExeDropHandler::DragLeave()
 
 HRESULT WINAPI CExeDropHandler::Drop(IDataObject *pDataObject, DWORD dwKeyState, POINTL pt, DWORD *pdwEffect)
 {
-    TRACE ("(%p)\n", this);    
+    TRACE ("(%p)\n", this);
     FORMATETC fmt;
     STGMEDIUM medium;
     LPWSTR pszSrcList;
@@ -66,12 +68,31 @@ HRESULT WINAPI CExeDropHandler::Drop(IDataObject *pDataObject, DWORD dwKeyState,
     WCHAR wszBuf[MAX_PATH * 2 + 8], *pszEnd = wszBuf;
     size_t cchRemaining = _countof(wszBuf);
 
+    if (m_grfKeyState & MK_RBUTTON)
+    {
+        HMENU hmenu = LoadMenuW(shell32_hInstance, MAKEINTRESOURCEW(IDM_DRAGFILE));
+        if (!hmenu)
+            return E_OUTOFMEMORY;
+        HMENU hpopupmenu = GetSubMenu(hmenu, 0);
+        DeleteMenu(hpopupmenu, IDM_COPYHERE, MF_BYCOMMAND);
+        DeleteMenu(hpopupmenu, IDM_MOVEHERE, MF_BYCOMMAND);
+        DeleteMenu(hpopupmenu, IDM_LINKHERE, MF_BYCOMMAND);
+        LoadStringW(shell32_hInstance, IDS_OPEN_WITH, wszBuf, _countof(wszBuf));
+        InsertMenuW(hpopupmenu, 0, MF_BYPOSITION | MF_STRING, IDOK, wszBuf);
+        SetMenuDefaultItem(hpopupmenu, IDOK, MF_BYCOMMAND);
+        UINT cmd = CFSDropTarget::TrackPopupMenu(hpopupmenu, pt);
+        DestroyMenu(hmenu);
+        if (!cmd)
+            return S_OK;
+    }
+
     if (SUCCEEDED(pDataObject->GetData(&fmt, &medium)) /* && SUCCEEDED(pDataObject->GetData(&fmt2, &medium))*/)
     {
         LPDROPFILES lpdf = (LPDROPFILES) GlobalLock(medium.hGlobal);
         if (!lpdf)
         {
             ERR("Error locking global\n");
+            ReleaseStgMedium(&medium);
             return E_FAIL;
         }
         pszSrcList = (LPWSTR) (((byte*) lpdf) + lpdf->pFiles);
@@ -81,12 +102,15 @@ HRESULT WINAPI CExeDropHandler::Drop(IDataObject *pDataObject, DWORD dwKeyState,
                 StringCchPrintfExW(pszEnd, cchRemaining, &pszEnd, &cchRemaining, 0, L"\"%ls\" ", pszSrcList);
             else
                 StringCchPrintfExW(pszEnd, cchRemaining, &pszEnd, &cchRemaining, 0, L"%ls ", pszSrcList);
-            
+
             pszSrcList += wcslen(pszSrcList) + 1;
         }
+
+        GlobalUnlock(medium.hGlobal);
+        ReleaseStgMedium(&medium);
     }
 
-    ShellExecuteW(NULL, L"open", sPathTarget, wszBuf, NULL,SW_SHOWNORMAL);
+    ShellExecuteW(NULL, L"open", m_PathTarget, wszBuf, NULL, SW_SHOWNORMAL);
 
     return S_OK;
 }
@@ -108,8 +132,10 @@ HRESULT WINAPI CExeDropHandler::IsDirty()
 HRESULT WINAPI CExeDropHandler::Load(LPCOLESTR pszFileName, DWORD dwMode)
 {
     UINT len = strlenW(pszFileName);
-    sPathTarget = (WCHAR *)SHAlloc((len + 1) * sizeof(WCHAR));
-    memcpy(sPathTarget, pszFileName, (len + 1) * sizeof(WCHAR));
+    m_PathTarget = (WCHAR *)SHAlloc((len + 1) * sizeof(WCHAR));
+    if (!m_PathTarget)
+        return E_OUTOFMEMORY;
+    memcpy(m_PathTarget, pszFileName, (len + 1) * sizeof(WCHAR));
     return S_OK;
 }
 
@@ -125,9 +151,6 @@ HRESULT WINAPI CExeDropHandler::SaveCompleted(LPCOLESTR pszFileName)
     return E_NOTIMPL;
 }
 
-/************************************************************************
- * CFSFolder::GetClassID
- */
 HRESULT WINAPI CExeDropHandler::GetClassID(CLSID * lpClassId)
 {
     TRACE ("(%p)\n", this);
@@ -135,7 +158,7 @@ HRESULT WINAPI CExeDropHandler::GetClassID(CLSID * lpClassId)
     if (!lpClassId)
         return E_POINTER;
 
-    *lpClassId = *pclsid;
+    *lpClassId = CLSID_ExeDropHandler;
 
     return S_OK;
 }

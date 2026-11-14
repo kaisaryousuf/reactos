@@ -12,7 +12,6 @@
 #include <winreg.h>
 #include <winsvc.h>
 #include <winuser.h>
-#include <undocuser.h>
 
 #include <ndk/rtlfuncs.h>
 
@@ -32,8 +31,7 @@ typedef struct _JOB
 {
     LIST_ENTRY JobEntry;
 
-    LIST_ENTRY StartEntry;
-    ULARGE_INTEGER StartTime;
+    FILETIME StartTime;
     WCHAR Name[JOB_NAME_LENGTH];
 
     DWORD JobId;
@@ -54,16 +52,17 @@ extern RTL_RESOURCE JobListLock;
 extern LIST_ENTRY StartListHead;
 extern RTL_RESOURCE StartListLock;
 
-extern HANDLE Events[2];
+extern HANDLE Events[3];
 
 
 /* job.c */
 
-DWORD
-GetNextJobTimeout(VOID);
+VOID
+GetNextJobTimeout(
+    HANDLE hTimer);
 
 VOID
-RunNextJob(VOID);
+RunCurrentJobs(VOID);
 
 LONG
 SaveJob(

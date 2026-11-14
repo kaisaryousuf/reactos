@@ -26,10 +26,12 @@
 #ifndef __WINLOGON_MAIN_H__
 #define __WINLOGON_MAIN_H__
 
-#include <stdarg.h>
-
 #define USE_GETLASTINPUTINFO
 
+
+#include <stdarg.h>
+
+/* PSDK/NDK Headers */
 #define WIN32_NO_STATUS
 #include <windef.h>
 #include <winbase.h>
@@ -39,10 +41,14 @@
 #include <winwlx.h>
 #include <ndk/rtlfuncs.h>
 #include <ndk/exfuncs.h>
+#include <ndk/kefuncs.h>
 #include <strsafe.h>
 
-#include <reactos/undocuser.h>
-#include <reactos/undocmpr.h>
+/* PSEH for SEH Support */
+#include <pseh/pseh2.h>
+
+#include <undocuser.h>
+#include <undocmpr.h>
 
 BOOL
 WINAPI
@@ -129,11 +135,11 @@ typedef struct _GINAINSTANCE
 
 /*
  * The picture Microsoft is trying to paint here
- * (http://msdn.microsoft.com/en-us/library/windows/desktop/aa380547%28v=vs.85%29.aspx)
+ * (https://learn.microsoft.com/en-us/windows/win32/secauthn/winlogon-states)
  * about the Winlogon states is a little too simple.
  *
  * The real picture should look more like this:
- * 
+ *
  * STATE_INIT
  *    Initial state. Required for session initialization. After initialization,
  *    the state will automatically change to STATE_LOGGED_OFF.
@@ -217,9 +223,13 @@ typedef struct _WLSESSION
     DWORD SASAction;
     BOOL SuppressStatus;
     BOOL TaskManHotkey;
+    BOOL LockWkStaHotkey;
+    BOOL UtilManHotkey;
     HWND SASWindow;
     HWINSTA InteractiveWindowStation;
-    LPWSTR InteractiveWindowStationName;
+    PWSTR InteractiveWindowStationName;
+    PWSTR UserName;
+    PWSTR Domain;
     HDESK ApplicationDesktop;
     HDESK WinlogonDesktop;
     HDESK ScreenSaverDesktop;
@@ -228,6 +238,7 @@ typedef struct _WLSESSION
     HANDLE hProfileInfo;
     LOGON_STATE LogonState;
     DWORD DialogTimeout; /* Timeout for dialog boxes, in seconds */
+    LARGE_INTEGER LastLogon;
 
     /* Screen-saver informations */
 #ifndef USE_GETLASTINPUTINFO
@@ -245,7 +256,7 @@ typedef struct _WLSESSION
     /* Logon informations */
     DWORD Options;
     WLX_MPR_NOTIFY_INFO MprNotifyInfo;
-    WLX_PROFILE_V2_0 *Profile;
+    PWLX_PROFILE_V2_0 Profile;
 } WLSESSION, *PWLSESSION;
 
 typedef enum _NOTIFICATION_TYPE
@@ -268,17 +279,36 @@ typedef enum _NOTIFICATION_TYPE
 extern HINSTANCE hAppInstance;
 extern PWLSESSION WLSession;
 
-#define WLX_SHUTTINGDOWN(Status) \
-  (((Status) == WLX_SAS_ACTION_SHUTDOWN) || \
-   ((Status) == WLX_SAS_ACTION_SHUTDOWN_POWER_OFF) || \
-   ((Status) == WLX_SAS_ACTION_SHUTDOWN_REBOOT) \
-  )
+#define WLX_LOGGINGOFF(wlxAction) \
+  (((wlxAction) == WLX_SAS_ACTION_LOGOFF) || \
+   ((wlxAction) == WLX_SAS_ACTION_FORCE_LOGOFF))
 
-#define WLX_SUSPENDING(Status) \
-  (((Status) == WLX_SAS_ACTION_SHUTDOWN_SLEEP) || \
-   ((Status) == WLX_SAS_ACTION_SHUTDOWN_SLEEP2) || \
-   ((Status) == WLX_SAS_ACTION_SHUTDOWN_HIBERNATE) \
-  )
+#define WLX_SHUTTINGDOWN(wlxAction) \
+  (((wlxAction) == WLX_SAS_ACTION_SHUTDOWN) || \
+   ((wlxAction) == WLX_SAS_ACTION_SHUTDOWN_POWER_OFF) || \
+   ((wlxAction) == WLX_SAS_ACTION_SHUTDOWN_REBOOT))
+
+#define WLX_SUSPENDING(wlxAction) \
+  (((wlxAction) == WLX_SAS_ACTION_SHUTDOWN_SLEEP)  || \
+   ((wlxAction) == WLX_SAS_ACTION_SHUTDOWN_SLEEP2) || \
+   ((wlxAction) == WLX_SAS_ACTION_SHUTDOWN_HIBERNATE))
+
+FORCEINLINE
+VOID
+SetLogonTimestamp(
+    _Inout_ PWLSESSION Session)
+{
+    NtQuerySystemTime(&Session->LastLogon);
+}
+
+FORCEINLINE
+BOOL
+IsFirstLogon(
+    _In_ PWLSESSION Session)
+{
+    /* The WLSESSION::LastLogon is initialized to 0 so this is OK */
+    return (Session->LastLogon.QuadPart == 0);
+}
 
 /* environment.c */
 BOOL
@@ -320,6 +350,41 @@ InitializeScreenSaver(IN OUT PWLSESSION Session);
 VOID
 StartScreenSaver(IN PWLSESSION Session);
 
+/* security.c */
+PSECURITY_DESCRIPTOR
+ConvertToSelfRelative(
+    _In_ PSECURITY_DESCRIPTOR AbsoluteSd);
+
+BOOL
+CreateWinstaSecurity(
+    _Out_ PSECURITY_DESCRIPTOR *WinstaSd);
+
+BOOL
+CreateApplicationDesktopSecurity(
+    _Out_ PSECURITY_DESCRIPTOR *ApplicationDesktopSd);
+
+BOOL
+CreateWinlogonDesktopSecurity(
+    _Out_ PSECURITY_DESCRIPTOR *WinlogonDesktopSd);
+
+BOOL
+CreateScreenSaverSecurity(
+    _Out_ PSECURITY_DESCRIPTOR *ScreenSaverDesktopSd);
+
+BOOL
+AllowWinstaAccessToUser(
+    _In_ HWINSTA WinSta,
+    _In_ PSID LogonSid);
+
+BOOL
+AllowDesktopAccessToUser(
+    _In_ HDESK Desktop,
+    _In_ PSID LogonSid);
+
+BOOL
+AllowAccessOnSession(
+    _In_ PWLSESSION Session);
+
 /* setup.c */
 DWORD
 GetSetupType(VOID);
@@ -340,6 +405,10 @@ StartSystemShutdown(
     IN ULONG dwReason);
 
 /* winlogon.c */
+PWSTR
+WlStrDup(
+    _In_opt_ PCWSTR String);
+
 BOOL
 PlaySoundRoutine(IN LPCWSTR FileName,
                  IN UINT Logon,
@@ -364,12 +433,8 @@ BOOL
 GinaInit(IN OUT PWLSESSION Session);
 
 BOOL
-AddAceToWindowStation(
-    IN HWINSTA WinSta,
-    IN PSID Sid);
-
-BOOL
-CreateWindowStationAndDesktops(IN OUT PWLSESSION Session);
+CreateWindowStationAndDesktops(
+    _Inout_ PWLSESSION Session);
 
 
 VOID WINAPI WlxUseCtrlAltDel(HANDLE hWlx);

@@ -1,6 +1,8 @@
 
 #include "precomp.h"
 
+#include <ndk/umtypes.h>
+
 START_TEST(LookupIconIdFromDirectoryEx)
 {
     HRSRC hResource;
@@ -22,7 +24,7 @@ START_TEST(LookupIconIdFromDirectoryEx)
         int cyDesired;
         UINT flags;
     }
-    TestData[] = 
+    TestData[] =
     {
         {8,  1,  0,  0,  0},
         {8,  1,  48, 48, 0},
@@ -83,15 +85,15 @@ START_TEST(LookupIconIdFromDirectoryEx)
     hMod = GetModuleHandle(NULL);
     ok(hMod != NULL, "\n");
     /* Find our cursor directory resource */
-    hResource = FindResourceA(hMod, 
-                            MAKEINTRESOURCE(IDI_TEST), 
+    hResource = FindResourceA(hMod,
+                            MAKEINTRESOURCE(IDI_TEST),
                             RT_GROUP_ICON);
     ok(hResource != NULL, "\n");
-    
-    hMem = LoadResource(hMod, hResource); 
+
+    hMem = LoadResource(hMod, hResource);
     ok(hMem != NULL, "\n");
- 
-    lpResource = LockResource(hMem); 
+
+    lpResource = LockResource(hMem);
     ok(lpResource != NULL, "\n");
 
     dm.dmSize = sizeof(dm);
@@ -100,7 +102,7 @@ START_TEST(LookupIconIdFromDirectoryEx)
     ok(EnumDisplaySettingsW(NULL, ENUM_CURRENT_SETTINGS, &dm), "\n");
 
     dwOrigBpp = dm.dmBitsPerPel;
-    
+
     for (i = 0; i < sizeof(TestData)/sizeof(TestData[0]); i++)
     {
         dm.dmBitsPerPel = TestData[i].bpp;
@@ -110,7 +112,7 @@ START_TEST(LookupIconIdFromDirectoryEx)
             continue;
         }
         wResId = LookupIconIdFromDirectoryEx(lpResource, TRUE, TestData[i].cxDesired, TestData[i].cyDesired, TestData[i].flags);
-        ok(wResId == TestData[i].wResId, "Got %d, expected %d for %dx%dx%lu, flags %x.\n", 
+        ok(wResId == TestData[i].wResId, "Got %d, expected %d for %dx%dx%lu, flags %x.\n",
             wResId,
             TestData[i].wResId,
             TestData[i].cxDesired,
@@ -124,4 +126,12 @@ START_TEST(LookupIconIdFromDirectoryEx)
     ok(ChangeDisplaySettingsExW(NULL, &dm, NULL, 0, NULL) == DISP_CHANGE_SUCCESSFUL, "\n");
 
     FreeResource(hMem);
+
+    /* Test invalid directory */
+    StartSeh()
+        SetLastError(0xdeadbeef);
+        wResId = LookupIconIdFromDirectoryEx((PBYTE)(LONG_PTR)0xdeadbeef, TRUE, 0, 0, LR_DEFAULTSIZE);
+        ok_eq_int(wResId, 0);
+        ok_eq_ulong(GetLastError(), 0xdeadbeef);
+    EndSeh(STATUS_SUCCESS);
 }

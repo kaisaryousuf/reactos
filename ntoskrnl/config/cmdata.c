@@ -54,23 +54,23 @@ UNICODE_STRING CmSymbolicLinkValueName =
 
 UNICODE_STRING CmpLoadOptions;
 
+/* TRUE if all hives must be loaded in shared mode */
+ULONG CmpVolatileBoot;
+/* TRUE if the system hives must be loaded in shared mode */
 BOOLEAN CmpShareSystemHives;
-BOOLEAN CmSelfHeal = TRUE;
-BOOLEAN CmpSelfHeal = TRUE;
+/* TRUE when the registry is in PE mode */
 BOOLEAN CmpMiniNTBoot;
+
 ULONG CmpBootType;
+ULONG CmSelfHeal = TRUE;
+BOOLEAN CmpSelfHeal = TRUE;
 
 USHORT CmpUnknownBusCount;
 ULONG CmpTypeCount[MaximumType + 1];
 
 HANDLE CmpRegistryRootHandle;
 
-// for MSVC, this is required before using DATA_SEG
-#ifdef _MSC_VER
-# pragma section("INIT", read,execute,discard)
-#endif
-
-DATA_SEG("INIT") UNICODE_STRING CmClassName[MaximumClass + 1] =
+DATA_SEG("INITDATA") UNICODE_STRING CmClassName[MaximumClass + 1] =
 {
     RTL_CONSTANT_STRING(L"System"),
     RTL_CONSTANT_STRING(L"Processor"),
@@ -82,7 +82,7 @@ DATA_SEG("INIT") UNICODE_STRING CmClassName[MaximumClass + 1] =
     RTL_CONSTANT_STRING(L"Undefined")
 };
 
-DATA_SEG("INIT") UNICODE_STRING CmTypeName[MaximumType + 1] =
+DATA_SEG("INITDATA") UNICODE_STRING CmTypeName[MaximumType + 1] =
 {
     RTL_CONSTANT_STRING(L"System"),
     RTL_CONSTANT_STRING(L"CentralProcessor"),
@@ -128,7 +128,7 @@ DATA_SEG("INIT") UNICODE_STRING CmTypeName[MaximumType + 1] =
     RTL_CONSTANT_STRING(L"Undefined")
 };
 
-DATA_SEG("INIT") CMP_MF_TYPE CmpMultifunctionTypes[] =
+DATA_SEG("INITDATA") CMP_MF_TYPE CmpMultifunctionTypes[] =
 {
     {"ISA", Isa, 0},
     {"MCA", MicroChannel, 0},
@@ -141,7 +141,7 @@ DATA_SEG("INIT") CMP_MF_TYPE CmpMultifunctionTypes[] =
     {NULL, Internal, 0}
 };
 
-DATA_SEG("INIT") CM_SYSTEM_CONTROL_VECTOR CmControlVector[] =
+DATA_SEG("INITDATA") CM_SYSTEM_CONTROL_VECTOR CmControlVector[] =
 {
     {
         L"Session Manager",
@@ -543,6 +543,13 @@ DATA_SEG("INIT") CM_SYSTEM_CONTROL_VECTOR CmControlVector[] =
         NULL
     },
     {
+        L"Session Manager\\Kernel",
+        L"ObCaseInsensitive",
+        &ObpCaseInsensitive,
+        NULL,
+        NULL
+    },
+    {
         L"Session Manager\\I/O System",
         L"CountOperations",
         &DummyData,
@@ -558,6 +565,13 @@ DATA_SEG("INIT") CM_SYSTEM_CONTROL_VECTOR CmControlVector[] =
     },
     {
         L"Session Manager\\I/O System",
+        L"IoCaseInsensitive",
+        &IopCaseInsensitive,
+        NULL,
+        NULL
+    },
+    {
+        L"Session Manager\\I/O System",
         L"IoVerifierLevel",
         &DummyData,
         NULL,
@@ -566,7 +580,7 @@ DATA_SEG("INIT") CM_SYSTEM_CONTROL_VECTOR CmControlVector[] =
     {
         L"Session Manager",
         L"ResourceTimeoutCount",
-        &DummyData,
+        &ExpResourceTimeoutCount,
         NULL,
         NULL
     },
@@ -626,8 +640,6 @@ DATA_SEG("INIT") CM_SYSTEM_CONTROL_VECTOR CmControlVector[] =
         NULL,
         NULL
     },
-
-
     {
         L"ProductOptions",
         L"ProductSuite",
@@ -669,6 +681,41 @@ DATA_SEG("INIT") CM_SYSTEM_CONTROL_VECTOR CmControlVector[] =
         &DummyData,
         &DummyData,
         &DummyData
+    },
+    {
+        L"Session Manager\\Configuration Manager",
+        L"SelfHealingEnabled",
+        &CmSelfHeal,
+        NULL,
+        NULL
+    },
+    {
+        L"Session Manager\\Configuration Manager",
+        L"RegistryLazyFlushInterval",
+        &CmpLazyFlushIntervalInSeconds,
+        NULL,
+        NULL
+    },
+    {
+        L"Session Manager\\Configuration Manager",
+        L"RegistryLazyFlushHiveCount",
+        &CmpLazyFlushHiveCount,
+        NULL,
+        NULL
+    },
+    {
+        L"Session Manager\\Configuration Manager",
+        L"DelayCloseSize",
+        &CmpDelayedCloseSize,
+        NULL,
+        NULL
+    },
+    {
+        L"Session Manager\\Configuration Manager",
+        L"VolatileBoot",
+        &CmpVolatileBoot,
+        NULL,
+        NULL
     },
     {
         L"Session Manager",
@@ -925,6 +972,13 @@ DATA_SEG("INIT") CM_SYSTEM_CONTROL_VECTOR CmControlVector[] =
         L"WMI\\Trace",
         L"TraceAlignment",
         &DummyData,
+        NULL,
+        NULL
+    },
+    {
+        L"CrashControl",
+        L"AutoReboot",
+        &IopAutoReboot,
         NULL,
         NULL
     },

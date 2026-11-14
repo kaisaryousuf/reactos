@@ -114,7 +114,7 @@ ExpReleaseOrWaitForKeyedEvent(
     _Inout_ PEX_KEYED_EVENT KeyedEvent,
     _In_ PVOID KeyedWaitValue,
     _In_ BOOLEAN Alertable,
-    _In_ PLARGE_INTEGER Timeout,
+    _In_opt_ PLARGE_INTEGER Timeout,
     _In_ BOOLEAN Release)
 {
     PETHREAD Thread, CurrentThread;
@@ -123,6 +123,7 @@ ExpReleaseOrWaitForKeyedEvent(
     NTSTATUS Status;
     ULONG_PTR HashIndex;
     PVOID PreviousKeyedWaitValue;
+    KPROCESSOR_MODE PreviousMode;
 
     /* Get the current process */
     CurrentProcess = PsGetCurrentProcess();
@@ -203,9 +204,10 @@ ExpReleaseOrWaitForKeyedEvent(
     KeLeaveCriticalRegion();
 
     /* Wait for the keyed wait semaphore */
+    PreviousMode = KeGetPreviousMode();
     Status = KeWaitForSingleObject(&CurrentThread->KeyedWaitSemaphore,
                                    WrKeyedEvent,
-                                   KernelMode,
+                                   PreviousMode,
                                    Alertable,
                                    Timeout);
 
@@ -242,7 +244,7 @@ ExpWaitForKeyedEvent(
     _Inout_ PEX_KEYED_EVENT KeyedEvent,
     _In_ PVOID KeyedWaitValue,
     _In_ BOOLEAN Alertable,
-    _In_ PLARGE_INTEGER Timeout)
+    _In_opt_ PLARGE_INTEGER Timeout)
 {
     /* Call the generic internal function */
     return ExpReleaseOrWaitForKeyedEvent(KeyedEvent,

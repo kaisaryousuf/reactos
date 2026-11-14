@@ -65,15 +65,17 @@ extern "C" {
 
 typedef GUID UUID;
 
+/* Forward declarations */
 struct _LOADER_PARAMETER_BLOCK;
 struct _CREATE_DISK;
 struct _DRIVE_LAYOUT_INFORMATION_EX;
 struct _SET_PARTITION_INFORMATION_EX;
 struct _DISK_GEOMETRY_EX;
 
+/* Structures not exposed to drivers */
 typedef struct _BUS_HANDLER *PBUS_HANDLER;
 typedef struct _DEVICE_HANDLER_OBJECT *PDEVICE_HANDLER_OBJECT;
-#if defined(_NTHAL_INCLUDED_)
+#if defined(_NTHAL_INCLUDED_) || defined(__REACTOS__)
 typedef struct _KAFFINITY_EX *PKAFFINITY_EX;
 #endif
 typedef struct _PEB *PPEB;
@@ -102,6 +104,7 @@ $include (mmtypes.h)
 $include (pstypes.h)
 $include (rtltypes.h)
 $include (setypes.h)
+$include (wheatypes.h)
 
 #if defined(_M_IX86)
 $include(x86/ke.h)
@@ -118,6 +121,9 @@ $include(mips/ke.h)
 #elif defined(_M_ARM)
 $include(arm/ke.h)
 $include(arm/mm.h)
+#elif defined(_M_ARM64)
+$include(arm64/ke.h)
+$include(arm64/mm.h)
 #else
 #error Unknown Architecture
 #endif

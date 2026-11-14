@@ -1,11 +1,10 @@
 /*
- * COPYRIGHT:       See COPYING in the top level directory
- * PROJECT:         ReactOS system libraries
- * FILE:            win32ss/user/user32/controls/appswitch.c
- * PURPOSE:         app switching functionality
- * PROGRAMMERS:     Johannes Anderwald (johannes.anderwald@reactos.org)
- *                  David Quintana (gigaherz@gmail.com)
- *                  Katayama Hirofumi MZ (katayama.hirofumi.mz@gmail.com)
+ * PROJECT:     ReactOS user32.dll
+ * LICENSE:     GPL-2.0-or-later (https://spdx.org/licenses/GPL-2.0-or-later)
+ * PURPOSE:     App switching functionality
+ * COPYRIGHT:   Copyright Johannes Anderwald (johannes.anderwald@reactos.org)
+ *              Copyright David Quintana (gigaherz@gmail.com)
+ *              Copyright Katayama Hirofumi MZ (katayama.hirofumi.mz@gmail.com)
  */
 
 //
@@ -63,39 +62,70 @@ int nShift = 0;
 
 BOOL Esc = FALSE;
 
+enum { DefSwitchRows = 3, DefSwitchColumns = 7 };
 BOOL CoolSwitch = TRUE;
-int CoolSwitchRows = 3;
-int CoolSwitchColumns = 7;
+int CoolSwitchRows = DefSwitchRows;
+int CoolSwitchColumns = DefSwitchColumns;
+BOOL SettingsLoaded = FALSE;
 
 // window style
 const DWORD Style = WS_POPUP | WS_BORDER | WS_DISABLED;
 const DWORD ExStyle = WS_EX_TOPMOST | WS_EX_DLGMODALFRAME | WS_EX_TOOLWINDOW;
 
-DWORD wtodw(const WCHAR *psz)
+static int GetRegInt(HKEY hKey, PCWSTR Name, int DefVal)
 {
-   const WCHAR *pch = psz;
-   DWORD Value = 0;
-   while ('0' <= *pch && *pch <= '9')
-   {
-      Value *= 10;
-      Value += *pch - L'0';
-   }
-   return Value;
+    WCHAR buf[sizeof("-2147483648")];
+    DWORD cb = sizeof(buf), type;
+    DWORD err = RegQueryValueExW(hKey, Name, NULL, &type, (BYTE*)buf, &cb);
+    if (err == ERROR_SUCCESS && cb <= sizeof(buf) - sizeof(*buf))
+    {
+        buf[cb / sizeof(*buf)] = UNICODE_NULL;
+        if (type == REG_SZ || type == REG_EXPAND_SZ)
+        {
+            WCHAR *pszEnd;
+            long Value = wcstol(buf, &pszEnd, 10);
+            return pszEnd > buf ? Value : DefVal;
+        }
+        if ((type == REG_DWORD || type == REG_BINARY) && cb == sizeof(DWORD))
+        {
+            return *(DWORD*)buf;
+        }
+    }
+    return DefVal;
 }
 
-BOOL LoadCoolSwitchSettings(void)
+static void LoadCoolSwitchSettings(void)
 {
-   CoolSwitch = TRUE;
-   CoolSwitchRows = 3;
-   CoolSwitchColumns = 7;
+    HKEY hKey;
 
-   // FIXME: load the settings from registry
+    if (SettingsLoaded
+#if DBG
+        && !(GetKeyState(VK_SCROLL) & 1) // If Scroll-Lock is on, always read the settings
+#endif
+        )
+    {
+        return;
+    }
 
-   TRACE("CoolSwitch: %d\n", CoolSwitch);
-   TRACE("CoolSwitchRows: %d\n", CoolSwitchRows);
-   TRACE("CoolSwitchColumns: %d\n", CoolSwitchColumns);
+    SettingsLoaded = TRUE;
+    // TODO: Should read from win.ini instead when IniFileMapping is implemented
+    if (!RegOpenKeyExW(HKEY_CURRENT_USER, L"Control Panel\\Desktop", 0, KEY_READ, &hKey))
+    {
+        CoolSwitch = GetRegInt(hKey, L"CoolSwitch", TRUE);
+        CoolSwitchRows = GetRegInt(hKey, L"CoolSwitchRows", DefSwitchRows);
+        CoolSwitchColumns = GetRegInt(hKey, L"CoolSwitchColumns", DefSwitchColumns);
+        RegCloseKey(hKey);
+    }
 
-   return TRUE;
+    if (CoolSwitchRows * CoolSwitchColumns < 3)
+    {
+        CoolSwitchRows = DefSwitchRows;
+        CoolSwitchColumns = DefSwitchColumns;
+    }
+
+    TRACE("CoolSwitch: %d\n", CoolSwitch);
+    TRACE("CoolSwitchRows: %d\n", CoolSwitchRows);
+    TRACE("CoolSwitchColumns: %d\n", CoolSwitchColumns);
 }
 
 void ResizeAndCenter(HWND hwnd, int width, int height)
@@ -122,15 +152,6 @@ void ResizeAndCenter(HWND hwnd, int width, int height)
    ptStart.y = y;
 }
 
-void MakeWindowActive(HWND hwnd)
-{
-   if (IsIconic(hwnd))
-      PostMessageW(hwnd, WM_SYSCOMMAND, SC_RESTORE, 0);
-
-   BringWindowToTop(hwnd);  // same as: SetWindowPos(hwnd,HWND_TOP,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE); ?
-   SetForegroundWindow(hwnd);
-}
-
 void CompleteSwitch(BOOL doSwitch)
 {
    if (!isOpen)
@@ -139,7 +160,7 @@ void CompleteSwitch(BOOL doSwitch)
    isOpen = FALSE;
 
    TRACE("[ATbot] CompleteSwitch Hiding Window.\n");
-   ShowWindow(switchdialog, SW_HIDE);
+   ShowWindowAsync(switchdialog, SW_HIDE);
 
    if(doSwitch)
    {
@@ -155,7 +176,7 @@ void CompleteSwitch(BOOL doSwitch)
 
          TRACE("[ATbot] CompleteSwitch Switching to 0x%08x (%ls)\n", hwnd, windowText);
 
-         MakeWindowActive(hwnd);
+         SwitchToThisWindow(hwnd, TRUE);
       }
    }
 
@@ -164,45 +185,49 @@ void CompleteSwitch(BOOL doSwitch)
 
 BOOL CALLBACK EnumerateCallback(HWND window, LPARAM lParam)
 {
-   HICON hIcon;
+    HICON hIcon = NULL;
+    LRESULT bAlive;
 
-   UNREFERENCED_PARAMETER(lParam);
+    UNREFERENCED_PARAMETER(lParam);
 
-   // First try to get the big icon assigned to the window
-   hIcon = (HICON)SendMessageW(window, WM_GETICON, ICON_BIG, 0);
-   if (!hIcon)
-   {
-      // If no icon is assigned, try to get the icon assigned to the windows' class
-      hIcon = (HICON)GetClassLongPtrW(window, GCL_HICON);
-      if (!hIcon)
-      {
-         // If we still don't have an icon, see if we can do with the small icon,
-         // or a default application icon
-         hIcon = (HICON)SendMessageW(window, WM_GETICON, ICON_SMALL2, 0);
-         if (!hIcon)
-         {
-            // using windows logo icon as default
-            hIcon = gpsi->hIconWindows;
+    // First try to get the big icon assigned to the window
+#define ICON_TIMEOUT 100 // in milliseconds
+    bAlive = SendMessageTimeoutW(window, WM_GETICON, ICON_BIG, 0, SMTO_ABORTIFHUNG | SMTO_BLOCK,
+                                 ICON_TIMEOUT, (PDWORD_PTR)&hIcon);
+    if (!hIcon)
+    {
+        // If no icon is assigned, try to get the icon assigned to the windows' class
+        hIcon = (HICON)GetClassLongPtrW(window, GCL_HICON);
+        if (!hIcon)
+        {
+            // If we still don't have an icon, see if we can do with the small icon,
+            // or a default application icon
+            if (bAlive)
+            {
+                SendMessageTimeoutW(window, WM_GETICON, ICON_SMALL2, 0,
+                                    SMTO_ABORTIFHUNG | SMTO_BLOCK, ICON_TIMEOUT,
+                                    (PDWORD_PTR)&hIcon);
+            }
+#undef ICON_TIMEOUT
             if (!hIcon)
             {
-               //if all attempts to get icon fails go to the next window
-               return TRUE;
+                // using windows logo icon as default
+                hIcon = gpsi->hIconWindows;
+                if (!hIcon)
+                {
+                    //if all attempts to get icon fails go to the next window
+                    return TRUE;
+                }
             }
-         }
-      }
-   }
+        }
+    }
 
-   windowList[windowCount] = window;
-   iconList[windowCount] = CopyIcon(hIcon);
+    windowList[windowCount] = window;
+    iconList[windowCount] = CopyIcon(hIcon);
+    windowCount++;
 
-   windowCount++;
-
-   // If we got to the max number of windows,
-   // we won't be able to add any more
-   if(windowCount >= MAX_WINDOWS)
-      return FALSE;
-
-   return TRUE;
+    // If we got to the max number of windows, we won't be able to add any more
+    return (windowCount < MAX_WINDOWS);
 }
 
 static HWND GetNiceRootOwner(HWND hwnd)
@@ -230,10 +255,10 @@ static HWND GetNiceRootOwner(HWND hwnd)
     return hwnd;
 }
 
-// c.f. http://blogs.msdn.com/b/oldnewthing/archive/2007/10/08/5351207.aspx
+// c.f. https://devblogs.microsoft.com/oldnewthing/20071008-00/?p=24863
 BOOL IsAltTabWindow(HWND hwnd)
 {
-    DWORD ExStyle;
+    LONG_PTR ExStyle, ClassStyle;
     RECT rc;
     HWND hwndTry, hwndWalk;
     WCHAR szClass[64];
@@ -242,9 +267,9 @@ BOOL IsAltTabWindow(HWND hwnd)
     if (!IsWindowVisible(hwnd))
         return FALSE;
 
-    // must not be WS_EX_TOOLWINDOW
-    ExStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
-    if (ExStyle & WS_EX_TOOLWINDOW)
+    // must not be WS_EX_TOOLWINDOW nor WS_EX_NOACTIVATE
+    ExStyle = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+    if (ExStyle & (WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE))
         return FALSE;
 
     // must be not empty rect
@@ -259,6 +284,11 @@ BOOL IsAltTabWindow(HWND hwnd)
     {
         return TRUE;
     }
+
+    // must not be an IME-related window
+    ClassStyle = GetClassLongPtrW(hwnd, GCL_STYLE);
+    if (ClassStyle & CS_IME)
+        return FALSE;
 
     // get 'nice' root owner
     hwndWalk = GetNiceRootOwner(hwnd);
@@ -481,7 +511,7 @@ BOOL ProcessHotKey(VOID)
 
       if (windowCount == 1)
       {
-         MakeWindowActive(windowList[0]);
+         SwitchToThisWindow(windowList[0], TRUE);
          return FALSE;
       }
 
@@ -491,8 +521,8 @@ BOOL ProcessHotKey(VOID)
       selectedWindow = 1;
 
       TRACE("[ATbot] HotKey Received. Opening window.\n");
-      ShowWindow(switchdialog, SW_SHOWNORMAL);
-      MakeWindowActive(switchdialog);
+      ShowWindowAsync(switchdialog, SW_SHOWNORMAL);
+      SwitchToThisWindow(switchdialog, TRUE);
       isOpen = TRUE;
    }
    else
@@ -519,9 +549,9 @@ void RotateTasks(BOOL bShift)
     {
         SetWindowPos(hwndLast, HWND_TOP, 0, 0, 0, 0,
                      SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE |
-                     SWP_NOOWNERZORDER | SWP_NOREPOSITION);
+                     SWP_NOOWNERZORDER | SWP_NOREPOSITION | SWP_ASYNCWINDOWPOS);
 
-        MakeWindowActive(hwndLast);
+        SwitchToThisWindow(hwndLast, TRUE);
 
         Size = (windowCount - 1) * sizeof(HWND);
         MoveMemory(&windowList[1], &windowList[0], Size);
@@ -531,9 +561,9 @@ void RotateTasks(BOOL bShift)
     {
         SetWindowPos(hwndFirst, hwndLast, 0, 0, 0, 0,
                      SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE |
-                     SWP_NOOWNERZORDER | SWP_NOREPOSITION);
+                     SWP_NOOWNERZORDER | SWP_NOREPOSITION | SWP_ASYNCWINDOWPOS);
 
-        MakeWindowActive(windowList[1]);
+        SwitchToThisWindow(windowList[1], TRUE);
 
         Size = (windowCount - 1) * sizeof(HWND);
         MoveMemory(&windowList[0], &windowList[1], Size);

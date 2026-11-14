@@ -188,6 +188,10 @@ BOOLEAN TCPRemoveIRP( PCONNECTION_ENDPOINT Connection, PIRP Irp );
 
 NTSTATUS TCPSetNoDelay(PCONNECTION_ENDPOINT Connection, BOOLEAN Set);
 
+NTSTATUS TCPSetKeepAlive(PCONNECTION_ENDPOINT Connection, BOOLEAN Set);
+
+NTSTATUS TCPSetKeepAliveValues(PCONNECTION_ENDPOINT Connection, DWORD KeepAliveTime, DWORD KeepAliveInterval);
+
 VOID
 TCPUpdateInterfaceLinkStatus(PIP_INTERFACE IF);
 
@@ -201,13 +205,13 @@ VOID
 FlushConnectQueue(PCONNECTION_ENDPOINT Connection, const NTSTATUS Status);
 
 VOID
-FlushReceiveQueue(PCONNECTION_ENDPOINT Connection, const NTSTATUS Status, const BOOLEAN interlocked);
+FlushReceiveQueue(PCONNECTION_ENDPOINT Connection, const NTSTATUS Status);
 
 VOID
-FlushSendQueue(PCONNECTION_ENDPOINT Connection, const NTSTATUS Status, const BOOLEAN interlocked);
+FlushSendQueue(PCONNECTION_ENDPOINT Connection, const NTSTATUS Status);
 
 VOID
-FlushShutdownQueue(PCONNECTION_ENDPOINT Connection, const NTSTATUS Status, const BOOLEAN interlocked);
+FlushShutdownQueue(PCONNECTION_ENDPOINT Connection, const NTSTATUS Status);
 
 VOID
 FlushAllQueues(PCONNECTION_ENDPOINT Connection, NTSTATUS Status);

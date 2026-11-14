@@ -207,10 +207,43 @@ static PVOID AllocSysObject(
     return Object;
 }
 
+_Success_(return!=NULL)
+static PVOID AllocSysObjectCB(
+    _In_ PDESKTOP pDesk,
+    _In_ PTHREADINFO pti,
+    _In_ SIZE_T Size,
+    _Out_ PVOID* ObjectOwner)
+{
+    PVOID Object;
+
+    UNREFERENCED_PARAMETER(pDesk);
+    UNREFERENCED_PARAMETER(pti);
+    ASSERT(Size > sizeof(HEAD));
+
+    /* Allocate the clipboard data */
+    // FIXME: This allocation should be done on the current session pool;
+    // however ReactOS' MM doesn't support session pool yet.
+    Object = ExAllocatePoolZero(/* SESSION_POOL_MASK | */ PagedPool, Size, USERTAG_CLIPBOARD);
+    if (!Object)
+    {
+        ERR("ExAllocatePoolZero failed. No object created.\n");
+        return NULL;
+    }
+
+    *ObjectOwner = NULL;
+    return Object;
+}
+
 static void FreeSysObject(
     _In_ PVOID Object)
 {
     UserHeapFree(Object);
+}
+
+static void FreeSysObjectCB(
+    _In_ PVOID Object)
+{
+    ExFreePoolWithTag(Object, USERTAG_CLIPBOARD);
 }
 
 static const struct
@@ -226,7 +259,7 @@ static const struct
     { AllocProcMarkObject,      IntDestroyCurIconObject,    FreeCurIconObject },    /* TYPE_CURSOR */
     { AllocSysObject,           /*UserSetWindowPosCleanup*/NULL, FreeSysObject },   /* TYPE_SETWINDOWPOS */
     { AllocDeskThreadObject,    IntRemoveHook,              FreeDeskThreadObject }, /* TYPE_HOOK */
-    { AllocSysObject,           /*UserClipDataCleanup*/NULL,FreeSysObject },        /* TYPE_CLIPDATA */
+    { AllocSysObjectCB,         /*UserClipDataCleanup*/NULL,FreeSysObjectCB },      /* TYPE_CLIPDATA */
     { AllocDeskProcObject,      DestroyCallProc,            FreeDeskProcObject },   /* TYPE_CALLPROC */
     { AllocProcMarkObject,      UserDestroyAccelTable,      FreeProcMarkObject },   /* TYPE_ACCELTABLE */
     { NULL,                     NULL,                       NULL },                 /* TYPE_DDEACCESS */
@@ -237,7 +270,7 @@ static const struct
     { AllocSysObject,           /*UserKbdFileCleanup*/NULL, FreeSysObject },        /* TYPE_KBDFILE */
     { AllocThreadObject,        IntRemoveEvent,             FreeThreadObject },     /* TYPE_WINEVENTHOOK */
     { AllocSysObject,           /*UserTimerCleanup*/NULL,   FreeSysObject },        /* TYPE_TIMER */
-    { NULL,                     NULL,                       NULL },                 /* TYPE_INPUTCONTEXT */
+    { AllocInputContextObject,  UserDestroyInputContext,    UserFreeInputContext }, /* TYPE_INPUTCONTEXT */
     { NULL,                     NULL,                       NULL },                 /* TYPE_HIDDATA */
     { NULL,                     NULL,                       NULL },                 /* TYPE_DEVICEINFO */
     { NULL,                     NULL,                       NULL },                 /* TYPE_TOUCHINPUTINFO */
@@ -408,6 +441,10 @@ __inline static void *free_user_entry(PUSER_HANDLE_TABLE ht, PUSER_HANDLE_ENTRY 
            ppi->DbgHandleCount[entry->type]--;
    }
 #endif
+
+   /* The slot is about to be reused, so no job may keep a grant on it */
+   if (entry->flags & HANDLEENTRY_GRANTED)
+      IntCleanupGrantedHandle(entry_to_handle(ht, entry));
 
    ret = entry->ptr;
    entry->ptr  = ht->freelist;
@@ -659,7 +696,8 @@ UserFreeHandle(PUSER_HANDLE_TABLE ht,  HANDLE handle )
      return FALSE;
   }
 
-  entry->flags = HANDLEENTRY_INDESTROY;
+  /* HANDLEENTRY_GRANTED has to survive for free_user_entry */
+  entry->flags = (entry->flags & HANDLEENTRY_GRANTED) | HANDLEENTRY_INDESTROY;
 
   return UserDereferenceObject(entry->ptr);
 }
@@ -676,6 +714,25 @@ UserObjectInDestroy(HANDLE h)
      return TRUE;
   }
   return (entry->flags & HANDLEENTRY_INDESTROY);
+}
+
+/*
+ * Validates a USER handle that is about to be granted to a job, and marks it
+ * so that freeing it withdraws the grant again. The mark is not cleared on
+ * revoke; it only says the granted lists are worth sweeping.
+ */
+BOOL
+FASTCALL
+UserMarkHandleGranted(HANDLE h)
+{
+    PUSER_HANDLE_ENTRY entry;
+
+    entry = handle_to_entry(gHandleTable, h);
+    if (entry == NULL)
+        return FALSE;
+
+    entry->flags |= HANDLEENTRY_GRANTED;
+    return TRUE;
 }
 
 BOOL
@@ -761,14 +818,14 @@ NtUserValidateHandleSecure(
    UINT uType;
    PPROCESSINFO ppi;
    PUSER_HANDLE_ENTRY entry;
+   BOOL Ret = FALSE;
 
-   DECLARE_RETURN(BOOL);
    UserEnterExclusive();
 
    if (!(entry = handle_to_entry(gHandleTable, handle )))
    {
       EngSetLastError(ERROR_INVALID_HANDLE);
-      RETURN( FALSE);
+      goto Exit; // Return FALSE
    }
    uType = entry->type;
    switch (uType)
@@ -790,14 +847,47 @@ NtUserValidateHandleSecure(
           break;
    }
 
-   if (!ppi) RETURN( FALSE);
+   if (!ppi)
+       goto Exit; // Return FALSE
 
    // Same process job returns TRUE.
-   if (gptiCurrent->ppi->pW32Job == ppi->pW32Job) RETURN( TRUE);
+   if (gptiCurrent->ppi->pW32Job == ppi->pW32Job) Ret = TRUE;
 
-   RETURN( FALSE);
-
-CLEANUP:
+Exit:
    UserLeave();
-   END_CLEANUP;
+   return Ret;
+}
+
+PVOID FASTCALL UserAssignmentLock(PVOID *ppvObj, PVOID pvNew)
+{
+    PVOID pvOld = *ppvObj;
+    *ppvObj = pvNew;
+
+    if (pvOld && pvOld == pvNew)
+        return pvOld;
+
+    if (pvNew)
+        UserReferenceObject(pvNew);
+
+    if (pvOld)
+    {
+        if (UserDereferenceObject(pvOld))
+            pvOld = NULL;
+    }
+
+    return pvOld;
+}
+
+PVOID FASTCALL UserAssignmentUnlock(PVOID *ppvObj)
+{
+    PVOID pvOld = *ppvObj;
+    *ppvObj = NULL;
+
+    if (pvOld)
+    {
+        if (UserDereferenceObject(pvOld))
+            pvOld = NULL;
+    }
+
+    return pvOld;
 }

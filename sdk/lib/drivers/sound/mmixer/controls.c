@@ -5,10 +5,10 @@
  * PURPOSE:         Mixer Control Iteration Functions
  * PROGRAMMER:      Johannes Anderwald
  */
- 
+
 #include "precomp.h"
 
-#define YDEBUG
+// #define NDEBUG
 #include <debug.h>
 
 const GUID KSNODETYPE_DESKTOP_MICROPHONE = {0xDFF21BE2, 0xF70F, 0x11D0, {0xB9, 0x17, 0x00, 0xA0, 0xC9, 0x22, 0x31, 0x96}};
@@ -55,7 +55,6 @@ MMixerAddMixerControl(
         /* no memory */
         return MM_STATUS_NO_MEMORY;
     }
-
 
     /* initialize mixer control */
     MixerControl->hDevice = hMixer;
@@ -160,6 +159,7 @@ MMixerAddMixerControl(
         PKSPROPERTY_DESCRIPTION Desc;
         PKSPROPERTY_MEMBERSHEADER Members;
         PKSPROPERTY_STEPPING_LONG Range;
+        LPMIXERVOLUME_DATA VolumeData;
 
         MixerControl->Control.Bounds.dwMinimum = 0;
         MixerControl->Control.Bounds.dwMaximum = 0xFFFF;
@@ -180,54 +180,38 @@ MMixerAddMixerControl(
         /* get node volume level info */
         Status = MixerContext->Control(hMixer, IOCTL_KS_PROPERTY, (PVOID)&Property, sizeof(KSNODEPROPERTY_AUDIO_CHANNEL), Desc, Length, &BytesReturned);
 
+        VolumeData = (LPMIXERVOLUME_DATA)MixerContext->Alloc(sizeof(*VolumeData));
+        if (!VolumeData)
+            return MM_STATUS_NO_MEMORY;
+
         if (Status == MM_STATUS_SUCCESS)
         {
-            LPMIXERVOLUME_DATA VolumeData;
-            ULONG Steps, MaxRange, Index;
-            LONG Value;
-
             Members = (PKSPROPERTY_MEMBERSHEADER)(Desc + 1);
             Range = (PKSPROPERTY_STEPPING_LONG)(Members + 1);
 
             DPRINT("NodeIndex %u Range Min %d Max %d Steps %x UMin %x UMax %x\n", NodeIndex, Range->Bounds.SignedMinimum, Range->Bounds.SignedMaximum, Range->SteppingDelta, Range->Bounds.UnsignedMinimum, Range->Bounds.UnsignedMaximum);
 
-            MaxRange = Range->Bounds.UnsignedMaximum  - Range->Bounds.UnsignedMinimum;
+            /* Store mixer control info there */
+            VolumeData->Header.dwControlID = MixerControl->Control.dwControlID;
+            VolumeData->SignedMinimum = Range->Bounds.SignedMinimum;
+            VolumeData->SignedMaximum = Range->Bounds.SignedMaximum;
 
-            if (MaxRange)
+            /* Fallback to defaults if: 1) the range is not defined (typically is 0) */
+            if (VolumeData->SignedMinimum == VolumeData->SignedMaximum)
             {
-                ASSERT(MaxRange);
-                VolumeData = (LPMIXERVOLUME_DATA)MixerContext->Alloc(sizeof(MIXERVOLUME_DATA));
-                if (!VolumeData)
-                    return MM_STATUS_NO_MEMORY;
-
-                Steps = MaxRange / Range->SteppingDelta + 1;
-
-                /* store mixer control info there */
-                VolumeData->Header.dwControlID = MixerControl->Control.dwControlID;
-                VolumeData->SignedMaximum = Range->Bounds.SignedMaximum;
-                VolumeData->SignedMinimum = Range->Bounds.SignedMinimum;
-                VolumeData->SteppingDelta = Range->SteppingDelta;
-                VolumeData->ValuesCount = Steps;
-                VolumeData->InputSteppingDelta = 0x10000 / Steps;
-
-                VolumeData->Values = (PLONG)MixerContext->Alloc(sizeof(LONG) * Steps);
-                if (!VolumeData->Values)
-                {
-                    MixerContext->Free(Desc);
-                    MixerContext->Free(VolumeData);
-                    return MM_STATUS_NO_MEMORY;
-                }
-
-                Value = Range->Bounds.SignedMinimum;
-                for(Index = 0; Index < Steps; Index++)
-                {
-                    VolumeData->Values[Index] = Value;
-                    Value += Range->SteppingDelta;
-                }
-                MixerControl->ExtraData = VolumeData;
-           }
-       }
-       MixerContext->Free(Desc);
+                VolumeData->SignedMinimum = -96 * 0x10000; // -96 DB
+                VolumeData->SignedMaximum = 0; // 0 DB
+            }
+        }
+        else
+        {
+            /* or 2) when some failure occurs */
+            VolumeData->Header.dwControlID = MixerControl->Control.dwControlID;
+            VolumeData->SignedMinimum = -96 * 0x10000; // -96 DB
+            VolumeData->SignedMaximum = 0; // 0 DB
+        }
+        MixerControl->ExtraData = VolumeData;
+        MixerContext->Free(Desc);
     }
 
     DPRINT("Status %x Name %S\n", Status, MixerControl->Control.szName);
@@ -262,7 +246,6 @@ MMixerCreateDestinationLine(
     DestinationLine->Line.dwSource = MAXULONG;
     DestinationLine->Line.dwUser = 0;
     DestinationLine->Line.fdwLine = MIXERLINE_LINEF_ACTIVE;
-
 
     if (LineName)
     {
@@ -564,7 +547,6 @@ MMixerGetChannelCountEnhanced(
     Request.Property.Flags = KSPROPERTY_TYPE_BASICSUPPORT | KSPROPERTY_TYPE_TOPOLOGY;
     Request.Property.Id = KSPROPERTY_AUDIO_VOLUMELEVEL;
 
-
     /* get description */
     Status = MixerContext->Control(hMixer, IOCTL_KS_PROPERTY, (PVOID)&Request, sizeof(KSP_NODE), (PVOID)&Description, sizeof(KSPROPERTY_DESCRIPTION), &BytesReturned);
     if (Status == MM_STATUS_SUCCESS)
@@ -771,7 +753,6 @@ MMixerGetComponentAndTargetType(
     Request.Property.Flags = KSPROPERTY_TYPE_GET;
     Request.Property.Set = KSPROPSETID_Pin;
     Request.Property.Id = KSPROPERTY_PIN_CATEGORY;
-
 
     /* get pin category */
     Status = MixerContext->Control(hMixer, IOCTL_KS_PROPERTY, (PVOID)&Request, sizeof(KSP_PIN), &Guid, sizeof(GUID), &BytesReturned);
@@ -1162,7 +1143,6 @@ MMixerAddMixerSourceLines(
 
     return MM_STATUS_SUCCESS;
 }
-
 
 MIXER_STATUS
 MMixerAddMixerControlsToDestinationLine(
@@ -1576,7 +1556,7 @@ MMixerInitializeFilter(
     /* store mixer info */
     *OutMixerInfo = MixerInfo;
 
-    /* now allocate an array which will receive the indices of the pin 
+    /* now allocate an array which will receive the indices of the pin
      * which has a ADC / DAC nodetype in its path
      */
     Status = MMixerAllocateTopologyPinArray(MixerContext, Topology, &Pins);
@@ -1623,8 +1603,7 @@ MMixerInitializeFilter(
         }
     }
 
-
-    /* now get the bridge pin which is at the end of node path 
+    /* now get the bridge pin which is at the end of node path
      * For sink pins (wave out) search down stream
      * For source pins (wave in) search up stream
      */
@@ -1829,7 +1808,6 @@ MMixerSetupFilter(
     return Status;
 }
 
-
 MIXER_STATUS
 MMixerAddEvent(
     IN PMIXER_CONTEXT MixerContext,
@@ -1886,7 +1864,7 @@ MMixerRemoveEvent(
     IN PMIXER_EVENT MixerEventRoutine)
 {
     PLIST_ENTRY EventList;
-    PEVENT_NOTIFICATION_ENTRY NotificationEntry; 
+    PEVENT_NOTIFICATION_ENTRY NotificationEntry;
 
     /* Lookup through mixers */
     EventList = MixerInfo->EventList.Flink;

@@ -4,7 +4,9 @@ add_definitions(
     -DNASSERT)
 
 list(APPEND SOURCE
+    cmcheck.c
     cminit.c
+    cmheal.c
     cmindex.c
     cmkeydel.c
     cmname.c
@@ -18,14 +20,24 @@ list(APPEND SOURCE
     cmlib.h)
 
 if(CMAKE_CROSSCOMPILING)
-    add_library(cmlib ${SOURCE})
-    add_dependencies(cmlib bugcodes xdk)
+    # CMLIB for NT bootloader
+    add_library(blcmlib STATIC ${SOURCE})
+    add_pch(blcmlib cmlib.h SOURCE)
+    target_compile_definitions(blcmlib PRIVATE _BLDR_)
+    target_include_directories(blcmlib INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
+    add_dependencies(blcmlib bugcodes xdk)
+
+    # CMLIB for NT kernel
+    add_library(cmlib STATIC ${SOURCE})
     add_pch(cmlib cmlib.h SOURCE)
+    target_include_directories(cmlib INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
+    add_dependencies(cmlib bugcodes xdk)
 else()
+    # CMLIB for host-tools
     add_definitions(
         -D__NO_CTYPE_INLINES
         -DCMLIB_HOST)
-    add_library(cmlibhost ${SOURCE})
+    add_library(cmlibhost STATIC ${SOURCE})
     target_include_directories(cmlibhost INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
 
     if(NOT MSVC)

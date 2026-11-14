@@ -6,8 +6,7 @@
 #define _INC_WINDOWS
 #define COM_NO_WINDOWS_H
 
-#define NONAMELESSUNION
-#define NONAMELESSSTRUCT
+#define OEMRESOURCE
 
 #include "urlmon_main.h"
 

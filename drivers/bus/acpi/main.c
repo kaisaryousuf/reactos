@@ -5,18 +5,11 @@
 #define NDEBUG
 #include <debug.h>
 
-NTSTATUS
-NTAPI
-DriverEntry (
-    PDRIVER_OBJECT  DriverObject,
-    PUNICODE_STRING RegistryPath
-    );
+CODE_SEG("INIT")
+DRIVER_INITIALIZE DriverEntry;
 
-#ifdef ALLOC_PRAGMA
-#pragma alloc_text (INIT, DriverEntry)
-#pragma alloc_text (PAGE, Bus_AddDevice)
-
-#endif
+CODE_SEG("PAGE")
+DRIVER_ADD_DEVICE Bus_AddDevice;
 
 extern struct acpi_device *sleep_button;
 extern struct acpi_device *power_button;
@@ -26,6 +19,7 @@ LPWSTR ProcessorIdString = NULL;
 LPWSTR ProcessorNameString = NULL;
 
 
+CODE_SEG("PAGE")
 NTSTATUS
 NTAPI
 Bus_AddDevice(
@@ -234,8 +228,6 @@ ACPIDispatchDeviceControl(
     ULONG Caps = 0;
     HANDLE ThreadHandle;
 
-    PAGED_CODE ();
-
     irpStack = IoGetCurrentIrpStackLocation (Irp);
     ASSERT (IRP_MJ_DEVICE_CONTROL == irpStack->MajorFunction);
 
@@ -247,10 +239,21 @@ ACPIDispatchDeviceControl(
     {
        switch (irpStack->Parameters.DeviceIoControl.IoControlCode)
        {
-           case IOCTL_ACPI_EVAL_METHOD:
-              status = Bus_PDO_EvalMethod((PPDO_DEVICE_DATA)commonData,
-                                          Irp);
-              break;
+            case IOCTL_ACPI_ASYNC_EVAL_METHOD:
+            {
+                ASSERT(KeGetCurrentIrql() <= DISPATCH_LEVEL);
+
+                status = Bus_PDO_EvalMethod((PPDO_DEVICE_DATA)commonData, Irp);
+                break;
+            }
+
+            case IOCTL_ACPI_EVAL_METHOD:
+            {
+                ASSERT(KeGetCurrentIrql() < DISPATCH_LEVEL);
+
+                status = Bus_PDO_EvalMethod((PPDO_DEVICE_DATA)commonData, Irp);
+                break;
+            }
 
            case IOCTL_GET_SYS_BUTTON_CAPS:
               if (irpStack->Parameters.DeviceIoControl.OutputBufferLength < sizeof(ULONG))
@@ -311,7 +314,7 @@ ACPIDispatchDeviceControl(
 
               status = STATUS_PENDING;
               break;
-           
+
            case IOCTL_BATTERY_QUERY_TAG:
               DPRINT("IOCTL_BATTERY_QUERY_TAG is not supported!\n");
               break;
@@ -336,6 +339,7 @@ ACPIDispatchDeviceControl(
 }
 
 static
+CODE_SEG("INIT")
 NTSTATUS
 AcpiRegOpenKey(IN HANDLE ParentKeyHandle,
                IN LPCWSTR KeyName,
@@ -359,6 +363,7 @@ AcpiRegOpenKey(IN HANDLE ParentKeyHandle,
 }
 
 static
+CODE_SEG("INIT")
 NTSTATUS
 AcpiRegQueryValue(IN HANDLE KeyHandle,
                   IN LPWSTR ValueName,
@@ -449,6 +454,7 @@ AcpiRegQueryValue(IN HANDLE KeyHandle,
 }
 
 static
+CODE_SEG("INIT")
 NTSTATUS
 GetProcessorInformation(VOID)
 {
@@ -628,22 +634,22 @@ GetProcessorInformation(VOID)
     }
 
     Length = 0;
-    Length += swprintf(&HardwareIdsBuffer[Length], L"ACPI\\%s_-_%.*s", ProcessorVendorIdentifier, Level1Length, ProcessorIdentifier);
+    Length += _swprintf(&HardwareIdsBuffer[Length], L"ACPI\\%s_-_%.*s", ProcessorVendorIdentifier, Level1Length, ProcessorIdentifier);
     HardwareIdsBuffer[Length++] = UNICODE_NULL;
 
-    Length += swprintf(&HardwareIdsBuffer[Length], L"*%s_-_%.*s", ProcessorVendorIdentifier, Level1Length, ProcessorIdentifier);
+    Length += _swprintf(&HardwareIdsBuffer[Length], L"*%s_-_%.*s", ProcessorVendorIdentifier, Level1Length, ProcessorIdentifier);
     HardwareIdsBuffer[Length++] = UNICODE_NULL;
 
-    Length += swprintf(&HardwareIdsBuffer[Length], L"ACPI\\%s_-_%.*s", ProcessorVendorIdentifier, Level2Length, ProcessorIdentifier);
+    Length += _swprintf(&HardwareIdsBuffer[Length], L"ACPI\\%s_-_%.*s", ProcessorVendorIdentifier, Level2Length, ProcessorIdentifier);
     HardwareIdsBuffer[Length++] = UNICODE_NULL;
 
-    Length += swprintf(&HardwareIdsBuffer[Length], L"*%s_-_%.*s", ProcessorVendorIdentifier, Level2Length, ProcessorIdentifier);
+    Length += _swprintf(&HardwareIdsBuffer[Length], L"*%s_-_%.*s", ProcessorVendorIdentifier, Level2Length, ProcessorIdentifier);
     HardwareIdsBuffer[Length++] = UNICODE_NULL;
 
-    Length += swprintf(&HardwareIdsBuffer[Length], L"ACPI\\%s_-_%.*s", ProcessorVendorIdentifier, Level3Length, ProcessorIdentifier);
+    Length += _swprintf(&HardwareIdsBuffer[Length], L"ACPI\\%s_-_%.*s", ProcessorVendorIdentifier, Level3Length, ProcessorIdentifier);
     HardwareIdsBuffer[Length++] = UNICODE_NULL;
 
-    Length += swprintf(&HardwareIdsBuffer[Length], L"*%s_-_%.*s", ProcessorVendorIdentifier, Level3Length, ProcessorIdentifier);
+    Length += _swprintf(&HardwareIdsBuffer[Length], L"*%s_-_%.*s", ProcessorVendorIdentifier, Level3Length, ProcessorIdentifier);
     HardwareIdsBuffer[Length++] = UNICODE_NULL;
     HardwareIdsBuffer[Length++] = UNICODE_NULL;
 
@@ -658,7 +664,7 @@ GetProcessorInformation(VOID)
     ProcessorIdString = ExAllocatePoolWithTag(PagedPool, Length, 'IpcA');
     if (ProcessorIdString != NULL)
     {
-        Length = swprintf(ProcessorIdString, L"ACPI\\%s_-_%.*s", ProcessorVendorIdentifier, Level1Length, ProcessorIdentifier);
+        Length = _swprintf(ProcessorIdString, L"ACPI\\%s_-_%.*s", ProcessorVendorIdentifier, Level1Length, ProcessorIdentifier);
         ProcessorIdString[Length++] = UNICODE_NULL;
         DPRINT("ProcessorIdString: %S\n", ProcessorIdString);
     }
@@ -682,6 +688,7 @@ done:
     return Status;
 }
 
+CODE_SEG("INIT")
 NTSTATUS
 NTAPI
 DriverEntry (

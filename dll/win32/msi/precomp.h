@@ -8,10 +8,11 @@
 
 #define _INC_WINDOWS
 #define COM_NO_WINDOWS_H
+#ifdef __REACTOS__
+#define WIN32_NO_STATUS
+#endif
 
 #define COBJMACROS
-#define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 
 #include "msipriv.h"
 #include "query.h"
@@ -20,7 +21,9 @@
 #include <wincon.h>
 #include <msiserver.h>
 #include <shlobj.h>
+#ifndef __REACTOS__
 #include <shlwapi.h>
+#endif
 #include <sddl.h>
 
 #include <wine/unicode.h>

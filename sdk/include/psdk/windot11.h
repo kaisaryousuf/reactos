@@ -9,10 +9,12 @@
 /* Enumerations */
 
 #if defined(__midl) || defined(__WIDL__)
-typedef [v1_enum] enum _DOT11_PHY_TYPE {
+#define V1_ENUM [v1_enum]
 #else
-typedef enum _DOT11_PHY_TYPE {
+#define V1_ENUM
 #endif
+
+typedef V1_ENUM enum _DOT11_PHY_TYPE {
     dot11_phy_type_unknown,
     dot11_phy_type_any,
     dot11_phy_type_fhss,
@@ -23,10 +25,10 @@ typedef enum _DOT11_PHY_TYPE {
     dot11_phy_type_erp,
     dot11_phy_type_ht,
     dot11_phy_type_IHV_start,
-    dot11_phy_type_IHV_end 
-} DOT11_PHY_TYPE;
+    dot11_phy_type_IHV_end
+} DOT11_PHY_TYPE /* HACK: WIDL is broken, *PDOT11_PHY_TYPE */;
 
-typedef enum _DOT11_AUTH_ALGORITHM {
+typedef V1_ENUM enum _DOT11_AUTH_ALGORITHM {
     DOT11_AUTH_ALGO_80211_OPEN         = 1,
     DOT11_AUTH_ALGO_80211_SHARED_KEY,
     DOT11_AUTH_ALGO_WPA,
@@ -34,11 +36,22 @@ typedef enum _DOT11_AUTH_ALGORITHM {
     DOT11_AUTH_ALGO_WPA_NONE,
     DOT11_AUTH_ALGO_RSNA,
     DOT11_AUTH_ALGO_RSNA_PSK,
+    DOT11_AUTH_ALGO_WPA3,
+#if (NTDDI_VERSION >= NTDDI_WIN10_FE)
+    DOT11_AUTH_ALGO_WPA3_ENT_192       = DOT11_AUTH_ALGO_WPA3,
+#endif
+    DOT11_AUTH_ALGO_WPA3_SAE,
+#if (NTDDI_VERSION >= NTDDI_WIN10_VB)
+    DOT11_AUTH_ALGO_OWE,
+#endif
+#if (NTDDI_VERSION >= NTDDI_WIN10_FE)
+    DOT11_AUTH_ALGO_WPA3_ENT,
+#endif
     DOT11_AUTH_ALGO_IHV_START          = 0x80000000,
-    DOT11_AUTH_ALGO_IHV_END            = 0xffffffff 
-} DOT11_AUTH_ALGORITHM;
+    DOT11_AUTH_ALGO_IHV_END            = 0xffffffff
+} DOT11_AUTH_ALGORITHM /* HACK: WIDL is broken, *PDOT11_AUTH_ALGORITHM */;
 
-typedef enum _DOT11_CIPHER_ALGORITHM {
+typedef V1_ENUM enum _DOT11_CIPHER_ALGORITHM {
     DOT11_CIPHER_ALGO_NONE            = 0x00,
     DOT11_CIPHER_ALGO_WEP40           = 0x01,
     DOT11_CIPHER_ALGO_TKIP            = 0x02,
@@ -49,7 +62,7 @@ typedef enum _DOT11_CIPHER_ALGORITHM {
     DOT11_CIPHER_ALGO_WEP             = 0x101,
     DOT11_CIPHER_ALGO_IHV_START       = 0x80000000,
     DOT11_CIPHER_ALGO_IHV_END         = 0xffffffff
-} DOT11_CIPHER_ALGORITHM;
+} DOT11_CIPHER_ALGORITHM /* HACK: WIDL is broken, *PDOT11_CIPHER_ALGORITHM */;
 
 /* Types */
 
@@ -64,7 +77,7 @@ typedef DOT11_MAC_ADDRESS* PDOT11_MAC_ADDRESS;
 
 typedef struct _DOT11_SSID {
     ULONG uSSIDLength;
-    UCHAR ucSSID[32];
+    UCHAR ucSSID[DOT11_SSID_MAX_LENGTH];
 } DOT11_SSID, *PDOT11_SSID;
 
 typedef struct _DOT11_BSSID_LIST {
@@ -78,6 +91,12 @@ typedef struct _DOT11_BSSID_LIST {
 #endif
 } DOT11_BSSID_LIST, *PDOT11_BSSID_LIST;
 
+#define DOT11_RATE_SET_MAX_LENGTH 126
+
+typedef struct _WLAN_RATE_SET {
+    ULONG uRateSetLength;
+    USHORT usRateSet[DOT11_RATE_SET_MAX_LENGTH];
+} WLAN_RATE_SET, *PWLAN_RATE_SET;
 
 #endif
 

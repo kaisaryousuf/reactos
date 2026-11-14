@@ -192,8 +192,9 @@ MiAllocatePagesForMdl(IN PHYSICAL_ADDRESS LowAddress,
     KIRQL OldIrql;
     PMMPFN Pfn1;
     INT LookForZeroedPages;
+
     ASSERT(KeGetCurrentIrql() <= APC_LEVEL);
-    DPRINT1("ARM3-DEBUG: Being called with %I64x %I64x %I64x %lx %d %lu\n", LowAddress, HighAddress, SkipBytes, TotalBytes, CacheAttribute, MdlFlags);
+    DPRINT("ARM3-DEBUG: Being called with %I64x %I64x %I64x %lx %d %lu\n", LowAddress, HighAddress, SkipBytes, TotalBytes, CacheAttribute, MdlFlags);
 
     //
     // Convert the low address into a PFN
@@ -317,7 +318,7 @@ MiAllocatePagesForMdl(IN PHYSICAL_ADDRESS LowAddress,
                 // Get the PFN entry for this page
                 //
                 Pfn1 = MiGetPfnEntry(Page);
-                ASSERT(Pfn1);
+                if (!Pfn1) continue;
 
                 //
                 // Make sure it's free and if this is our first pass, zeroed
@@ -537,20 +538,19 @@ ULONG
 NTAPI
 MmGetReferenceCountPage(PFN_NUMBER Pfn)
 {
-    KIRQL oldIrql;
     ULONG RCount;
     PMMPFN Pfn1;
 
+    MI_ASSERT_PFN_LOCK_HELD();
+
     DPRINT("MmGetReferenceCountPage(PhysicalAddress %x)\n", Pfn << PAGE_SHIFT);
 
-    oldIrql = MiAcquirePfnLock();
     Pfn1 = MiGetPfnEntry(Pfn);
     ASSERT(Pfn1);
     ASSERT_IS_ROS_PFN(Pfn1);
 
     RCount = Pfn1->u3.e2.ReferenceCount;
 
-    MiReleasePfnLock(oldIrql);
     return(RCount);
 }
 
@@ -566,10 +566,9 @@ NTAPI
 MmDereferencePage(PFN_NUMBER Pfn)
 {
     PMMPFN Pfn1;
-    KIRQL OldIrql;
     DPRINT("MmDereferencePage(PhysicalAddress %x)\n", Pfn << PAGE_SHIFT);
 
-    OldIrql = MiAcquirePfnLock();
+    MI_ASSERT_PFN_LOCK_HELD();
 
     Pfn1 = MiGetPfnEntry(Pfn);
     ASSERT(Pfn1);
@@ -596,8 +595,6 @@ MmDereferencePage(PFN_NUMBER Pfn)
         DPRINT("Legacy free: %lx\n", Pfn);
         MiInsertPageInFreeList(Pfn);
     }
-
-    MiReleasePfnLock(OldIrql);
 }
 
 PFN_NUMBER
@@ -627,7 +624,8 @@ MmAllocPage(ULONG Type)
     PfnOffset = MiRemoveZeroPage(MI_GET_NEXT_COLOR());
     if (!PfnOffset)
     {
-        KeBugCheck(NO_PAGES_AVAILABLE);
+        MiReleasePfnLock(OldIrql);
+        return 0;
     }
 
     DPRINT("Legacy allocate: %lx\n", PfnOffset);

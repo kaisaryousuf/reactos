@@ -1,11 +1,10 @@
 /*
  * COPYRIGHT:       See COPYING in the top level directory
- * PROJECT:         ReactOS net command 
+ * PROJECT:         ReactOS net command
  * PROGRAMMERS:     Magnus Olsen (greatlord@reactos.org)
  */
 
-#ifndef _NET_PCH_
-#define _NET_PCH_
+#pragma once
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,6 +21,8 @@
 #include <lm.h>
 #include <ndk/rtlfuncs.h>
 
+#include <strsafe.h>
+
 #include <conutils.h>
 
 #include <net_msg.h>
@@ -31,12 +32,16 @@ extern HMODULE hModuleNetMsg;
 VOID
 PrintPaddedResourceString(
     UINT uID,
-    INT nPaddedLength);
+    DWORD nPaddedLength);
 
 VOID
 PrintPadding(
     WCHAR chr,
-    INT nPaddedLength);
+    DWORD nPaddedLength);
+
+DWORD
+TranslateAppMessage(
+    DWORD dwMessage);
 
 VOID
 PrintMessageString(
@@ -50,7 +55,7 @@ PrintMessageStringV(
 VOID
 PrintPaddedMessageString(
     DWORD dwMessage,
-    INT nPaddedLength);
+    DWORD nPaddedLength);
 
 VOID
 PrintErrorMessage(
@@ -78,6 +83,7 @@ INT cmdHelp(INT argc, WCHAR **argv);
 INT cmdHelpMsg(INT argc, WCHAR **argv);
 INT cmdLocalGroup(INT argc, WCHAR **argv);
 INT cmdPause(INT argc, WCHAR **argv);
+INT cmdSession(INT argc, WCHAR **argv);
 INT cmdShare(INT argc, WCHAR **argv);
 INT cmdStart(INT argc, WCHAR **argv);
 INT cmdStatistics(INT argc, WCHAR **argv);
@@ -85,5 +91,3 @@ INT cmdStop(INT argc, WCHAR **argv);
 INT cmdSyntax(INT argc, WCHAR **argv);
 INT cmdUse(INT argc, WCHAR **argv);
 INT cmdUser(INT argc, WCHAR **argv);
-
-#endif /* _NET_PCH_ */

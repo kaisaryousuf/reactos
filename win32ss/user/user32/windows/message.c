@@ -2825,20 +2825,21 @@ TranslateMessageEx(CONST MSG *lpMsg, UINT Flags)
 BOOL WINAPI
 TranslateMessage(CONST MSG *lpMsg)
 {
-  BOOL Ret = FALSE;
+    BOOL ret;
 
-// Ref: msdn ImmGetVirtualKey:
-// http://msdn.microsoft.com/en-us/library/aa912145.aspx
-/*
-  if ( (LOWORD(lpMsg->wParam) != VK_PROCESSKEY) ||
-       !(Ret = IMM_ImmTranslateMessage( lpMsg->hwnd,
-                                        lpMsg->message,
-                                        lpMsg->wParam,
-                                        lpMsg->lParam)) )*/
-  {
-     Ret = TranslateMessageEx((LPMSG)lpMsg, 0);
-  }
-  return Ret;
+    // https://learn.microsoft.com/en-us/previous-versions/aa912145(v=msdn.10)
+    if (LOWORD(lpMsg->wParam) == VK_PROCESSKEY)
+    {
+        ret = IMM_FN(ImmTranslateMessage)(lpMsg->hwnd,
+                                          lpMsg->message,
+                                          lpMsg->wParam,
+                                          lpMsg->lParam);
+        if (ret)
+            return ret;
+    }
+
+    ret = TranslateMessageEx((LPMSG)lpMsg, 0);
+    return ret;
 }
 
 
@@ -2899,8 +2900,7 @@ DWORD
 WINAPI
 RealGetQueueStatus(UINT flags)
 {
-   #define QS_TEMPALLINPUT 255 // ATM, do not support QS_RAWINPUT
-   if (flags & ~(QS_SMRESULT|QS_ALLPOSTMESSAGE|QS_TEMPALLINPUT))
+   if (flags & ~(QS_ALLINPUT|QS_ALLPOSTMESSAGE|QS_SMRESULT))
    {
       SetLastError( ERROR_INVALID_FLAGS );
       return 0;

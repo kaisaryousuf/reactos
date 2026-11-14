@@ -202,7 +202,7 @@ i8042PowerWorkItem(
 	__analysis_assume(Context != NULL);
 	DeviceExtension = Context;
 
-	/* See http://blogs.msdn.com/doronh/archive/2006/09/08/746961.aspx */
+	/* See https://learn.microsoft.com/en-us/archive/blogs/doronh/how-ps2-and-hid-keyboads-report-power-button-events */
 
 	/* Register GUID_DEVICE_SYS_BUTTON interface and report capability */
 	if (DeviceExtension->NewCaps != DeviceExtension->ReportedCaps)
@@ -494,7 +494,7 @@ i8042InitializeKeyboardAttributes(
 
     KeyboardAttributes->KeyboardIdentifier.Type = (UCHAR)Settings->OverrideKeyboardType;
     KeyboardAttributes->KeyboardIdentifier.Subtype = (UCHAR)Settings->OverrideKeyboardSubtype;
-    KeyboardAttributes->NumberOfFunctionKeys = 4;
+    KeyboardAttributes->NumberOfFunctionKeys = 12;
     KeyboardAttributes->NumberOfIndicators = 3;
     KeyboardAttributes->NumberOfKeysTotal = 101;
     KeyboardAttributes->InputDataQueueLength = Settings->KeyboardDataQueueSize;

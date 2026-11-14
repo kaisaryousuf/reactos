@@ -70,7 +70,7 @@ TextOutW(
     _In_reads_(cchString) LPCWSTR lpString,
     _In_ INT cchString)
 {
-    return ExtTextOutW(hdc, nXStart, nYStart, 0, NULL, (LPWSTR)lpString, cchString, NULL);
+    return ExtTextOutW(hdc, nXStart, nYStart, 0, NULL, lpString, cchString, NULL);
 }
 
 
@@ -249,7 +249,8 @@ GetTextExtentPointA(
     UNICODE_STRING StringU;
     BOOL ret;
 
-    RtlInitAnsiString(&StringA, (LPSTR)lpString);
+    /* FIXME: lpString can be non-NUL-terminated */
+    RtlInitAnsiString(&StringA, lpString);
     RtlAnsiStringToUnicodeString(&StringU, &StringA, TRUE);
 
     ret = GetTextExtentPointW(hdc, StringU.Buffer, cchString, lpsz);
@@ -271,7 +272,7 @@ GetTextExtentPointW(
     _In_ INT cchString,
     _Out_ LPSIZE lpsz)
 {
-    return NtGdiGetTextExtent(hdc, (LPWSTR)lpString, cchString, lpsz, 0);
+    return NtGdiGetTextExtent(hdc, lpString, cchString, lpsz, 0);
 }
 
 
@@ -289,7 +290,6 @@ GetTextExtentExPointW(
     _Out_writes_to_opt_(cchString, *lpnFit) LPINT lpnDx,
     _Out_ LPSIZE lpSize)
 {
-
     /* Windows doesn't check nMaxExtent validity in unicode version */
     if (nMaxExtent < -1)
     {
@@ -299,8 +299,7 @@ GetTextExtentExPointW(
     if (LoadLPK(LPK_GTEP))
         return LpkGetTextExtentExPoint(hdc, lpszString, cchString, nMaxExtent, lpnFit, lpnDx, lpSize, 0, 0);
 
-    return NtGdiGetTextExtentExW (
-               hdc, (LPWSTR)lpszString, cchString, nMaxExtent, (PULONG)lpnFit, (PULONG)lpnDx, lpSize, 0 );
+    return NtGdiGetTextExtentExW(hdc, lpszString, cchString, nMaxExtent, (PULONG)lpnFit, (PULONG)lpnDx, lpSize, 0);
 }
 
 
@@ -311,14 +310,14 @@ BOOL
 WINAPI
 GetTextExtentExPointWPri(
     _In_ HDC hdc,
-    _In_reads_(cwc) LPCWSTR lpwsz,
+    _In_reads_(cwc) PCWCH lpwsz,
     _In_ INT cwc,
     _In_ INT dxMax,
     _Out_opt_ LPINT pcCh,
     _Out_writes_to_opt_(cwc, *pcCh) LPINT pdxOut,
     _In_ LPSIZE psize)
 {
-    return NtGdiGetTextExtentExW(hdc, (LPWSTR)lpwsz, cwc, dxMax, (PULONG)pcCh, (PULONG)pdxOut, psize, 0);
+    return NtGdiGetTextExtentExW(hdc, lpwsz, cwc, dxMax, (PULONG)pcCh, (PULONG)pdxOut, psize, 0);
 }
 
 /*
@@ -405,7 +404,7 @@ GetTextExtentPoint32W(
     _In_ int cchString,
     _Out_ LPSIZE lpSize)
 {
-    return NtGdiGetTextExtent(hdc, (LPWSTR)lpString, cchString, lpSize, 0);
+    return NtGdiGetTextExtent(hdc, lpString, cchString, lpSize, 0);
 }
 
 /*
@@ -465,8 +464,15 @@ ExtTextOutA(
     UNICODE_STRING StringU;
     BOOL ret;
 
-    RtlInitAnsiString(&StringA, (LPSTR)lpString);
+    if (fuOptions & ETO_GLYPH_INDEX)
+        return ExtTextOutW(hdc, x, y, fuOptions, lprc, (LPCWSTR)lpString, cch, lpDx);
+
+    StringA.Buffer = (PCHAR)lpString;
+    StringA.Length = StringA.MaximumLength = cch;
     RtlAnsiStringToUnicodeString(&StringU, &StringA, TRUE);
+
+    if (StringU.Length != StringA.Length * sizeof(WCHAR))
+        DPRINT1("ERROR: Should convert lpDx properly!\n");
 
     ret = ExtTextOutW(hdc, x, y, fuOptions, lprc, StringU.Buffer, cch, lpDx);
 
@@ -475,6 +481,7 @@ ExtTextOutA(
     return ret;
 }
 
+static BOOL bBypassETOWMF = FALSE;
 
 /*
  * @implemented
@@ -493,24 +500,49 @@ ExtTextOutW(
 {
     PDC_ATTR pdcattr;
 
-    HANDLE_METADC(BOOL,
-                  ExtTextOut,
-                  FALSE,
-                  hdc,
-                  x,
-                  y,
-                  fuOptions,
-                  lprc,
-                  lpString,
-                  cwc,
-                  lpDx);
+    // Need both, should return a parameter error? No they don't!
+    if ( !lpDx && fuOptions & ETO_PDY )
+        return FALSE;
+
+    // Now sorting out rectangle.
+
+    // Here again, need both.
+    if ( lprc && !(fuOptions & (ETO_CLIPPED|ETO_OPAQUE)) )
+    {
+        lprc = NULL; // No flags, no rectangle.
+    }
+    else if (!lprc) // No rectangle, force clear flags if set and continue.
+    {
+       fuOptions &= ~(ETO_CLIPPED|ETO_OPAQUE);
+    }
+
+    if ( !bBypassETOWMF )
+    {
+        HANDLE_METADC(BOOL,
+                      ExtTextOut,
+                      FALSE,
+                      hdc,
+                      x,
+                      y,
+                      fuOptions,
+                      lprc,
+                      lpString,
+                      cwc,
+                      lpDx);
+    }
 
     if ( GdiConvertAndCheckDC(hdc) == NULL ) return FALSE;
 
     if (!(fuOptions & (ETO_GLYPH_INDEX | ETO_IGNORELANGUAGE)))
     {
+        bBypassETOWMF = TRUE;
+
         if (LoadLPK(LPK_ETO))
             return LpkExtTextOut(hdc, x, y, fuOptions, lprc, lpString, cwc , lpDx, 0);
+    }
+    else
+    {
+        bBypassETOWMF = FALSE;
     }
 
     /* Get the DC attribute */
@@ -540,7 +572,7 @@ ExtTextOutW(
             }
             else // Do nothing, old explorer pops this off.
             {
-                DPRINT1("GdiBCExtTextOut nothing\n");
+                DPRINT("GdiBCExtTextOut nothing\n");
                 return TRUE;
             }
         }         // Max 580 wchars, if offset 0
@@ -614,10 +646,10 @@ ExtTextOutW(
                             x,
                             y,
                             fuOptions,
-                            (LPRECT)lprc,
-                            (LPWSTR)lpString,
+                            lprc,
+                            lpString,
                             cwc,
-                            (LPINT)lpDx,
+                            lpDx,
                             0);
 }
 
@@ -772,10 +804,7 @@ SetTextCharacterExtra(
         return 0x80000000;
     }
 
-    if (GDI_HANDLE_GET_TYPE(hdc) == GDILoObjType_LO_METADC16_TYPE)
-    {
-        HANDLE_METADC(INT, SetTextCharacterExtra, 0x80000000, hdc, nCharExtra);
-    }
+    HANDLE_METADC16(INT, SetTextCharacterExtra, 0x80000000, hdc, nCharExtra);
 
     /* Get the DC attribute */
     pdcattr = GdiGetDcAttr(hdc);
@@ -925,10 +954,7 @@ SetTextJustification(
 {
     PDC_ATTR pdcattr;
 
-    if (GDI_HANDLE_GET_TYPE(hdc) == GDILoObjType_LO_METADC16_TYPE)
-    {
-        HANDLE_METADC(BOOL, SetTextJustification, FALSE, hdc, nBreakExtra, nBreakCount);
-    }
+    HANDLE_METADC16(BOOL, SetTextJustification, FALSE, hdc, nBreakExtra, nBreakCount);
 
     /* Get the DC attribute */
     pdcattr = GdiGetDcAttr(hdc);

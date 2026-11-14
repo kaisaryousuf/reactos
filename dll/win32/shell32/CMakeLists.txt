@@ -1,5 +1,6 @@
 PROJECT(SHELL)
 
+add_subdirectory(evalcmd)
 add_subdirectory(shelldesktop)
 add_subdirectory(shellmenu)
 add_subdirectory(shellrecyclebin)
@@ -13,7 +14,12 @@ add_definitions(
     -D_SHELL32_
     -D_WINE)
 
+if(DBG)
+    add_definitions(-D_DEBUG=1) # CORE-17505
+endif()
+
 list(APPEND SOURCE
+    brfolder.cpp
     CActiveDesktop.cpp
     CActiveDesktop.h
     CIDLDataObj.cpp
@@ -26,17 +32,21 @@ list(APPEND SOURCE
     dialogs/filedefext.cpp
     dialogs/filetypes.cpp
     dialogs/folder_options.cpp
-    dialogs/fprop.cpp
+    dialogs/item_prop.cpp
     dialogs/general.cpp
     dialogs/recycler_prop.cpp
     dialogs/view.cpp
     CDropTargetHelper.cpp
     CEnumIDListBase.cpp
     CExtractIcon.cpp
+    CRecycleBinCleaner.cpp
     folders.cpp
     iconcache.cpp
+    propsheet.cpp
     shell32.cpp
+    utils.cpp
     CShellItem.cpp
+    CShellItemArray.cpp
     CShellLink.cpp
     CFolderOptions.cpp
     folders/CDesktopFolder.cpp
@@ -49,34 +59,41 @@ list(APPEND SOURCE
     folders/CFontsFolder.cpp
     folders/CControlPanelFolder.cpp
     folders/CRecycleBin.cpp
+    folders/CRecycleBinFolderViewCB.cpp
     folders/CRegFolder.cpp
     droptargets/CexeDropHandler.cpp
     droptargets/CFSDropTarget.cpp
     droptargets/CRecyclerDropTarget.cpp
+    prop.cpp
+    shldataobject.cpp
     shlexec.cpp
     shlfileop.cpp
     shlfolder.cpp
     CFileSysBindData.cpp
     CDefView.cpp
+    CDefViewUtil.cpp
     CDefViewDual.cpp
     CDefViewBckgrndMenu.cpp
     stubs.cpp
     systray.cpp
+    CUserEventTimer.cpp
+    CUserEventTimer.h
     CUserNotification.cpp
     CDefaultContextMenu.cpp
     COpenWithMenu.cpp
     CNewMenu.cpp
     CSendToMenu.cpp
-    CCopyToMenu.cpp
-    CMoveToMenu.cpp
+    CCopyMoveToMenu.cpp
+    CCopyAsPathMenu.cpp
     CShellDispatch.cpp
+    CShellLibrary.cpp
+    CShellLibrary.h
     CFolder.cpp
     CFolderItems.cpp
     CFolderItemVerbs.cpp)
 
-list(APPEND PCH_SKIP_SOURCE
-    wine/appbar.c
-    wine/brsfolder.c
+list(APPEND WINE_SOURCE
+    appbar.c
     wine/classes.c
     wine/clipboard.c
     wine/control.c
@@ -88,7 +105,12 @@ list(APPEND PCH_SKIP_SOURCE
     wine/shellreg.c
     wine/shellstring.c
     wine/shlmenu.c
-    wine/shpolicy.c
+    wine/shpolicy.c)
+
+set_source_files_properties(${WINE_SOURCE} PROPERTIES COMPILE_DEFINITIONS CONST_VTABLE)
+
+list(APPEND PCH_SKIP_SOURCE
+    ${WINE_SOURCE}
     vista.c
     ${CMAKE_CURRENT_BINARY_DIR}/shell32_stubs.c)
 
@@ -111,9 +133,16 @@ add_typelib(shell32_shldisp.idl)
 set_source_files_properties(shell32.rc PROPERTIES OBJECT_DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/shell32_shldisp.tlb)
 
 set_module_type(shell32 win32dll UNICODE)
-target_link_libraries(shell32 shellmenu shelldesktop wine uuid recyclebin cpprt atl_classes)
-add_delay_importlibs(shell32 powrprof shdocvw devmgr winspool.drv winmm mpr uxtheme ole32 oleaut32 userenv browseui version fmifs)
-add_importlibs(shell32 advapi32 gdi32 user32 comctl32 comdlg32 shlwapi msvcrt kernel32 ntdll)
+if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
+    # FIXME: This is some ATL related nonsense that triggers GCC 13+ warnings
+    target_compile_options(shell32 PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:-Wno-overloaded-virtual>")
+endif()
+target_link_libraries(shell32 shellmenu shelldesktop wine uuid recyclebin cpprt atl_classes oldnames)
+if(DLL_EXPORT_VERSION GREATER_EQUAL 0x600)
+    target_link_libraries(shell32 evalcmd)
+endif()
+add_delay_importlibs(shell32 powrprof shdocvw devmgr winspool.drv winmm mpr uxtheme ole32 oleaut32 userenv browseui version fmifs netapi32 secur32)
+add_importlibs(shell32 advapi32 gdi32 user32 comctl32 comdlg32 shlwapi shcore msvcrt kernel32 ntdll)
 add_dependencies(shell32 stdole2) # shell32_shldisp.tlb needs stdole2.tlb
 add_pch(shell32 precomp.h "${PCH_SKIP_SOURCE}")
 add_cd_file(TARGET shell32 DESTINATION reactos/system32 FOR all)

@@ -96,33 +96,6 @@ BOOL CEnumIDListBase::DeleteList()
     return TRUE;
 }
 
-/**************************************************************************
- *  HasItemWithCLSID()
- */
-BOOL CEnumIDListBase::HasItemWithCLSID(LPITEMIDLIST pidl)
-{
-    ENUMLIST *pCur;
-    IID *ptr = _ILGetGUIDPointer(pidl);
-
-    if (ptr)
-    {
-        REFIID refid = *ptr;
-        pCur = mpFirst;
-
-        while(pCur)
-        {
-            LPGUID curid = _ILGetGUIDPointer(pCur->pidl);
-            if (curid && IsEqualGUID(*curid, refid))
-            {
-                return TRUE;
-            }
-            pCur = pCur->pNext;
-        }
-    }
-
-    return FALSE;
-}
-
 HRESULT CEnumIDListBase::AppendItemsFromEnumerator(IEnumIDList* pEnum)
 {
     LPITEMIDLIST pidl;
@@ -134,7 +107,13 @@ HRESULT CEnumIDListBase::AppendItemsFromEnumerator(IEnumIDList* pEnum)
     pEnum->Reset();
 
     while((S_OK == pEnum->Next(1, &pidl, &dwFetched)) && dwFetched)
-        AddToEnumList(pidl);
+    {
+        if (!AddToEnumList(pidl))
+        {
+            ILFree(pidl);
+            return E_OUTOFMEMORY;
+        }
+    }
 
     return S_OK;
 }
@@ -172,9 +151,15 @@ HRESULT WINAPI CEnumIDListBase::Next(
 
     for(i = 0; i < celt; i++)
     { if(!mpCurrent)
+      { hr = S_FALSE;
         break;
+      }
 
       temp = ILClone(mpCurrent->pidl);
+      if (!temp)
+      { hr = i ? S_FALSE : E_OUTOFMEMORY;
+        break;
+      }
       rgelt[i] = temp;
       mpCurrent = mpCurrent->pNext;
     }
@@ -223,6 +208,41 @@ HRESULT WINAPI CEnumIDListBase::Clone(LPENUMIDLIST *ppenum)
 {
     TRACE("(%p)->() to (%p)->() E_NOTIMPL\n", this, ppenum);
     return E_NOTIMPL;
+}
+
+/**************************************************************************
+*  CreateInstance
+*/
+HRESULT CEnumIDListBase::CreateInstance(IEnumIDList &Source, CREATEINSTANCEFILTERFUNC Filter, void *CallerCookie, IEnumIDList **ppEnum)
+{
+    *ppEnum = NULL;
+    CComPtr<CEnumIDListBase> pEnum;
+    HRESULT hr = ShellObjectCreator(pEnum);
+    if (FAILED(hr))
+        return hr;
+
+    for (;;)
+    {
+        CComHeapPtr<ITEMIDLIST> pidl;
+        hr = Source.Next(1, &pidl, NULL);
+        if (hr == S_OK)
+        {
+            if (Filter)
+                hr = Filter(CallerCookie, pidl);
+            if (FAILED(hr))
+                return hr;
+            if (hr != S_OK)
+                continue;
+            if (!pEnum->AddToEnumList(pidl))
+                return E_OUTOFMEMORY;
+            pidl.Detach(); // AddToEnumList took ownership
+            continue;
+        }
+        if (FAILED(hr))
+            return hr;
+        *ppEnum = pEnum.Detach();
+        return S_OK;
+    }
 }
 
 /**************************************************************************

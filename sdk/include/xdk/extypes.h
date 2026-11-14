@@ -185,11 +185,20 @@ typedef struct _EX_RUNDOWN_REF {
 
 typedef struct _EX_RUNDOWN_REF_CACHE_AWARE *PEX_RUNDOWN_REF_CACHE_AWARE;
 
-typedef enum _WORK_QUEUE_TYPE {
+typedef _Enum_is_bitflag_ enum _WORK_QUEUE_TYPE {
   CriticalWorkQueue,
   DelayedWorkQueue,
   HyperCriticalWorkQueue,
-  MaximumWorkQueue
+#if (NTDDI_VERSION >= NTDDI_WIN8)
+  NormalWorkQueue,
+  BackgroundWorkQueue,
+  RealTimeWorkQueue,
+  SuperCriticalWorkQueue,
+#endif
+  MaximumWorkQueue,
+#if (NTDDI_VERSION >= NTDDI_WIN8)
+  CustomPriorityWorkQueue = 32
+#endif
 } WORK_QUEUE_TYPE;
 
 _IRQL_requires_same_
@@ -346,3 +355,14 @@ $if (_NTIFS_)
 #define EX_PUSH_LOCK ULONG_PTR
 #define PEX_PUSH_LOCK PULONG_PTR
 $endif (_NTIFS_)
+
+$if (_WINNT_ || _WDMDDK_)
+#if (NTDDI_VERSION >= NTDDI_VISTA)
+typedef enum _FIRMWARE_TYPE {
+    FirmwareTypeUnknown,
+    FirmwareTypeBios,
+    FirmwareTypeUefi,
+    FirmwareTypeMax
+} FIRMWARE_TYPE, *PFIRMWARE_TYPE;
+#endif /* (NTDDI_VERSION >= NTDDI_VISTA) */
+$endif (_WINNT_ || _WDMDDK_)

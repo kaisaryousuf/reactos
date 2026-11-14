@@ -68,7 +68,7 @@
  #pragma strict_gs_check(push, on)
 #endif
 
-#if defined(_M_MRX000) || defined(_M_ALPHA) || defined(_M_PPC) || defined(_M_IA64) || defined(_M_AMD64) || defined(_M_ARM)
+#if defined(_M_MRX000) || defined(_M_ALPHA) || defined(_M_PPC) || defined(_M_IA64) || defined(_M_AMD64) || defined(_M_ARM) || defined(_M_ARM64)
  #define ALIGNMENT_MACHINE
  #define UNALIGNED __unaligned
  #if defined(_WIN64)
@@ -119,7 +119,7 @@
 
 #if defined(_AMD64_) || defined(_X86_)
  #define PROBE_ALIGNMENT(_s) TYPE_ALIGNMENT($ULONG)
-#elif defined(_IA64_) || defined(_ARM_)
+#elif defined(_IA64_) || defined(_ARM_) || defined(_ARM64_)
  #define PROBE_ALIGNMENT(_s) max((TYPE_ALIGNMENT(_s), TYPE_ALIGNMENT($ULONG))
 #elif !defined(RC_INVOKED)
  #error "Unknown architecture"
@@ -173,7 +173,11 @@
  #endif
 #endif /* DECLSPEC_EXPORT */
 
+#ifdef __GNUC__
+#define DECLSPEC_NORETURN __attribute__((noreturn))
+#else
 #define DECLSPEC_NORETURN __declspec(noreturn)
+#endif
 
 #ifndef DECLSPEC_ADDRSAFE
  #if defined(_MSC_VER) && (defined(_M_ALPHA) || defined(_M_AXP64))
@@ -225,6 +229,14 @@
   #define DECLSPEC_NOINLINE
  #endif
 #endif /* DECLSPEC_NOINLINE */
+
+#ifndef DECLSPEC_GUARD_SUPPRESS
+ #if (_MSC_FULL_VER >= 181040116) || defined(_D1VERSIONLKG171_)
+  #define DECLSPEC_GUARD_SUPPRESS  __declspec(guard(suppress))
+ #else
+  #define DECLSPEC_GUARD_SUPPRESS
+ #endif
+#endif
 
 #if !defined(_M_CEE_PURE)
  #define NTAPI_INLINE NTAPI
@@ -677,16 +689,16 @@ typedef struct _GROUP_AFFINITY {
 
 #define RTL_NUMBER_OF_V1(A) (sizeof(A)/sizeof((A)[0]))
 
-#ifdef __GNUC__
- #define RTL_NUMBER_OF_V2(A) \
-     (({ int _check_array_type[__builtin_types_compatible_p(typeof(A), typeof(&A[0])) ? -1 : 1]; (void)_check_array_type; }), \
-     RTL_NUMBER_OF_V1(A))
-#elif defined(__cplusplus)
+#if defined(__cplusplus)
 extern "C++" {
  template <typename T, size_t N>
  static char (& SAFE_RTL_NUMBER_OF(T (&)[N]))[N];
 }
  #define RTL_NUMBER_OF_V2(A) sizeof(SAFE_RTL_NUMBER_OF(A))
+#elif defined(__GNUC__)
+ #define RTL_NUMBER_OF_V2(A) \
+     (({ int _check_array_type[__builtin_types_compatible_p(typeof(A), typeof(&A[0])) ? -1 : 1]; (void)_check_array_type; }), \
+     RTL_NUMBER_OF_V1(A))
 #else
  #define RTL_NUMBER_OF_V2(A) RTL_NUMBER_OF_V1(A)
 #endif
@@ -735,12 +747,12 @@ extern "C++" { \
 #define COMPILETIME_OR_5FLAGS(a,b,c,d,e)    ((UINT)(a)|(UINT)(b)|(UINT)(c)|(UINT)(d)|(UINT)(e))
 
 /* Type Limits */
-#define MINCHAR   (-128)
-#define MAXCHAR   127
-#define MINSHORT  (-32768)
-#define MAXSHORT  32767
-#define MINLONG   (-2147483648)
-#define MAXLONG   2147483647
+#define MINCHAR   0x80
+#define MAXCHAR   0x7f
+#define MINSHORT  0x8000
+#define MAXSHORT  0x7fff
+#define MINLONG   0x80000000
+#define MAXLONG   0x7fffffff
 $if(_NTDEF_)
 #define MAXUCHAR  0xff
 #define MAXUSHORT 0xffff
@@ -763,7 +775,7 @@ $endif(_WINNT_)
  #define UInt32x32To64(a,b) ((unsigned __int64)(unsigned int)(a)*(unsigned __int64)(unsigned int)(b))
 #endif
 
-#if defined(MIDL_PASS)|| defined(RC_INVOKED) || defined(_M_CEE_PURE) || defined(_M_ARM)
+#if defined(MIDL_PASS)|| defined(RC_INVOKED) || defined(_M_CEE_PURE) || defined(_M_ARM) || defined(_M_ARM64)
 /* Use native math */
  #define Int64ShllMod32(a,b) ((unsigned __int64)(a)<<(b))
  #define Int64ShraMod32(a,b) (((__int64)(a))>>(b))
@@ -885,6 +897,7 @@ $endif(_WINNT_)
 #define PRODUCT_SERVER_FOR_SB_SOLUTIONS_EM          0x00000037
 #define PRODUCT_SOLUTION_EMBEDDEDSERVER             0x00000038
 #define PRODUCT_SOLUTION_EMBEDDEDSERVER_CORE        0x00000039
+#define PRODUCT_PROFESSIONAL_EMBEDDED               0x0000003A
 #define PRODUCT_ESSENTIALBUSINESS_SERVER_MGMT       0x0000003B
 #define PRODUCT_ESSENTIALBUSINESS_SERVER_ADDL       0x0000003C
 #define PRODUCT_ESSENTIALBUSINESS_SERVER_MGMTSVC    0x0000003D
@@ -920,7 +933,89 @@ $endif(_WINNT_)
 #define PRODUCT_CORE_SINGLELANGUAGE                 0x00000064
 #define PRODUCT_CORE                                0x00000065
 #define PRODUCT_PROFESSIONAL_WMC                    0x00000067
+#define PRODUCT_EMBEDDED_INDUSTRY_EVAL              0x00000069
+#define PRODUCT_EMBEDDED_INDUSTRY_E_EVAL            0x0000006A
+#define PRODUCT_EMBEDDED_EVAL                       0x0000006B
+#define PRODUCT_EMBEDDED_E_EVAL                     0x0000006C
+#define PRODUCT_NANO_SERVER                         0x0000006D
+#define PRODUCT_CLOUD_STORAGE_SERVER                0x0000006E
+#define PRODUCT_CORE_CONNECTED                      0x0000006F
+#define PRODUCT_PROFESSIONAL_STUDENT                0x00000070
+#define PRODUCT_CORE_CONNECTED_N                    0x00000071
+#define PRODUCT_PROFESSIONAL_STUDENT_N              0x00000072
+#define PRODUCT_CORE_CONNECTED_SINGLELANGUAGE       0x00000073
+#define PRODUCT_CORE_CONNECTED_COUNTRYSPECIFIC      0x00000074
+#define PRODUCT_CONNECTED_CAR                       0x00000075
+#define PRODUCT_INDUSTRY_HANDHELD                   0x00000076
+#define PRODUCT_PPI_PRO                             0x00000077
+#define PRODUCT_ARM64_SERVER                        0x00000078
+#define PRODUCT_EDUCATION                           0x00000079
+#define PRODUCT_EDUCATION_N                         0x0000007A
+#define PRODUCT_IOTUAP                              0x0000007B
+#define PRODUCT_CLOUD_HOST_INFRASTRUCTURE_SERVER    0x0000007C
+#define PRODUCT_ENTERPRISE_S                        0x0000007D
+#define PRODUCT_ENTERPRISE_S_N                      0x0000007E
+#define PRODUCT_PROFESSIONAL_S                      0x0000007F
+#define PRODUCT_PROFESSIONAL_S_N                    0x00000080
+#define PRODUCT_ENTERPRISE_S_EVALUATION             0x00000081
 #define PRODUCT_ENTERPRISE_S_N_EVALUATION           0x00000082
+#define PRODUCT_HOLOGRAPHIC                         0x00000087
+#define PRODUCT_HOLOGRAPHIC_BUSINESS                0x00000088
+#define PRODUCT_PRO_SINGLE_LANGUAGE                 0x0000008A
+#define PRODUCT_PRO_CHINA                           0x0000008B
+#define PRODUCT_ENTERPRISE_SUBSCRIPTION             0x0000008C
+#define PRODUCT_ENTERPRISE_SUBSCRIPTION_N           0x0000008D
+#define PRODUCT_DATACENTER_NANO_SERVER              0x0000008F
+#define PRODUCT_STANDARD_NANO_SERVER                0x00000090
+#define PRODUCT_DATACENTER_A_SERVER_CORE            0x00000091
+#define PRODUCT_STANDARD_A_SERVER_CORE              0x00000092
+#define PRODUCT_DATACENTER_WS_SERVER_CORE           0x00000093
+#define PRODUCT_STANDARD_WS_SERVER_CORE             0x00000094
+#define PRODUCT_UTILITY_VM                          0x00000095
+#define PRODUCT_DATACENTER_EVALUATION_SERVER_CORE   0x0000009F
+#define PRODUCT_STANDARD_EVALUATION_SERVER_CORE     0x000000A0
+#define PRODUCT_PRO_WORKSTATION                     0x000000A1
+#define PRODUCT_PRO_WORKSTATION_N                   0x000000A2
+#define PRODUCT_PRO_FOR_EDUCATION                   0x000000A4
+#define PRODUCT_PRO_FOR_EDUCATION_N                 0x000000A5
+#define PRODUCT_AZURE_SERVER_CORE                   0x000000A8
+#define PRODUCT_AZURE_NANO_SERVER                   0x000000A9
+#define PRODUCT_ENTERPRISEG                         0x000000AB
+#define PRODUCT_ENTERPRISEGN                        0x000000AC
+#define PRODUCT_SERVERRDSH                          0x000000AF
+#define PRODUCT_CLOUD                               0x000000B2
+#define PRODUCT_CLOUDN                              0x000000B3
+#define PRODUCT_HUBOS                               0x000000B4
+#define PRODUCT_ONECOREUPDATEOS                     0x000000B6
+#define PRODUCT_CLOUDE                              0x000000B7
+#define PRODUCT_IOTOS                               0x000000B9
+#define PRODUCT_CLOUDEN                             0x000000BA
+#define PRODUCT_IOTEDGEOS                           0x000000BB
+#define PRODUCT_IOTENTERPRISE                       0x000000BC
+#define PRODUCT_LITE                                0x000000BD
+#define PRODUCT_IOTENTERPRISES                      0x000000BF
+#define PRODUCT_XBOX_SYSTEMOS                       0x000000C0
+#define PRODUCT_XBOX_GAMEOS                         0x000000C2
+#define PRODUCT_XBOX_ERAOS                          0x000000C3
+#define PRODUCT_XBOX_DURANGOHOSTOS                  0x000000C4
+#define PRODUCT_XBOX_SCARLETTHOSTOS                 0x000000C5
+#define PRODUCT_XBOX_KEYSTONE                       0x000000C6
+#define PRODUCT_AZURE_SERVER_CLOUDHOST              0x000000C7
+#define PRODUCT_AZURE_SERVER_CLOUDMOS               0x000000C8
+#define PRODUCT_CLOUDEDITIONN                       0x000000CA
+#define PRODUCT_CLOUDEDITION                        0x000000CB
+#define PRODUCT_VALIDATION                          0x000000CC
+#define PRODUCT_IOTENTERPRISESK                     0x000000CD
+#define PRODUCT_IOTENTERPRISEK                      0x000000CE
+#define PRODUCT_IOTENTERPRISESEVAL                  0x000000CF
+#define PRODUCT_AZURE_SERVER_AGENTBRIDGE            0x000000D0
+#define PRODUCT_AZURE_SERVER_NANOHOST               0x000000D1
+#define PRODUCT_WNC                                 0x000000D2
+#define PRODUCT_AZURESTACKHCI_SERVER_CORE           0x00000196
+#define PRODUCT_DATACENTER_SERVER_AZURE_EDITION     0x00000197
+#define PRODUCT_DATACENTER_SERVER_CORE_AZURE_EDITION 0x00000198
+#define PRODUCT_DATACENTER_WS_SERVER_CORE_AZURE_EDITION 0x00000199
+
 #define PRODUCT_UNLICENSED                          0xABCDABCD
 
 /* LangID and NLS */
@@ -1080,6 +1175,24 @@ $endif(_WINNT_)
 #define LANG_YI                                   0x78
 #define LANG_YORUBA                               0x6a
 #define LANG_ZULU                                 0x35
+
+#ifdef __REACTOS__
+/* WINE extensions */
+/* These are documented by the MSDN but are missing from the Windows header */
+#define LANG_MALAGASY       0x8d
+
+/* FIXME: these are not defined anywhere */
+#define LANG_SUTU           0x30
+#define LANG_TSONGA         0x31
+#define LANG_VENDA          0x33
+
+/* non standard; keep the number high enough (but < 0xff) */
+#define LANG_ASTURIAN                    0xa5
+#define LANG_ESPERANTO                   0x8f
+#define LANG_WALON                       0x90
+#define LANG_CORNISH                     0x92
+#define LANG_MANX_GAELIC                 0x94
+#endif
 
 #define SUBLANG_NEUTRAL                             0x00
 #define SUBLANG_DEFAULT                             0x01
@@ -1325,6 +1438,15 @@ $endif(_WINNT_)
 #define SUBLANG_YI_PRC                              0x01
 #define SUBLANG_YORUBA_NIGERIA                      0x01
 #define SUBLANG_ZULU_SOUTH_AFRICA                   0x01
+
+#ifdef __REACTOS__
+/* WINE extensions */
+#define SUBLANG_DUTCH_SURINAM              0x03
+#define SUBLANG_ROMANIAN_MOLDAVIA          0x02
+#define SUBLANG_RUSSIAN_MOLDAVIA           0x02
+#define SUBLANG_LITHUANIAN_CLASSIC         0x02
+#define SUBLANG_MANX_GAELIC                0x01
+#endif
 
 #define SORT_DEFAULT                     0x0
 #define SORT_INVARIANT_MATH              0x1

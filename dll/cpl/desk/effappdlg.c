@@ -1,14 +1,17 @@
 /*
  * COPYRIGHT:       See COPYING in the top level directory
  * PROJECT:         ReactOS Display Control Panel
- * FILE:            dll/cpl/desk/effappdlg.c
  * PURPOSE:         Effects appearance dialog
- *
- * PROGRAMMERS:     Jan Roeloffzen (jroeloffzen[at]hotmail[dot]com)
- *                  Ismael Ferreras Morezuelas (swyterzone+reactos@gmail.com)
+ * PROGRAMMERS:     Jan Roeloffzen <jroeloffzen@hotmail.com>
+ *                  Ismael Ferreras Morezuelas <swyterzone+reactos@gmail.com>
  */
 
 #include "desk.h"
+
+#define NORMAL_ICON_SIZE  32
+#define LARGE_ICON_SIZE   48
+
+INT g_CustomIconSize;
 
 /* Update all the controls with the current values for the selected screen element */
 static VOID
@@ -43,6 +46,11 @@ do { \
     SAVE_CHECKBOX(IDC_EFFAPPEARANCE_SMOOTHING,       bFontSmoothing);
     RSET_COMBOBOX(IDC_EFFAPPEARANCE_SMOOTHINGTYPE,   bFontSmoothing, uiFontSmoothingType - 1);
 
+    /* Large icons */
+    state = SendDlgItemMessageW(hwndDlg, IDC_EFFAPPEARANCE_LARGEICONS, BM_GETCHECK, 0, 0);
+    g->SchemeAdv.iIconSize = (state == BST_UNCHECKED ? NORMAL_ICON_SIZE :
+                             (state == BST_CHECKED ? LARGE_ICON_SIZE : g_CustomIconSize));
+
     /* Other checkboxes */
     SAVE_CHECKBOX(IDC_EFFAPPEARANCE_SETDROPSHADOW,   bDropShadow);
     SAVE_CHECKBOX(IDC_EFFAPPEARANCE_DRAGFULLWINDOWS, bDragFullWindows);
@@ -70,7 +78,7 @@ AddToCombobox(INT Combo, HWND hwndDlg, INT From, INT To)
 
     for (iElement = From; iElement <= To; iElement++)
     {
-        LoadString(hApplet, iElement, (LPTSTR)tstrText, ARRAYSIZE(tstrText));
+        LoadString(hApplet, iElement, (LPTSTR)tstrText, _countof(tstrText));
         SendDlgItemMessage(hwndDlg, Combo, CB_ADDSTRING, 0, (LPARAM)tstrText);
     }
 }
@@ -112,6 +120,23 @@ do { \
     INIT_CHECKBOX(IDC_EFFAPPEARANCE_SMOOTHING,       bFontSmoothing);
     FILL_COMBOBOX(IDC_EFFAPPEARANCE_SMOOTHINGTYPE,   IDS_STANDARDEFFECT,
                                                      IDS_CLEARTYPEEFFECT);
+
+    /* Large icons */
+    if (g->SchemeAdv.iIconSize == NORMAL_ICON_SIZE)
+    {
+        state = BST_UNCHECKED;
+    }
+    else if (g->SchemeAdv.iIconSize == LARGE_ICON_SIZE)
+    {
+        state = BST_CHECKED;
+    }
+    else
+    {
+        state = BST_INDETERMINATE;
+        g_CustomIconSize = g->SchemeAdv.iIconSize;
+        SendDlgItemMessageW(hwndDlg, IDC_EFFAPPEARANCE_LARGEICONS, BM_SETSTYLE, BS_AUTO3STATE, TRUE);
+    }
+    SendDlgItemMessageW(hwndDlg, IDC_EFFAPPEARANCE_LARGEICONS, BM_SETCHECK, state, 0);
 
     /* Other checkboxes */
     INIT_CHECKBOX(IDC_EFFAPPEARANCE_SETDROPSHADOW,   bDropShadow);
@@ -159,14 +184,13 @@ EffAppearanceDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
 
                 case IDC_EFFAPPEARANCE_ANIMATION:
                 case IDC_EFFAPPEARANCE_SMOOTHING:
+                case IDC_EFFAPPEARANCE_LARGEICONS:
                 case IDC_EFFAPPEARANCE_SETDROPSHADOW:
                 case IDC_EFFAPPEARANCE_DRAGFULLWINDOWS:
                 case IDC_EFFAPPEARANCE_KEYBOARDCUES:
                 case IDC_EFFAPPEARANCE_FLATMENUS:
                     if (HIWORD(wParam) == BN_CLICKED)
-                    {
                         EffAppearanceDlgUpdateControls(hwndDlg, g);
-                    }
                     break;
 
                 case IDC_EFFAPPEARANCE_ANIMATIONTYPE:

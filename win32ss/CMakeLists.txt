@@ -11,23 +11,25 @@ if(USE_DIBLIB)
 endif()
 
 add_subdirectory(gdi/gdi32)
+add_subdirectory(gdi/gdi32_vista)
 add_subdirectory(printing)
 add_subdirectory(reactx)
+add_subdirectory(user/imm32)
 add_subdirectory(user/user32)
+add_subdirectory(user/user32_vista)
 add_subdirectory(user/winsrv)
+add_subdirectory(win32u)
 
 spec2def(win32k.sys win32k.spec ADD_IMPORTLIB)
 
-# embed RTC libs
-if (STACK_PROTECTOR)
-    target_sources(libwin32k PRIVATE $<TARGET_OBJECTS:gcc_ssp_win32k>)
+# Link GCC stack protector lib
+if(STACK_PROTECTOR)
+    target_link_libraries(libwin32k INTERFACE gcc_ssp_win32k)
 endif()
 
 include_directories(
-    .
     include
-    ${REACTOS_SOURCE_DIR}/ntoskrnl/include
-    ${REACTOS_SOURCE_DIR}/sdk/lib/3rdparty/freetype/include
+    ${REACTOS_SOURCE_DIR}/sdk/lib/3rdparty/freetype/include ## HACK for ntgdi/freetype.c and related
     ${REACTOS_SOURCE_DIR}/sdk/include/reactos/subsys
     ${REACTOS_SOURCE_DIR}/sdk/include/reactos/drivers)
 
@@ -72,9 +74,12 @@ list(APPEND SOURCE
     gdi/eng/ldevobj.c
     gdi/eng/mapping.c
     gdi/eng/math.c
+    gdi/eng/mdevobj.c
     gdi/eng/mem.c
     gdi/eng/engmisc.c
     gdi/eng/mouse.c
+    gdi/eng/multidisp.c
+    gdi/eng/pandisp.c
     gdi/eng/paint.c
     gdi/eng/pathobj.c
     gdi/eng/pdevobj.c
@@ -122,8 +127,9 @@ list(APPEND SOURCE
     user/ntuser/guicheck.c
     user/ntuser/hook.c
     user/ntuser/hotkey.c
-    user/ntuser/input.c
     user/ntuser/ime.c
+    user/ntuser/input.c
+    user/ntuser/job.c
     user/ntuser/keyboard.c
     user/ntuser/kbdlayout.c
     user/ntuser/layered.c
@@ -138,9 +144,12 @@ list(APPEND SOURCE
     user/ntuser/ntstubs.c
     user/ntuser/ntuser.c
     user/ntuser/painting.c
+    user/ntuser/power.c
     user/ntuser/prop.c
+    user/ntuser/rawinput.c
     user/ntuser/scrollbar.c
     user/ntuser/scrollex.c
+    user/ntuser/security.c
     user/ntuser/session.c
     user/ntuser/shutdown.c
     user/ntuser/simplecall.c
@@ -154,6 +163,7 @@ list(APPEND SOURCE
     user/ntuser/winpos.c
     user/ntuser/winsta.c
     user/ntuser/object.c
+    user/rtl/image.c
     user/rtl/text.c
     gdi/ntgdi/arc.c
     gdi/ntgdi/bezier.c
@@ -161,6 +171,7 @@ list(APPEND SOURCE
     gdi/ntgdi/bitmaps.c
     gdi/ntgdi/cliprgn.c
     gdi/ntgdi/coord.c
+    gdi/ntgdi/d3dkmt.c
     gdi/ntgdi/dcattr.c
     gdi/ntgdi/dclife.c
     gdi/ntgdi/dcobjs.c
@@ -189,6 +200,7 @@ list(APPEND SOURCE
     gdi/ntgdi/region.c
     gdi/ntgdi/stockobj.c
     gdi/ntgdi/text.c
+    gdi/ntgdi/utils.c
     gdi/ntgdi/wingl.c
     gdi/ntgdi/xformobj.c
     gdi/eng/stubs.c
@@ -221,6 +233,7 @@ list(APPEND SOURCE
 endif()
 
 if(KDBG)
+    add_definitions(-DKDBG)
     list(APPEND SOURCE gdi/ntgdi/gdikdbgext.c)
 endif()
 
@@ -232,6 +245,7 @@ add_library(win32k MODULE
     ${win32k_asm}
     win32k.rc
     ${CMAKE_CURRENT_BINARY_DIR}/win32k.def)
+add_pch(win32k pch.h SOURCE)
 
 set_module_type(win32k kernelmodedriver)
 target_link_libraries(win32k ${PSEH_LIB} dxguid libcntpr)
@@ -241,10 +255,13 @@ if(USE_DIBLIB)
 endif()
 
 add_importlibs(win32k ntoskrnl hal ftfd)
-add_pch(win32k pch.h SOURCE)
 add_cd_file(TARGET win32k DESTINATION reactos/system32 FOR all)
 
-set_source_files_properties(sys-stubs.S PROPERTIES OBJECT_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/w32ksvc.h)
+if(ARCH STREQUAL "amd64")
+    set_source_files_properties(sys-stubs.S PROPERTIES OBJECT_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/w32ksvc64.h)
+else()
+    set_source_files_properties(sys-stubs.S PROPERTIES OBJECT_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/w32ksvc32.h)
+endif()
 add_asm_files(win32ksys_asm sys-stubs.S)
 add_library(win32ksys ${win32ksys_asm})
 set_target_properties(win32ksys PROPERTIES LINKER_LANGUAGE "C")

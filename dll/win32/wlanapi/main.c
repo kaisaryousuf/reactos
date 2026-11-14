@@ -285,7 +285,7 @@ WlanQueryInterface(IN HANDLE hClientHandle,
         return ERROR_INVALID_PARAMETER;
 
     UNIMPLEMENTED;
-    return ERROR_SUCCESS;    
+    return ERROR_SUCCESS;
 }
 
 DWORD
@@ -299,8 +299,8 @@ WlanGetInterfaceCapability(IN HANDLE hClientHandle,
         return ERROR_INVALID_PARAMETER;
 
     UNIMPLEMENTED;
-    return ERROR_SUCCESS;        
-}  
+    return ERROR_SUCCESS;
+}
 
 DWORD WINAPI WlanRegisterNotification(IN HANDLE hClientHandle,
                                       IN DWORD dwNotifSource,
@@ -325,7 +325,7 @@ WlanReasonCodeToString(IN DWORD dwReasonCode,
         return ERROR_INVALID_PARAMETER;
 
     UNIMPLEMENTED;
-    return ERROR_SUCCESS;        
+    return ERROR_SUCCESS;
 }
 
 DWORD
@@ -343,7 +343,7 @@ WlanIhvControl(IN HANDLE hClientHandle,
         return ERROR_INVALID_PARAMETER;
 
     UNIMPLEMENTED;
-    return ERROR_SUCCESS;        
+    return ERROR_SUCCESS;
 }
 
 DWORD
@@ -367,7 +367,7 @@ WlanSetSecuritySettings(IN HANDLE hClientHandle,
     }
     RpcEndExcept;
 
-    return dwResult;     
+    return dwResult;
 }
 
 DWORD
@@ -382,7 +382,28 @@ WlanGetAvailableNetworkList(IN HANDLE hClientHandle,
         return ERROR_INVALID_PARAMETER;
 
     UNIMPLEMENTED;
-    return ERROR_SUCCESS;        
+    return ERROR_SUCCESS;
+}
+
+DWORD
+WINAPI
+WlanGetNetworkBssList(
+    _In_ HANDLE hClientHandle,
+    _In_ const GUID *pInterfaceGuid,
+    _In_opt_ const PDOT11_SSID pDot11Ssid,
+    _In_ DOT11_BSS_TYPE dot11BssType,
+    _In_ BOOL bSecurityEnabled,
+    _Reserved_ PVOID pReserved,
+    _Outptr_ PWLAN_BSS_LIST *ppWlanBssList)
+{
+    if ((pReserved != NULL) || (pInterfaceGuid == NULL) || (hClientHandle == NULL) || (ppWlanBssList == NULL))
+        return ERROR_INVALID_PARAMETER;
+
+    *ppWlanBssList = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(**ppWlanBssList));
+    (*ppWlanBssList)->dwTotalSize = sizeof(**ppWlanBssList);
+
+    UNIMPLEMENTED;
+    return ERROR_SUCCESS;
 }
 
 void __RPC_FAR * __RPC_USER

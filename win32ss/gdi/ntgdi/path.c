@@ -461,15 +461,25 @@ PATH_CheckRect(
 /* add a number of points, converting them to device coords */
 /* return a pointer to the first type byte so it can be fixed up if necessary */
 static BYTE *add_log_points( DC *dc, PPATH path, const POINT *points,
-                             DWORD count, BYTE type )
+                             DWORD count, BYTE type, BOOL bExtraPt)
 {
     BYTE *ret;
 
     if (!PATH_ReserveEntries( path, path->numEntriesUsed + count )) return NULL;
 
     ret = &path->pFlags[path->numEntriesUsed];
-    memcpy( &path->pPoints[path->numEntriesUsed], points, count * sizeof(*points) );
-    IntLPtoDP( dc, &path->pPoints[path->numEntriesUsed], count );
+
+    if (bExtraPt && path->numEntriesUsed == 1)
+    {
+        memcpy(&path->pPoints[0], points, (count + 1) * sizeof(*points));
+        IntLPtoDP(dc, &path->pPoints[0], count + 1);
+    }
+    else
+    {
+        memcpy(&path->pPoints[path->numEntriesUsed], points, count * sizeof(*points));
+        IntLPtoDP(dc, &path->pPoints[path->numEntriesUsed], count);
+    }
+
     memset( ret, type, count );
     path->numEntriesUsed += count;
     return ret;
@@ -531,10 +541,10 @@ static void close_figure( PPATH path )
 
 /* add a number of points, starting a new stroke if necessary */
 static BOOL add_log_points_new_stroke( DC *dc, PPATH path, const POINT *points,
-                                       DWORD count, BYTE type )
+                                       DWORD count, BYTE type, BOOL bExtraPt)
 {
     if (!start_new_stroke( path )) return FALSE;
-    if (!add_log_points( dc, path, points, count, type )) return FALSE;
+    if (!add_log_points(dc, path, points, count, type, bExtraPt)) return FALSE;
     update_current_pos( path );
 
     TRACE("ALPNS : Pos X %d Y %d\n",path->pos.x, path->pos.y);
@@ -612,7 +622,7 @@ PATH_LineTo(
            }
        }
     }
-    Ret = add_log_points_new_stroke( dc, pPath, &point, 1, PT_LINETO );
+    Ret = add_log_points_new_stroke(dc, pPath, &point, 1, PT_LINETO , FALSE);
     PATH_UnlockPath(pPath);
     return Ret;
 }
@@ -1143,7 +1153,7 @@ PATH_PolyBezierTo(
     pPath = PATH_LockPath(dc->dclevel.hPath);
     if (!pPath) return FALSE;
 
-    ret = add_log_points_new_stroke( dc, pPath, pts, cbPoints, PT_BEZIERTO );
+    ret = add_log_points_new_stroke(dc, pPath, pts, cbPoints, PT_BEZIERTO , TRUE);
 
     PATH_UnlockPath(pPath);
     return ret;
@@ -1166,7 +1176,7 @@ PATH_PolyBezier(
     pPath = PATH_LockPath(dc->dclevel.hPath);
     if (!pPath) return FALSE;
 
-    type = add_log_points( dc, pPath, pts, cbPoints, PT_BEZIERTO );
+    type = add_log_points(dc, pPath, pts, cbPoints, PT_BEZIERTO, FALSE);
     if (!type) return FALSE;
 
     type[0] = PT_MOVETO;
@@ -1217,7 +1227,7 @@ PATH_PolyDraw(
             break;
         case PT_LINETO:
         case PT_LINETO | PT_CLOSEFIGURE:
-            if (!add_log_points_new_stroke( dc, pPath, &pts[i], 1, PT_LINETO ))
+            if (!add_log_points_new_stroke(dc, pPath, &pts[i], 1, PT_LINETO , FALSE))
             {
                PATH_UnlockPath(pPath);
                return FALSE;
@@ -1227,7 +1237,7 @@ PATH_PolyDraw(
             if ((i + 2 < cbPoints) && (types[i + 1] == PT_BEZIERTO) &&
                 (types[i + 2] & ~PT_CLOSEFIGURE) == PT_BEZIERTO)
             {
-                if (!add_log_points_new_stroke( dc, pPath, &pts[i], 3, PT_BEZIERTO ))
+                if (!add_log_points_new_stroke(dc, pPath, &pts[i], 3, PT_BEZIERTO , FALSE))
                 {
                    PATH_UnlockPath(pPath);
                    return FALSE;
@@ -1278,7 +1288,10 @@ PATH_PolylineTo(
     pPath = PATH_LockPath(dc->dclevel.hPath);
     if (!pPath) return FALSE;
 
-    ret = add_log_points_new_stroke( dc, pPath, pts, cbPoints, PT_LINETO );
+    if (pPath->newStroke)
+        cbPoints--;
+
+    ret = add_log_points_new_stroke(dc, pPath, pts, cbPoints, PT_LINETO , TRUE);
     PATH_UnlockPath(pPath);
     return ret;
 }
@@ -1316,7 +1329,7 @@ PATH_PolyPolygon(
         count += counts[poly];
     }
 
-    type = add_log_points( dc, pPath, pts, count, PT_LINETO );
+    type = add_log_points(dc, pPath, pts, count, PT_LINETO, FALSE);
     if (!type)
     {
        PATH_UnlockPath(pPath);
@@ -1442,9 +1455,8 @@ PATH_FlattenPath(PPATH pPath)
 
 /* PATH_PathToRegion
  *
- * Creates a region from the specified path using the specified polygon
- * filling mode. The path is left unchanged. A handle to the region that
- * was created is stored in *pHrgn.
+ * Fills Rgn from the specified path using the specified polygon
+ * filling mode. The path is left unchanged.
  */
 BOOL
 FASTCALL
@@ -1459,7 +1471,7 @@ PATH_PathToRegion(
 
     if (!pPath->numEntriesUsed) return FALSE;
 
-    counts = ExAllocatePoolWithTag(PagedPool, (pPath->numEntriesUsed / 2) * sizeof(counts), TAG_PATH);
+    counts = ExAllocatePoolWithTag(PagedPool, (pPath->numEntriesUsed / 2) * sizeof(*counts), TAG_PATH);
     if (!counts)
     {
         ERR("Failed to allocate %lu strokes\n", (pPath->numEntriesUsed / 2) * sizeof(*counts));
@@ -1600,16 +1612,34 @@ PATH_StrokePath(
     PPATH pPath)
 {
     BOOL ret = FALSE;
-    INT i = 0;
-    INT nLinePts, nAlloc;
+    INT nLinePts, nAlloc, jOldFillMode, i = 0;
     POINT *pLinePts = NULL;
     POINT ptViewportOrg, ptWindowOrg;
     SIZE szViewportExt, szWindowExt;
     DWORD mapMode, graphicsMode;
     XFORM xform;
     PDC_ATTR pdcattr = dc->pdcattr;
+    PBRUSH pbrLine;
+    PPATH pNewPath;
 
     TRACE("Enter %s\n", __FUNCTION__);
+
+    pbrLine = dc->dclevel.pbrLine;
+    if (IntIsEffectiveWidePen(pbrLine))
+    {
+        pNewPath = PATH_WidenPathEx(dc, pPath);
+        if (pNewPath)
+        {
+            /* Fill the path with the WINDING fill mode */
+            jOldFillMode = pdcattr->jFillMode;
+            pdcattr->jFillMode = WINDING;
+            PATH_FillPathEx(dc, pNewPath, pbrLine);
+            pdcattr->jFillMode = jOldFillMode;
+
+            PATH_Delete(pNewPath->BaseObject.hHmgr);
+            return TRUE;
+        }
+    }
 
     /* Save the mapping mode info */
     mapMode = pdcattr->iMapMode;
@@ -1772,9 +1802,10 @@ PPATH FASTCALL
 IntGdiWidenPath(PPATH pPath, UINT penWidth, UINT penStyle, FLOAT eMiterLimit)
 {
     INT i, j, numStrokes, numOldStrokes, penWidthIn, penWidthOut;
-    PPATH flat_path, pNewPath, *pStrokes = NULL, *pOldStrokes, pUpPath, pDownPath;
+    PPATH flat_path, pNewPath = NULL, *pStrokes = NULL, *pOldStrokes, pUpPath, pDownPath;
     BYTE *type;
     DWORD joint, endcap;
+    KFLOATING_SAVE fpsave;
 
     endcap = (PS_ENDCAP_MASK & penStyle);
     joint = (PS_JOIN_MASK & penStyle);
@@ -1801,11 +1832,7 @@ IntGdiWidenPath(PPATH pPath, UINT penWidth, UINT penStyle, FLOAT eMiterLimit)
             ERR("Expected PT_MOVETO %s, got path flag %c\n",
                     i == 0 ? "as first point" : "after PT_CLOSEFIGURE",
                     flat_path->pFlags[i]);
-            if (pStrokes)
-                ExFreePoolWithTag(pStrokes, TAG_PATH);
-            PATH_UnlockPath(flat_path);
-            PATH_Delete(flat_path->BaseObject.hHmgr);
-            return NULL;
+            goto Exit;
         }
         switch(flat_path->pFlags[i])
         {
@@ -1826,18 +1853,14 @@ IntGdiWidenPath(PPATH pPath, UINT penWidth, UINT penStyle, FLOAT eMiterLimit)
                     if (!pStrokes)
                     {
                        ExFreePoolWithTag(pOldStrokes, TAG_PATH);
-                       PATH_UnlockPath(flat_path);
-                       PATH_Delete(flat_path->BaseObject.hHmgr);
-                       return NULL;
+                       goto Exit;
                     }
                     RtlCopyMemory(pStrokes, pOldStrokes, numOldStrokes * sizeof(PPATH));
                     ExFreePoolWithTag(pOldStrokes, TAG_PATH); // Free old pointer.
                 }
                 if (!pStrokes)
                 {
-                   PATH_UnlockPath(flat_path);
-                   PATH_Delete(flat_path->BaseObject.hHmgr);
-                   return NULL;
+                   goto Exit;
                 }
                 pStrokes[numStrokes - 1] = ExAllocatePoolWithTag(PagedPool, sizeof(PATH), TAG_PATH);
                 if (!pStrokes[numStrokes - 1])
@@ -1858,15 +1881,18 @@ IntGdiWidenPath(PPATH pPath, UINT penWidth, UINT penStyle, FLOAT eMiterLimit)
                 break;
             default:
                 ERR("Got path flag %c\n", flat_path->pFlags[i]);
-                if (pStrokes)
-                    ExFreePoolWithTag(pStrokes, TAG_PATH);
-                PATH_UnlockPath(flat_path);
-                PATH_Delete(flat_path->BaseObject.hHmgr);
-                return NULL;
+                goto Exit;
         }
     }
 
     pNewPath = PATH_CreatePath( flat_path->numEntriesUsed );
+    if (pNewPath == NULL)
+    {
+        ERR("PATH_CreatePath\n");
+        goto Exit;
+    }
+
+    KeSaveFloatingPointState(&fpsave);
 
     for (i = 0; i < numStrokes; i++)
     {
@@ -2086,12 +2112,18 @@ IntGdiWidenPath(PPATH pPath, UINT penWidth, UINT penStyle, FLOAT eMiterLimit)
         PATH_DestroyGdiPath(pDownPath);
         ExFreePoolWithTag(pDownPath, TAG_PATH);
     }
-    if (pStrokes) ExFreePoolWithTag(pStrokes, TAG_PATH);
 
-    PATH_UnlockPath(flat_path);
-    PATH_Delete(flat_path->BaseObject.hHmgr);
     pNewPath->state = PATH_Closed;
     PATH_UnlockPath(pNewPath);
+
+    KeRestoreFloatingPointState(&fpsave);
+
+Exit:
+    if (pStrokes) ExFreePoolWithTag(pStrokes, TAG_PATH);
+    HPATH hpathToDelete = flat_path->BaseObject.hHmgr;
+    PATH_UnlockPath(flat_path);
+    PATH_Delete(hpathToDelete);
+
     return pNewPath;
 }
 
@@ -2100,12 +2132,7 @@ PPATH
 FASTCALL
 PATH_WidenPath(DC *dc)
 {
-    INT size;
-    UINT penWidth, penStyle;
-    DWORD obj_type;
     PPATH pPath, pNewPath;
-    LPEXTLOGPEN elp;
-    PDC_ATTR pdcattr = dc->pdcattr;
 
     pPath = PATH_LockPath(dc->dclevel.hPath);
     if (!pPath)
@@ -2114,10 +2141,24 @@ PATH_WidenPath(DC *dc)
         return NULL;
     }
 
+    pNewPath = PATH_WidenPathEx(dc, pPath);
+    PATH_UnlockPath(pPath);
+    return pNewPath;
+}
+
+PPATH
+FASTCALL
+PATH_WidenPathEx(DC *dc, PPATH pPath)
+{
+    INT size;
+    UINT penWidth, penStyle;
+    DWORD obj_type;
+    LPEXTLOGPEN elp;
+    PDC_ATTR pdcattr = dc->pdcattr;
+
     if (pPath->state != PATH_Closed)
     {
         TRACE("PWP 1\n");
-        PATH_UnlockPath(pPath);
         EngSetLastError(ERROR_CAN_NOT_COMPLETE);
         return NULL;
     }
@@ -2126,7 +2167,6 @@ PATH_WidenPath(DC *dc)
     if (!size)
     {
         TRACE("PWP 2\n");
-        PATH_UnlockPath(pPath);
         EngSetLastError(ERROR_CAN_NOT_COMPLETE);
         return NULL;
     }
@@ -2135,7 +2175,6 @@ PATH_WidenPath(DC *dc)
     if (elp == NULL)
     {
         TRACE("PWP 3\n");
-        PATH_UnlockPath(pPath);
         EngSetLastError(ERROR_OUTOFMEMORY);
         return NULL;
     }
@@ -2156,7 +2195,6 @@ PATH_WidenPath(DC *dc)
         TRACE("PWP 4\n");
         EngSetLastError(ERROR_CAN_NOT_COMPLETE);
         ExFreePoolWithTag(elp, TAG_PATH);
-        PATH_UnlockPath(pPath);
         return NULL;
     }
 
@@ -2168,14 +2206,11 @@ PATH_WidenPath(DC *dc)
         (PS_TYPE_MASK & penStyle) == PS_COSMETIC)
     {
         TRACE("PWP 5\n");
-        PATH_UnlockPath(pPath);
         EngSetLastError(ERROR_CAN_NOT_COMPLETE);
         return FALSE;
     }
 
-    pNewPath = IntGdiWidenPath(pPath, penWidth, penStyle, dc->dclevel.laPath.eMiterLimit);
-    PATH_UnlockPath(pPath);
-    return pNewPath;
+    return IntGdiWidenPath(pPath, penWidth, penStyle, dc->dclevel.laPath.eMiterLimit);
 }
 
 static inline INT int_from_fixed(FIXED f)
@@ -2378,8 +2413,11 @@ PATH_ExtTextOut(
                                       TRUE);
         if (dwSize == GDI_ERROR)
         {
-           PATH_UnlockPath(pPath);
-           return FALSE;
+           // With default DC font,,, bitmap font?
+           // ExtTextOut on a path with bitmap font selected shouldn't fail.
+           // This just leads to empty path generated.
+           // Ref : test_emf_ExtTextOut_on_path
+           continue;
         }
 
         /* Add outline only if char is printable */
@@ -2869,6 +2907,14 @@ NtGdiPathToRegion(HDC  hDC)
         hrgnRval = Rgn->BaseObject.hHmgr;
 
         pNewPath = PATH_FlattenPath(pPath);
+        if (pNewPath == NULL)
+        {
+            ERR("Failed to flatten path %p\n", pDc->dclevel.hPath);
+            REGION_Delete(Rgn);
+            PATH_UnlockPath(pPath);
+            DC_UnlockDc(pDc);
+            return NULL;
+        }
 
         Ret = PATH_PathToRegion(pNewPath, pdcattr->jFillMode, Rgn);
 

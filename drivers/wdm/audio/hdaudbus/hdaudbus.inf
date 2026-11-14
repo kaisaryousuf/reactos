@@ -3,17 +3,20 @@ Signature = "$Windows NT$"
 Class = System
 ClassGuid = {4D36E97D-E325-11CE-BFC1-08002BE10318}
 Provider = ReactOS
-DriverVer=11/19/2010,6.1.7601.17514
+DriverVer=8/15/2022,6.1.7601.17514
 PnPLockdown=1
 
+[SourceDisksNames]
+1 = %DiskId1%,,,""
+
 [SourceDisksFiles]
-hdaudbus.sys 		= 3426
+hdaudbus.sys = 1,,
 
 [DestinationDirs]
 DefaultDestDir = 12 ; windows\system32\drivers
 
 [Manufacturer]
-Microsoft = GenericMfg
+ReactOS = GenericMfg
 
 [ControlFlags]
 ExcludeFromSelect = PCI\CC_0403
@@ -22,10 +25,29 @@ ExcludeFromSelect = PCI\CC_0403
 [GenericMfg]
 %HDAudio.DeviceDesc% = HDAudio_Device, PCI\CC_0403
 %HDAudio.DeviceDesc% = HDAudio_Device, PCI\VEN_8086&DEV_2668
+%HDAudio.DeviceDesc% = HDAudio_Device, PCI\VEN_8086&DEV_9D70&CC_0401 ;Intel Skylake
+%HDAudio.DeviceDesc% = HDAudio_Device, PCI\VEN_8086&DEV_9D71&CC_0401 ;Intel Kaby Lake
+%HDAudio.DeviceDesc% = HDAudio_Device, PCI\VEN_8086&DEV_5A98&CC_0401 ;Intel Apollo Lake
+%HDAudio.DeviceDesc% = HDAudio_Device, PCI\VEN_8086&DEV_3198&CC_0401 ;Intel Gemini Lake
+%HDAudio.DeviceDesc% = HDAudio_Device, PCI\VEN_8086&DEV_02C8&CC_0401 ;Intel Comet Lake
+%HDAudio.DeviceDesc% = HDAudio_Device, PCI\VEN_8086&DEV_4DC8&CC_0401 ;Intel Jasper Lake
+%HDAudio.DeviceDesc% = HDAudio_Device, PCI\VEN_8086&DEV_A0C8&CC_0401 ;Intel Tiger Lake
+%HDAudio.DeviceDesc% = HDAudio_Device, PCI\VEN_8086&DEV_51C8&CC_0401 ;Intel Alder Lake-P
+%HDAudio.DeviceDesc% = HDAudio_Device, PCI\VEN_8086&DEV_51CC&CC_0401 ;Intel Alder Lake-M
+%HDAudio.DeviceDesc% = HDAudio_Device, PCI\VEN_8086&DEV_54C8&CC_0401 ;Intel Alder Lake-N
+%HDAudio.DeviceDesc% = HDAudio_Device, PCI\VEN_8086&DEV_51CA&CC_0401 ;Intel Raptor Lake-P
+%HDAudio.DeviceDesc% = HDAudio_Device, PCI\VEN_8086&DEV_7E28&CC_0401 ;Intel Meteor Lake-P
+%HDAudio.DeviceDesc% = HDAudio_Device, PCI\VEN_8086&DEV_7728&CC_0401 ;Intel Arrow Lake-P
+%HDAudio.DeviceDesc% = HDAudio_Device, PCI\VEN_8086&DEV_A828&CC_0401 ;Intel Lunar Lake-P
+%HDAudio.DeviceDesc% = HDAudio_Device, PCI\VEN_8086&DEV_D328&CC_0401 ;Intel Nova Lake
+%HDAudio.DeviceDesc% = HDAudio_Device, PCI\VEN_8086&DEV_E328&CC_0401 ;Intel Panther Lake-H
+%HDAudio.DeviceDesc% = HDAudio_Device, PCI\VEN_8086&DEV_E428&CC_0401 ;Intel Panther Lake
 
 [HDAudio_Device.NT]
 CopyFiles = Drivers_Dir
 AddReg = HDAudio.AddReg
+;Include=pci.inf
+;Needs=PciD3ColdSupported.HW
 
 [Drivers_Dir]
 hdaudbus.sys,,,0x0100
@@ -38,7 +60,6 @@ HKR,Settings,DeviceLocation,,%HDAudioBUS%
 HKR,Interrupt Management,,0x00000010
 HKR,Interrupt Management\MessageSignaledInterruptProperties,,0x00000010
 HKR,Interrupt Management\MessageSignaledInterruptProperties,MSISupported,0x00010001,1
-
 
 ;-------------- Service installation
 [HDAudio_Device.NT.Services]
@@ -58,8 +79,6 @@ hdaudbus.sys=SignatureAttributes.DRM
 
 [SignatureAttributes.DRM]
 DRMLevel=1300
-
-
 
 [Strings]
 DiskId1 = "ReactOS UAA Bus Driver for High Definition Audio. Installation Disk #1"
@@ -104,3 +123,12 @@ AUDIOFG = "HDA 总线上的音频设备"
 MODEMFG = "HDA 总线上的 Modem 设备"
 UNKNOWNFG = "HDA 总线上的未知设备"
 HDAudioBUS = "内部 HDA 总线"
+
+[Strings.0a]
+DiskId1 = "Driver Bus UAA de ReactOS para Audio de Alta Fidelidad. Disco de instalación 1"
+HDAudio.DeviceDesc = "Controlador de Audio de Alta Fidelidad"
+HDAudBus.SVCDESC = "Driver Bus UAA de ReactOS para Audio de Alta Fidelidad"
+AUDIOFG = "Dispositivo de Audio en el Bus de Audio de Alta Fidelidad"
+MODEMFG = "Dispositivo Modem en el Bus de Audio de Alta Fidelidad"
+UNKNOWNFG = "Dispositivo desconocido en el Bus de Audio de Alta Fidelidad"
+HDAudioBUS = "Bus Interno de Audio de Alta Fidelidad"

@@ -14,8 +14,7 @@
 
 /* GLOBALS *******************************************************************/
 
-PCHAR CmpID1 = "80%u86-%c%x";
-PCHAR CmpID2 = "x86 Family %u Model %u Stepping %u";
+PCHAR CmpFullCpuID = "%s Family %u Model %u Stepping %u";
 PCHAR CmpBiosStrings[] =
 {
     "Ver",
@@ -137,7 +136,7 @@ CmpGetBiosVersion(IN PCHAR BiosStart,
     PCHAR p, pp;
     USHORT i;
 
-    /* Check if we were given intitial data for the search */
+    /* Check if we were given initial data for the search */
     if (BiosStart)
     {
         /* Save it for later use */
@@ -160,7 +159,7 @@ CmpGetBiosVersion(IN PCHAR BiosStart,
                 (*(CmpBiosSearchStart - 1) >= '0') &&
                 (*(CmpBiosSearchStart - 1) <= '9'))
             {
-                /* Start looking in this area for the actual BIOS Version */
+                /* Start looking in this area for the actual BIOS version */
                 pp = CmpBiosSearchStart;
                 break;
             }
@@ -258,7 +257,7 @@ CmpInitializeMachineDependentConfiguration(IN PLOADER_PARAMETER_BLOCK LoaderBloc
                          L"Control\\Session Manager\\Memory Management");
     InitializeObjectAttributes(&ObjectAttributes,
                                &KeyName,
-                               OBJ_CASE_INSENSITIVE,
+                               OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE,
                                NULL,
                                NULL);
     Status = NtOpenKey(&KeyHandle, KEY_READ | KEY_WRITE, &ObjectAttributes);
@@ -285,7 +284,7 @@ CmpInitializeMachineDependentConfiguration(IN PLOADER_PARAMETER_BLOCK LoaderBloc
                          L"\\Registry\\Machine\\Hardware\\Description\\System");
     InitializeObjectAttributes(&ObjectAttributes,
                                &KeyName,
-                               OBJ_CASE_INSENSITIVE,
+                               OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE,
                                NULL,
                                NULL);
     Status = NtOpenKey(&SystemHandle, KEY_READ | KEY_WRITE, &ObjectAttributes);
@@ -298,7 +297,7 @@ CmpInitializeMachineDependentConfiguration(IN PLOADER_PARAMETER_BLOCK LoaderBloc
                          L"Control\\BIOSINFO");
     InitializeObjectAttributes(&ObjectAttributes,
                                &KeyName,
-                               OBJ_CASE_INSENSITIVE,
+                               OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE,
                                NULL,
                                NULL);
     Status = NtCreateKey(&BiosHandle,
@@ -318,7 +317,7 @@ CmpInitializeMachineDependentConfiguration(IN PLOADER_PARAMETER_BLOCK LoaderBloc
     RtlInitUnicodeString(&KeyName, L"CentralProcessor");
     InitializeObjectAttributes(&ObjectAttributes,
                                &KeyName,
-                               OBJ_CASE_INSENSITIVE,
+                               OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE,
                                SystemHandle,
                                NULL);
     Status = NtCreateKey(&KeyHandle,
@@ -346,10 +345,13 @@ CmpInitializeMachineDependentConfiguration(IN PLOADER_PARAMETER_BLOCK LoaderBloc
         /* Loop all CPUs */
         for (i = 0; i < KeNumberProcessors; i++)
         {
+#ifdef _M_AMD64
+            PCHAR FamilyId;
+#endif
             /* Get the PRCB */
             Prcb = KiProcessorBlock[i];
 
-            /* Setup the Configuration Entry for the Processor */
+            /* Setup the configuration entry for the processor */
             RtlZeroMemory(&ConfigData, sizeof(ConfigData));
             ConfigData.ComponentEntry.Class = ProcessorClass;
             ConfigData.ComponentEntry.Type = CentralProcessor;
@@ -357,25 +359,54 @@ CmpInitializeMachineDependentConfiguration(IN PLOADER_PARAMETER_BLOCK LoaderBloc
             ConfigData.ComponentEntry.AffinityMask = AFFINITY_MASK(i);
             ConfigData.ComponentEntry.Identifier = Buffer;
 
+#if defined(_M_IX86)
             /* Check if the CPU doesn't support CPUID */
             if (!Prcb->CpuID)
             {
-                /* Build ID1-style string for older CPUs */
+                /* Build 80x86-style string for older CPUs */
                 sprintf(Buffer,
-                        CmpID1,
+                        "80%u86-%c%x",
                         Prcb->CpuType,
                         (Prcb->CpuStep >> 8) + 'A',
                         Prcb->CpuStep & 0xff);
             }
             else
             {
-                /* Build ID2-style string for newer CPUs */
+                /* Build full ID string for newer CPUs */
                 sprintf(Buffer,
-                        CmpID2,
+                        CmpFullCpuID,
+                        "x86",
                         Prcb->CpuType,
                         (Prcb->CpuStep >> 8),
                         Prcb->CpuStep & 0xff);
             }
+#elif defined(_M_AMD64)
+            if (Prcb->CpuVendor == CPU_VIA)
+            {
+                /* This is VIA64 family */
+                FamilyId = "VIA64";
+            }
+            else if (Prcb->CpuVendor == CPU_AMD)
+            {
+                /* This is AMD64 family */
+                FamilyId = "AMD64";
+            }
+            else
+            {
+                /* This is generic EM64T family */
+                FamilyId = "EM64T";
+            }
+
+            /* ID string has the same style for all 64-bit CPUs */
+            sprintf(Buffer,
+                    CmpFullCpuID,
+                    FamilyId,
+                    Prcb->CpuType,
+                    (Prcb->CpuStep >> 8),
+                    Prcb->CpuStep & 0xff);
+#else
+#error Unknown architecture
+#endif
 
             /* Save the ID string length now that we've created it */
             ConfigData.ComponentEntry.IdentifierLength = (ULONG)strlen(Buffer) + 1;
@@ -397,7 +428,7 @@ CmpInitializeMachineDependentConfiguration(IN PLOADER_PARAMETER_BLOCK LoaderBloc
             /* Check if we have an FPU */
             if (KeI386NpxPresent)
             {
-                /* Setup the Configuration Entry for the FPU */
+                /* Setup the configuration entry for the FPU */
                 RtlZeroMemory(&ConfigData, sizeof(ConfigData));
                 ConfigData.ComponentEntry.Class = ProcessorClass;
                 ConfigData.ComponentEntry.Type = FloatingPointProcessor;
@@ -405,7 +436,7 @@ CmpInitializeMachineDependentConfiguration(IN PLOADER_PARAMETER_BLOCK LoaderBloc
                 ConfigData.ComponentEntry.AffinityMask = AFFINITY_MASK(i);
                 ConfigData.ComponentEntry.Identifier = Buffer;
 
-                /* For 386 cpus, the CPU pp is the identifier */
+                /* For 386 CPUs, the standard FPU model is the 80387 */
                 if (Prcb->CpuType == 3) strcpy(Buffer, "80387");
 
                 /* Save the ID string length now that we've created it */
@@ -472,22 +503,24 @@ CmpInitializeMachineDependentConfiguration(IN PLOADER_PARAMETER_BLOCK LoaderBloc
                 {
                     /* Convert it to Unicode */
                     RtlInitAnsiString(&TempString, CpuString);
-                    RtlAnsiStringToUnicodeString(&Data, &TempString, TRUE);
+                    if (NT_SUCCESS(RtlAnsiStringToUnicodeString(&Data, &TempString, TRUE)))
+                    {
+                        /* Add it to the registry */
+                        RtlInitUnicodeString(&ValueName, L"ProcessorNameString");
+                        Status = NtSetValueKey(KeyHandle,
+                                               &ValueName,
+                                               0,
+                                               REG_SZ,
+                                               Data.Buffer,
+                                               Data.Length + sizeof(UNICODE_NULL));
 
-                    /* Add it to the registry */
-                    RtlInitUnicodeString(&ValueName, L"ProcessorNameString");
-                    Status = NtSetValueKey(KeyHandle,
-                                           &ValueName,
-                                           0,
-                                           REG_SZ,
-                                           Data.Buffer,
-                                           Data.Length + sizeof(UNICODE_NULL));
+                        /* ROS: Save a copy for Jira reporting */
+                        if (!RtlCreateUnicodeString(&KeRosProcessorName, Data.Buffer))
+                            KeRosProcessorName.Length = 0; /* Do not fail for this */
 
-                    /* ROS: Save a copy for bugzilla reporting */
-                    RtlCreateUnicodeString(&KeRosProcessorName, Data.Buffer);
-
-                    /* Free the temporary buffer */
-                    RtlFreeUnicodeString(&Data);
+                        /* Free the temporary buffer */
+                        RtlFreeUnicodeString(&Data);
+                    }
                 }
 
                 /* Check if we had a Vendor ID */
@@ -495,19 +528,20 @@ CmpInitializeMachineDependentConfiguration(IN PLOADER_PARAMETER_BLOCK LoaderBloc
                 {
                     /* Convert it to Unicode */
                     RtlInitAnsiString(&TempString, Prcb->VendorString);
-                    RtlAnsiStringToUnicodeString(&Data, &TempString, TRUE);
+                    if (NT_SUCCESS(RtlAnsiStringToUnicodeString(&Data, &TempString, TRUE)))
+                    {
+                        /* Add it to the registry */
+                        RtlInitUnicodeString(&ValueName, L"VendorIdentifier");
+                        Status = NtSetValueKey(KeyHandle,
+                                               &ValueName,
+                                               0,
+                                               REG_SZ,
+                                               Data.Buffer,
+                                               Data.Length + sizeof(UNICODE_NULL));
 
-                    /* Add it to the registry */
-                    RtlInitUnicodeString(&ValueName, L"VendorIdentifier");
-                    Status = NtSetValueKey(KeyHandle,
-                                           &ValueName,
-                                           0,
-                                           REG_SZ,
-                                           Data.Buffer,
-                                           Data.Length + sizeof(UNICODE_NULL));
-
-                    /* Free the temporary buffer */
-                    RtlFreeUnicodeString(&Data);
+                        /* Free the temporary buffer */
+                        RtlFreeUnicodeString(&Data);
+                    }
                 }
 
                 /* Check if we have features bits */
@@ -564,7 +598,7 @@ CmpInitializeMachineDependentConfiguration(IN PLOADER_PARAMETER_BLOCK LoaderBloc
     RtlInitUnicodeString(&SectionName, L"\\Device\\PhysicalMemory");
     InitializeObjectAttributes(&ObjectAttributes,
                                &SectionName,
-                               OBJ_CASE_INSENSITIVE,
+                               OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE,
                                NULL,
                                NULL);
     Status = ZwOpenSection(&SectionHandle,
@@ -603,7 +637,7 @@ CmpInitializeMachineDependentConfiguration(IN PLOADER_PARAMETER_BLOCK LoaderBloc
         VideoRomBase = (*((PULONG)BaseAddress + 0x10) >> 12) & 0xFFFF0;
         VideoRomBase += *((PULONG)BaseAddress + 0x10) & 0xFFF0;
 
-        /* Now get to the actual ROM Start and make sure it's not invalid*/
+        /* Now get to the actual ROM Start and make sure it's not invalid */
         VideoRomBase &= 0xFFFF8000;
         if (VideoRomBase < 0xC0000) VideoRomBase = 0xC0000;
 
@@ -611,16 +645,14 @@ CmpInitializeMachineDependentConfiguration(IN PLOADER_PARAMETER_BLOCK LoaderBloc
         ZwUnmapViewOfSection(NtCurrentProcess(), BaseAddress);
     }
 
-    /* Allocate BIOS Version pp Buffer */
+    /* Allocate the BIOS version buffer */
     BiosVersion = ExAllocatePoolWithTag(PagedPool, PAGE_SIZE, TAG_CM);
 
-    /* Setup settings to map the 64K BIOS ROM */
-    BaseAddress = 0;
+    /* Map 64KB of BIOS ROM */
+    BaseAddress = NULL;
     ViewSize = 16 * PAGE_SIZE;
-    ViewBase.LowPart = 0xF0000;
-    ViewBase.HighPart = 0;
+    ViewBase.QuadPart = 0xF0000;
 
-    /* Map it */
     Status = ZwMapViewOfSection(SectionHandle,
                                 NtCurrentProcess(),
                                 &BaseAddress,
@@ -633,28 +665,29 @@ CmpInitializeMachineDependentConfiguration(IN PLOADER_PARAMETER_BLOCK LoaderBloc
                                 PAGE_READWRITE);
     if (NT_SUCCESS(Status))
     {
-        /* Scan the ROM to get the BIOS Date */
+        /* Scan the ROM to get the BIOS date */
         if (CmpGetBiosDate(BaseAddress, 16 * PAGE_SIZE, Buffer, TRUE))
         {
             /* Convert it to Unicode */
             RtlInitAnsiString(&TempString, Buffer);
-            RtlAnsiStringToUnicodeString(&Data, &TempString, TRUE);
+            if (NT_SUCCESS(RtlAnsiStringToUnicodeString(&Data, &TempString, TRUE)))
+            {
+                /* Write the date into the registry */
+                RtlInitUnicodeString(&ValueName, L"SystemBiosDate");
+                Status = NtSetValueKey(SystemHandle,
+                                       &ValueName,
+                                       0,
+                                       REG_SZ,
+                                       Data.Buffer,
+                                       Data.Length + sizeof(UNICODE_NULL));
 
-            /* Write the date into the registry */
-            RtlInitUnicodeString(&ValueName, L"SystemBiosDate");
-            Status = NtSetValueKey(SystemHandle,
-                                   &ValueName,
-                                   0,
-                                   REG_SZ,
-                                   Data.Buffer,
-                                   Data.Length + sizeof(UNICODE_NULL));
-
-            /* Free the string */
-            RtlFreeUnicodeString(&Data);
+                /* Free the string */
+                RtlFreeUnicodeString(&Data);
+            }
 
             if (BiosHandle)
             {
-                /* Get the BIOS Date Identifier */
+                /* Get the BIOS date identifier */
                 RtlCopyMemory(Buffer, (PCHAR)BaseAddress + (16 * PAGE_SIZE - 11), 8);
                 Buffer[8] = ANSI_NULL;
 
@@ -671,8 +704,9 @@ CmpInitializeMachineDependentConfiguration(IN PLOADER_PARAMETER_BLOCK LoaderBloc
                                            Data.Buffer,
                                            Data.Length + sizeof(UNICODE_NULL));
 
-                    /* ROS: Save a copy for bugzilla reporting */
-                    RtlCreateUnicodeString(&KeRosBiosDate, Data.Buffer);
+                    /* ROS: Save a copy for Jira reporting */
+                    if (!RtlCreateUnicodeString(&KeRosBiosDate, Data.Buffer))
+                        KeRosBiosDate.Length = 0; /* Do not fail for this */
 
                     /* Free the string */
                     RtlFreeUnicodeString(&Data);
@@ -683,7 +717,7 @@ CmpInitializeMachineDependentConfiguration(IN PLOADER_PARAMETER_BLOCK LoaderBloc
             }
         }
 
-        /* Get the BIOS Version */
+        /* Get the BIOS version */
         if (CmpGetBiosVersion(BaseAddress, 16 * PAGE_SIZE, Buffer))
         {
             /* Start at the beginning of our buffer */
@@ -692,7 +726,9 @@ CmpInitializeMachineDependentConfiguration(IN PLOADER_PARAMETER_BLOCK LoaderBloc
             {
                 /* Convert to Unicode */
                 RtlInitAnsiString(&TempString, Buffer);
-                RtlAnsiStringToUnicodeString(&Data, &TempString, TRUE);
+                Status = RtlAnsiStringToUnicodeString(&Data, &TempString, TRUE);
+                if (!NT_SUCCESS(Status))
+                    break;
 
                 /* Calculate the length of this string and copy it in */
                 Length = Data.Length + sizeof(UNICODE_NULL);
@@ -712,7 +748,7 @@ CmpInitializeMachineDependentConfiguration(IN PLOADER_PARAMETER_BLOCK LoaderBloc
                 /* Go to the next string inside the multi-string buffer */
                 CurrentVersion += Length;
 
-                /* Query the next BIOS Version */
+                /* Query the next BIOS version */
             } while (CmpGetBiosVersion(NULL, 0, Buffer));
 
             /* Check if we found any strings at all */
@@ -722,7 +758,7 @@ CmpInitializeMachineDependentConfiguration(IN PLOADER_PARAMETER_BLOCK LoaderBloc
                 *(PWSTR)CurrentVersion = UNICODE_NULL;
                 TotalLength += sizeof(UNICODE_NULL);
 
-                /* Write the BIOS Version to the registry */
+                /* Write the BIOS version to the registry */
                 RtlInitUnicodeString(&ValueName, L"SystemBiosVersion");
                 Status = NtSetValueKey(SystemHandle,
                                        &ValueName,
@@ -731,8 +767,9 @@ CmpInitializeMachineDependentConfiguration(IN PLOADER_PARAMETER_BLOCK LoaderBloc
                                        BiosVersion,
                                        TotalLength);
 
-                /* ROS: Save a copy for bugzilla reporting */
-                RtlCreateUnicodeString(&KeRosBiosVersion, (PWCH)BiosVersion);
+                /* ROS: Save a copy for Jira reporting */
+                if (!RtlCreateUnicodeString(&KeRosBiosVersion, (PWCH)BiosVersion))
+                    KeRosBiosVersion.Length = 0; /* Do not fail for this */
             }
         }
 
@@ -740,12 +777,11 @@ CmpInitializeMachineDependentConfiguration(IN PLOADER_PARAMETER_BLOCK LoaderBloc
         ZwUnmapViewOfSection(NtCurrentProcess(), BaseAddress);
     }
 
-    /* Now prepare for Video BIOS Mapping of 32KB */
-    BaseAddress = 0;
+    /* Map 32KB of Video BIOS */
+    BaseAddress = NULL;
     ViewSize = 8 * PAGE_SIZE;
     ViewBase.QuadPart = VideoRomBase;
 
-    /* Map it */
     Status = ZwMapViewOfSection(SectionHandle,
                                 NtCurrentProcess(),
                                 &BaseAddress,
@@ -758,30 +794,32 @@ CmpInitializeMachineDependentConfiguration(IN PLOADER_PARAMETER_BLOCK LoaderBloc
                                 PAGE_READWRITE);
     if (NT_SUCCESS(Status))
     {
-        /* Scan the ROM to get the BIOS Date */
+        /* Scan the ROM to get the BIOS date */
         if (CmpGetBiosDate(BaseAddress, 8 * PAGE_SIZE, Buffer, FALSE))
         {
             /* Convert it to Unicode */
             RtlInitAnsiString(&TempString, Buffer);
-            RtlAnsiStringToUnicodeString(&Data, &TempString, TRUE);
+            if (NT_SUCCESS(RtlAnsiStringToUnicodeString(&Data, &TempString, TRUE)))
+            {
+                /* Write the date into the registry */
+                RtlInitUnicodeString(&ValueName, L"VideoBiosDate");
+                Status = NtSetValueKey(SystemHandle,
+                                       &ValueName,
+                                       0,
+                                       REG_SZ,
+                                       Data.Buffer,
+                                       Data.Length + sizeof(UNICODE_NULL));
 
-            /* Write the date into the registry */
-            RtlInitUnicodeString(&ValueName, L"VideoBiosDate");
-            Status = NtSetValueKey(SystemHandle,
-                                   &ValueName,
-                                   0,
-                                   REG_SZ,
-                                   Data.Buffer,
-                                   Data.Length + sizeof(UNICODE_NULL));
+                /* ROS: Save a copy for Jira reporting */
+                if (!RtlCreateUnicodeString(&KeRosVideoBiosDate, Data.Buffer))
+                    KeRosVideoBiosDate.Length = 0; /* Do not fail for this */
 
-            /* ROS: Save a copy for bugzilla reporting */
-            RtlCreateUnicodeString(&KeRosVideoBiosDate, Data.Buffer);
-
-            /* Free the string */
-            RtlFreeUnicodeString(&Data);
+                /* Free the string */
+                RtlFreeUnicodeString(&Data);
+            }
         }
 
-        /* Get the Video BIOS Version */
+        /* Get the Video BIOS version */
         if (CmpGetBiosVersion(BaseAddress, 8 * PAGE_SIZE, Buffer))
         {
             /* Start at the beginning of our buffer */
@@ -790,7 +828,8 @@ CmpInitializeMachineDependentConfiguration(IN PLOADER_PARAMETER_BLOCK LoaderBloc
             {
                 /* Convert to Unicode */
                 RtlInitAnsiString(&TempString, Buffer);
-                RtlAnsiStringToUnicodeString(&Data, &TempString, TRUE);
+                if (!NT_SUCCESS(RtlAnsiStringToUnicodeString(&Data, &TempString, TRUE)))
+                    break;
 
                 /* Calculate the length of this string and copy it in */
                 Length = Data.Length + sizeof(UNICODE_NULL);
@@ -810,7 +849,7 @@ CmpInitializeMachineDependentConfiguration(IN PLOADER_PARAMETER_BLOCK LoaderBloc
                 /* Go to the next string inside the multi-string buffer */
                 CurrentVersion += Length;
 
-                /* Query the next BIOS Version */
+                /* Query the next BIOS version */
             } while (CmpGetBiosVersion(NULL, 0, Buffer));
 
             /* Check if we found any strings at all */
@@ -820,7 +859,7 @@ CmpInitializeMachineDependentConfiguration(IN PLOADER_PARAMETER_BLOCK LoaderBloc
                 *(PWSTR)CurrentVersion = UNICODE_NULL;
                 TotalLength += sizeof(UNICODE_NULL);
 
-                /* Write the BIOS Version to the registry */
+                /* Write the BIOS version to the registry */
                 RtlInitUnicodeString(&ValueName, L"VideoBiosVersion");
                 Status = NtSetValueKey(SystemHandle,
                                        &ValueName,
@@ -829,8 +868,9 @@ CmpInitializeMachineDependentConfiguration(IN PLOADER_PARAMETER_BLOCK LoaderBloc
                                        BiosVersion,
                                        TotalLength);
 
-                /* ROS: Save a copy for bugzilla reporting */
-                RtlCreateUnicodeString(&KeRosVideoBiosVersion, (PWCH)BiosVersion);
+                /* ROS: Save a copy for Jira reporting */
+                if (!RtlCreateUnicodeString(&KeRosVideoBiosVersion, (PWCH)BiosVersion))
+                    KeRosVideoBiosVersion.Length = 0; /* Do not fail for this */
             }
         }
 

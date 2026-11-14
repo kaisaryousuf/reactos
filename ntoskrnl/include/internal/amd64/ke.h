@@ -1,6 +1,10 @@
 #ifndef __NTOSKRNL_INCLUDE_INTERNAL_AMD64_KE_H
 #define __NTOSKRNL_INCLUDE_INTERNAL_AMD64_KE_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define X86_EFLAGS_TF           0x00000100 /* Trap flag */
 #define X86_EFLAGS_IF           0x00000200 /* Interrupt Enable flag */
 #define X86_EFLAGS_IOPL         0x00003000 /* I/O Privilege Level bits */
@@ -31,7 +35,7 @@
 #define X86_FEATURE_PAE         0x00000040 /* physical address extension is present */
 #define X86_FEATURE_CX8         0x00000100 /* CMPXCHG8B instruction present */
 #define X86_FEATURE_SYSCALL     0x00000800 /* SYSCALL/SYSRET support present */
-#define X86_FEATURE_MTTR        0x00001000 /* Memory type range registers are present */
+#define X86_FEATURE_MTRR        0x00001000 /* Memory type range registers are present */
 #define X86_FEATURE_PGE         0x00002000 /* Page Global Enable */
 #define X86_FEATURE_CMOV        0x00008000 /* "Conditional move" instruction supported */
 #define X86_FEATURE_PAT         0x00010000 /* Page Attribute Table is supported */
@@ -84,6 +88,8 @@
 
 #ifndef __ASM__
 
+extern SIZE_T KeXStateLength;
+
 #include "intrin_i.h"
 
 typedef struct _KIDT_INIT
@@ -119,32 +125,99 @@ extern ULONG KeI386CpuStep;
 #define KD_BREAKPOINT_VALUE       0xCC
 
 //
-// Macros for getting and setting special purpose registers in portable code
+// One-liners for getting and setting special purpose registers in portable code
 //
-#define KeGetContextPc(Context) \
-    ((Context)->Rip)
+FORCEINLINE
+ULONG_PTR
+KeGetContextPc(PCONTEXT Context)
+{
+    return Context->Rip;
+}
 
-#define KeSetContextPc(Context, ProgramCounter) \
-    ((Context)->Rip = (ProgramCounter))
+FORCEINLINE
+VOID
+KeSetContextPc(PCONTEXT Context, ULONG_PTR ProgramCounter)
+{
+    Context->Rip = ProgramCounter;
+}
 
-#define KeGetTrapFramePc(TrapFrame) \
-    ((TrapFrame)->Rip)
+FORCEINLINE
+ULONG_PTR
+KeGetContextReturnRegister(PCONTEXT Context)
+{
+    return Context->Rax;
+}
 
-#define KiGetLinkedTrapFrame(x) \
-    (PKTRAP_FRAME)((x)->TrapFrame)
+FORCEINLINE
+VOID
+KeSetContextReturnRegister(PCONTEXT Context, ULONG_PTR ReturnValue)
+{
+    Context->Rax = ReturnValue;
+}
 
-#define KeGetContextReturnRegister(Context) \
-    ((Context)->Rax)
+FORCEINLINE
+ULONG_PTR
+KeGetContextStackRegister(PCONTEXT Context)
+{
+    return Context->Rsp;
+}
 
-#define KeSetContextReturnRegister(Context, ReturnValue) \
-    ((Context)->Rax = (ReturnValue))
+FORCEINLINE
+ULONG_PTR
+KeGetContextFrameRegister(PCONTEXT Context)
+{
+    return Context->Rbp;
+}
+
+FORCEINLINE
+VOID
+KeSetContextFrameRegister(PCONTEXT Context, ULONG_PTR Frame)
+{
+    Context->Rbp = Frame;
+}
+
+FORCEINLINE
+ULONG_PTR
+KeGetTrapFramePc(PKTRAP_FRAME TrapFrame)
+{
+    return TrapFrame->Rip;
+}
+
+FORCEINLINE
+PKTRAP_FRAME
+KiGetLinkedTrapFrame(PKTRAP_FRAME TrapFrame)
+{
+    return (PKTRAP_FRAME)TrapFrame->TrapFrame;
+}
+
+FORCEINLINE
+ULONG_PTR
+KeGetTrapFrameStackRegister(PKTRAP_FRAME TrapFrame)
+{
+    return TrapFrame->Rsp;
+}
+
+FORCEINLINE
+ULONG_PTR
+KeGetTrapFrameFrameRegister(PKTRAP_FRAME TrapFrame)
+{
+    return TrapFrame->Rbp;
+}
+
+FORCEINLINE
+ULONG64
+KxQueryProcessorCycleTime(VOID)
+{
+    /* Read the time stamp counter */
+    return __rdtsc();
+}
 
 //
 // Macro to get trap and exception frame from a thread stack
 //
 #define KeGetTrapFrame(Thread) \
-    (PKTRAP_FRAME)((ULONG_PTR)((Thread)->InitialStack) - \
-                   sizeof(KTRAP_FRAME))
+    ((PKTRAP_FRAME)((ULONG_PTR)((Thread)->InitialStack) - \
+                   sizeof(KTRAP_FRAME)))
 
 //
 // Macro to get context switches from the PRCB
@@ -293,7 +366,10 @@ KiEndInterrupt(IN KIRQL Irql,
 {
     /* Make sure this is from the clock handler */
     ASSERT(TrapFrame->ErrorCode == 0xc10c4);
-    //KeLowerIrql(Irql);
+
+    /* Disable interrupts and end the interrupt */
+    _disable();
+    HalEndSystemInterrupt(Irql, TrapFrame);
 }
 
 FORCEINLINE
@@ -304,11 +380,23 @@ KiUserTrap(IN PKTRAP_FRAME TrapFrame)
     return !!(TrapFrame->SegCs & MODE_MASK);
 }
 
-#define Ki386PerfEnd()
+//
+// PERF Code
+//
+FORCEINLINE
+VOID
+Ki386PerfEnd(VOID)
+{
+    extern ULONGLONG BootCyclesEnd, BootCycles;
+    BootCyclesEnd = __rdtsc();
+    DbgPrint("Boot took %I64u cycles!\n", BootCyclesEnd - BootCycles);
+    DbgPrint("Interrupts: %u System Calls: %u Context Switches: %u\n",
+             KeGetCurrentPrcb()->InterruptCount,
+             KeGetCurrentPrcb()->KeSystemCalls,
+             KeGetContextSwitches(KeGetCurrentPrcb()));
+}
 
 struct _KPCR;
-
-//VOID KiInitializeTss(IN PKTSS Tss, IN UINT64 Stack);
 
 DECLSPEC_NORETURN VOID KiSwitchToBootStack(IN ULONG_PTR InitialStack);
 VOID KiDivideErrorFault(VOID);
@@ -341,8 +429,11 @@ VOID Ki386InitializeLdt(VOID);
 VOID Ki386SetProcessorFeatures(VOID);
 VOID KiGetCacheInformation(VOID);
 VOID KiSetProcessorType(VOID);
-ULONG KiGetFeatureBits(VOID);
+ULONG64 KiGetFeatureBits(VOID);
 VOID KiInitializeCpuFeatures(VOID);
+#if DBG
+VOID KiReportCpuFeatures(IN PKPRCB Prcb);
+#endif
 
 ULONG KeAllocateGdtSelector(ULONG Desc[2]);
 VOID KeFreeGdtSelector(ULONG Entry);
@@ -389,6 +480,43 @@ KiGetUserModeStackAddress(void)
 {
     return &PsGetCurrentThread()->Tcb.TrapFrame->Rsp;
 }
+
+VOID
+KiGetTrapContext(
+    _In_ PKTRAP_FRAME TrapFrame,
+    _Out_ PCONTEXT Context);
+
+VOID
+KiSetTrapContext(
+    _Out_ PKTRAP_FRAME TrapFrame,
+    _In_ PCONTEXT Context,
+    _In_ KPROCESSOR_MODE RequestorMode);
+
+// Exits to user mode, only restores the trap frame, zeroes the non-volatile registers
+DECLSPEC_NORETURN
+VOID
+KiUserCallbackExit(
+    _In_ PKTRAP_FRAME TrapFrame);
+
+DECLSPEC_NORETURN
+VOID
+KiExceptionExit(
+    _In_ PKTRAP_FRAME TrapFrame,
+    _In_ PKEXCEPTION_FRAME ExceptionFrame);
+
+BOOLEAN
+KiProcessorFreezeHandler(
+    _In_ PKTRAP_FRAME TrapFrame,
+    _In_ PKEXCEPTION_FRAME ExceptionFrame);
+
+VOID
+NTAPI
+KiInitializeXStateConfiguration(
+    _In_ ULONG Processor);
+
+#ifdef __cplusplus
+} // extern "C"
+#endif
 
 #endif /* __NTOSKRNL_INCLUDE_INTERNAL_AMD64_KE_H */
 

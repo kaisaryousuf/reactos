@@ -96,8 +96,17 @@ LsapCreateSid(PSID_IDENTIFIER_AUTHORITY IdentifierAuthority,
               PSID *SidPtr)
 {
     PWELL_KNOWN_SID SidEntry;
+    SIZE_T AccountNameLength, DomainNameLength;
     PULONG p;
     ULONG i;
+
+    AccountNameLength = wcslen(AccountName);
+    DomainNameLength = wcslen(DomainName);
+    if ((AccountNameLength > UNICODE_STRING_MAX_CHARS) ||
+        (DomainNameLength > UNICODE_STRING_MAX_CHARS))
+    {
+        return FALSE;
+    }
 
     SidEntry = RtlAllocateHeap(RtlGetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(WELL_KNOWN_SID));
     if (SidEntry == NULL)
@@ -126,7 +135,7 @@ LsapCreateSid(PSID_IDENTIFIER_AUTHORITY IdentifierAuthority,
 
 //    RtlInitUnicodeString(&SidEntry->AccountName,
 //                         AccountName);
-    SidEntry->AccountName.Length = wcslen(AccountName) * sizeof(WCHAR);
+    SidEntry->AccountName.Length = (USHORT)AccountNameLength * sizeof(WCHAR);
     SidEntry->AccountName.MaximumLength = SidEntry->AccountName.Length + sizeof(WCHAR);
     SidEntry->AccountName.Buffer = RtlAllocateHeap(RtlGetProcessHeap(), 0,
                                                    SidEntry->AccountName.MaximumLength);
@@ -142,7 +151,7 @@ LsapCreateSid(PSID_IDENTIFIER_AUTHORITY IdentifierAuthority,
 
 //    RtlInitUnicodeString(&SidEntry->DomainName,
 //                         DomainName);
-    SidEntry->DomainName.Length = wcslen(DomainName) * sizeof(WCHAR);
+    SidEntry->DomainName.Length = (USHORT)DomainNameLength * sizeof(WCHAR);
     SidEntry->DomainName.MaximumLength = SidEntry->DomainName.Length + sizeof(WCHAR);
     SidEntry->DomainName.Buffer = RtlAllocateHeap(RtlGetProcessHeap(), 0,
                                                   SidEntry->DomainName.MaximumLength);
@@ -2410,6 +2419,7 @@ LsapLookupSids(PLSAPR_SID_ENUM_BUFFER SidEnumBuffer,
 {
     PLSAPR_REFERENCED_DOMAIN_LIST DomainsBuffer = NULL;
     PLSAPR_TRANSLATED_NAME_EX NamesBuffer = NULL;
+    UNICODE_STRING SidString;
     ULONG NamesBufferLength;
     ULONG i;
     ULONG Mapped = 0;
@@ -2493,7 +2503,9 @@ LsapLookupSids(PLSAPR_SID_ENUM_BUFFER SidEnumBuffer,
 done:
     TRACE("done Status: %lx  Mapped: %lu\n", Status, Mapped);
 
-    if (!NT_SUCCESS(Status))
+    if (!NT_SUCCESS(Status) &&
+        Status != STATUS_NONE_MAPPED &&
+        Status != STATUS_SOME_NOT_MAPPED)
     {
         if (DomainsBuffer != NULL)
         {
@@ -2508,6 +2520,26 @@ done:
     }
     else
     {
+        for (i = 0; i < SidEnumBuffer->Entries; i++)
+        {
+            if (NamesBuffer[i].Use != SidTypeUnknown || NamesBuffer[i].Name.Buffer != NULL)
+                continue;
+
+            if (!NT_SUCCESS(RtlConvertSidToUnicodeString(&SidString, (PSID)SidEnumBuffer->SidInfo[i].Sid, TRUE)))
+                continue;
+
+            NamesBuffer[i].Name.Buffer = MIDL_user_allocate(SidString.Length + sizeof(WCHAR));
+            if (NamesBuffer[i].Name.Buffer != NULL)
+            {
+                RtlCopyMemory(NamesBuffer[i].Name.Buffer, SidString.Buffer, SidString.Length);
+                NamesBuffer[i].Name.Buffer[SidString.Length / sizeof(WCHAR)] = UNICODE_NULL;
+                NamesBuffer[i].Name.Length = SidString.Length;
+                NamesBuffer[i].Name.MaximumLength = SidString.Length + sizeof(WCHAR);
+            }
+
+            RtlFreeUnicodeString(&SidString);
+        }
+
         *ReferencedDomains = DomainsBuffer;
         TranslatedNames->Entries = SidEnumBuffer->Entries;
         TranslatedNames->Names = NamesBuffer;

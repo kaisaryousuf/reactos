@@ -189,7 +189,7 @@ static void dlg_port_already_exists(HWND hWnd, LPCWSTR portname)
     message = HeapAlloc(GetProcessHeap(), 0, len * sizeof(WCHAR));
     if (message) {
         message[0] = '\0';
-        swprintf(message, res_PortExistsW, portname);
+        _swprintf(message, res_PortExistsW, portname);
         MessageBoxW(hWnd, message, res_PortW, MB_OK | MB_ICONERROR);
         HeapFree(GetProcessHeap(), 0, message);
     }
@@ -215,7 +215,7 @@ static void dlg_invalid_portname(HWND hWnd, LPCWSTR portname)
     message = HeapAlloc(GetProcessHeap(), 0, len * sizeof(WCHAR));
     if (message) {
         message[0] = '\0';
-        swprintf(message, res_InvalidNameW, portname);
+        _swprintf(message, res_InvalidNameW, portname);
         MessageBoxW(hWnd, message, res_PortW, MB_OK | MB_ICONERROR);
         HeapFree(GetProcessHeap(), 0, message);
     }
@@ -382,7 +382,7 @@ static INT_PTR CALLBACK dlgproc_lptconfig(HWND hwnd, UINT msg, WPARAM wparam, LP
 
             /* native localui.dll use the same limits */
             if ((res > 0) && (res < 1000000) && status) {
-                swprintf(bufferW, fmt_uW, res);
+                _swprintf(bufferW, fmt_uW, res);
                 res = XcvDataW( data->hXcv, cmd_ConfigureLPTPortCommandOKW,
                         (PBYTE) bufferW,
                         (lstrlenW(bufferW) +1) * sizeof(WCHAR),
@@ -424,7 +424,7 @@ static DWORD get_type_from_name(LPCWSTR name)
     if (!_wcsnicmp(name, portname_COM, ARRAY_SIZE(portname_COM) -1))
         return PORT_IS_COM;
 
-    if (!wcsicmp(name, portname_FILE))
+    if (!_wcsicmp(name, portname_FILE))
         return PORT_IS_FILE;
 
     if (name[0] == '/')

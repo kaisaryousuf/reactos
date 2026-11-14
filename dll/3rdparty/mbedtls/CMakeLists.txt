@@ -1,6 +1,7 @@
 
-include_directories(${REACTOS_SOURCE_DIR}/sdk/include/reactos/libs
-                    ${REACTOS_SOURCE_DIR}/sdk/include/reactos/zlib)
+# To use `_vsnprintf_s` looks like we have to define MINGW_HAS_SECURE_API
+# and explicitly export it from msvcrt for it to work... what on earth?!
+add_definitions(-DMINGW_HAS_SECURE_API -DCRTDLL)
 
 spec2def(mbedtls.dll mbedtls.spec ADD_IMPORTLIB)
 
@@ -9,6 +10,7 @@ list(APPEND SOURCE
     aes.c
     aesni.c
     arc4.c
+    #aria.c
     asn1parse.c
     asn1write.c
     #base64.c
@@ -17,6 +19,8 @@ list(APPEND SOURCE
     camellia.c
     ccm.c
     #certs.c
+    #chacha20.c
+    #chachapoly.c
     cipher.c
     cipher_wrap.c
     #cmac.c
@@ -24,6 +28,7 @@ list(APPEND SOURCE
     #debug.c
     des.c
     dhm.c
+    dsa.c
     ecdh.c
     ecdsa.c
     ecp.c
@@ -33,14 +38,16 @@ list(APPEND SOURCE
     #error.c
     gcm.c
     #havege.c
+    #hkdf.c
     hmac_drbg.c
-    #md2.c
-    #md4.c
+    md2.c
+    md4.c
     md5.c
     md.c
     md_wrap.c
     #memory_buffer_alloc.c
     #net_sockets.c
+    #nist_kw.c
     oid.c
     padlock.c
     #pem.c
@@ -52,6 +59,8 @@ list(APPEND SOURCE
     pk_wrap.c
     #pkwrite.c
     platform.c
+    platform_util.c
+    #poly1305.c
     ripemd160.c
     rsa.c
     rsa_internal.c
@@ -83,18 +92,17 @@ add_library(mbedtls MODULE
     ${SOURCE}
     mbedtls.rc
     ${CMAKE_CURRENT_BINARY_DIR}/mbedtls.def)
+target_include_directories(mbedtls PUBLIC ${REACTOS_SOURCE_DIR}/sdk/include/reactos/libs/mbedtls)
+
+if(NOT MSVC)
+    target_compile_options(mbedtls PRIVATE -Wno-pointer-sign -Wno-unused-function)
+endif()
+
+if(CMAKE_C_COMPILER_ID STREQUAL "Clang")
+    target_compile_options(mbedtls PRIVATE -Wno-tautological-constant-compare)
+endif()
 
 set_module_type(mbedtls win32dll)
 add_importlibs(mbedtls advapi32 msvcrt kernel32 ntdll)
 
-# to use `_vsnprintf_s` looks like we have to define MINGW_HAS_SECURE_API
-# and explicitly export it from msvcrt for it to work... what on earth?!
-add_definitions(-DMINGW_HAS_SECURE_API -DCRTDLL)
-
 add_cd_file(TARGET mbedtls DESTINATION reactos/system32 FOR all)
-
-if(NOT MSVC)
-    target_compile_options(mbedtls PRIVATE -Wno-pointer-sign -Wno-unused-function)
-elseif(USE_CLANG_CL)
-    target_compile_options(mbedtls PRIVATE -Wno-tautological-constant-compare)
-endif()

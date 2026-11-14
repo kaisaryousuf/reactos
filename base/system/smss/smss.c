@@ -10,8 +10,6 @@
 
 #include "smss.h"
 
-#include <pseh/pseh2.h>
-
 #define NDEBUG
 #include <debug.h>
 
@@ -19,23 +17,14 @@
 
 UNICODE_STRING SmpSystemRoot;
 ULONG AttachedSessionId = -1;
-BOOLEAN SmpDebug, SmpEnableDots;
+BOOLEAN SmpDebug;
 HANDLE SmApiPort;
 HANDLE SmpInitialCommandProcessId;
 
-/* FUNCTIONS ******************************************************************/
+#define DEFAULT_SUBSYSTEM_DESC          L"Windows SubSystem"
+#define DEFAULT_INITIAL_COMMAND_DESC    L"Windows Logon Process"
 
-/* GCC's incompetence strikes again */
-VOID
-sprintf_nt(IN PCHAR Buffer,
-           IN PCHAR Format,
-           IN ...)
-{
-    va_list ap;
-    va_start(ap, Format);
-    sprintf(Buffer, Format, ap);
-    va_end(ap);
-}
+/* FUNCTIONS ******************************************************************/
 
 NTSTATUS
 NTAPI
@@ -77,7 +66,7 @@ SmpExecuteImage(IN PUNICODE_STRING FileName,
     }
 
     /* Set the size field as required */
-    ProcessInfo->Size = sizeof(RTL_USER_PROCESS_INFORMATION);
+    ProcessInfo->Size = sizeof(*ProcessInfo);
 
     /* Check if the debug flag was requested */
     if (Flags & SMP_DEBUG_FLAG)
@@ -100,7 +89,7 @@ SmpExecuteImage(IN PUNICODE_STRING FileName,
     /* And always force NX for anything that SMSS launches */
     ProcessParameters->Flags |= RTL_USER_PROCESS_PARAMETERS_NX;
 
-    /* Now create the process */
+    /* Now create the process in suspended state */
     Status = RtlCreateUserProcess(FileName,
                                   OBJ_CASE_INSENSITIVE,
                                   ProcessParameters,
@@ -146,7 +135,7 @@ SmpExecuteImage(IN PUNICODE_STRING FileName,
         /* This image is invalid, so kill it, close our handles, and fail */
         Status = STATUS_INVALID_IMAGE_FORMAT;
         NtTerminateProcess(ProcessInfo->ProcessHandle, Status);
-        NtWaitForSingleObject(ProcessInfo->ThreadHandle, 0, 0);
+        NtWaitForSingleObject(ProcessInfo->ThreadHandle, FALSE, NULL);
         NtClose(ProcessInfo->ThreadHandle);
         NtClose(ProcessInfo->ProcessHandle);
         DPRINT1("SMSS: Not an NT image - %wZ\n", FileName);
@@ -169,16 +158,14 @@ SmpInvokeAutoChk(IN PUNICODE_STRING FileName,
     WCHAR Buffer[1024];
     BOOLEAN BootState, BootOkay, ShutdownOkay;
 
-    /* Check if autochk should show dots (if the user booted with /SOS) */
-    if (SmpQueryRegistrySosOption()) SmpEnableDots = FALSE;
-
     /* Make sure autochk was actually found */
     if (Flags & SMP_INVALID_PATH)
     {
         /* It wasn't, so create an error message to print on the screen */
-        sprintf_nt(MessageBuffer,
-                   "%wZ program not found - skipping AUTOCHECK\r\n",
-                   FileName);
+        RtlStringCbPrintfA(MessageBuffer,
+                           sizeof(MessageBuffer),
+                           "%wZ program not found - skipping AUTOCHECK\r\n",
+                           FileName);
         RtlInitAnsiString(&MessageString, MessageBuffer);
         if (NT_SUCCESS(RtlAnsiStringToUnicodeString(&Destination,
                                                     &MessageString,
@@ -238,7 +225,7 @@ SmpExecuteCommand(IN PUNICODE_STRING CommandLine,
     if (!NT_SUCCESS(Status))
     {
         /* Fail if we couldn't do that */
-        DPRINT1("SMSS: SmpParseCommandLine( %wZ ) failed - Status == %lx\n",
+        DPRINT1("SMSS: SmpParseCommandLine(%wZ) failed - Status == %lx\n",
                 CommandLine, Status);
         return Status;
     }
@@ -266,7 +253,7 @@ SmpExecuteCommand(IN PUNICODE_STRING CommandLine,
     }
     else
     {
-        /* An actual image name was present -- execute it */
+        /* An actual image name was present, execute it */
         Status = SmpExecuteImage(&FileName,
                                  &Directory,
                                  CommandLine,
@@ -276,7 +263,7 @@ SmpExecuteCommand(IN PUNICODE_STRING CommandLine,
     }
 
     /* Free all the token parameters */
-    if (FileName.Buffer) RtlFreeHeap(RtlGetProcessHeap(), 0, FileName.Buffer);
+    if (FileName.Buffer)  RtlFreeHeap(RtlGetProcessHeap(), 0, FileName.Buffer);
     if (Directory.Buffer) RtlFreeHeap(RtlGetProcessHeap(), 0, Directory.Buffer);
     if (Arguments.Buffer) RtlFreeHeap(RtlGetProcessHeap(), 0, Arguments.Buffer);
 
@@ -298,14 +285,14 @@ SmpExecuteInitialCommand(IN ULONG MuSessionId,
 {
     NTSTATUS Status;
     RTL_USER_PROCESS_INFORMATION ProcessInfo;
-    UNICODE_STRING Arguments, ImageFileDirectory, ImageFileName;
+    UNICODE_STRING Arguments, Directory, FileName;
     ULONG Flags = 0;
 
     /* Check if we haven't yet connected to ourselves */
     if (!SmApiPort)
     {
         /* Connect to ourselves, as a client */
-        Status = SmConnectToSm(0, 0, 0, &SmApiPort);
+        Status = SmConnectToSm(NULL, NULL, 0, &SmApiPort);
         if (!NT_SUCCESS(Status))
         {
             DPRINT1("SMSS: Unable to connect to SM - Status == %lx\n", Status);
@@ -316,42 +303,36 @@ SmpExecuteInitialCommand(IN ULONG MuSessionId,
     /* Parse the initial command line */
     Status = SmpParseCommandLine(InitialCommand,
                                  &Flags,
-                                 &ImageFileName,
-                                 &ImageFileDirectory,
+                                 &FileName,
+                                 &Directory,
                                  &Arguments);
     if (Flags & SMP_INVALID_PATH)
     {
         /* Fail if it doesn't exist */
-        DPRINT1("SMSS: Initial command image (%wZ) not found\n", &ImageFileName);
-        if (ImageFileName.Buffer) RtlFreeHeap(RtlGetProcessHeap(), 0, ImageFileName.Buffer);
+        DPRINT1("SMSS: Initial command image (%wZ) not found\n", &FileName);
+        if (FileName.Buffer) RtlFreeHeap(RtlGetProcessHeap(), 0, FileName.Buffer);
         return STATUS_OBJECT_NAME_NOT_FOUND;
     }
 
     /* And fail if any other reason is also true */
     if (!NT_SUCCESS(Status))
     {
-        DPRINT1("SMSS: SmpParseCommandLine( %wZ ) failed - Status == %lx\n",
+        DPRINT1("SMSS: SmpParseCommandLine(%wZ) failed - Status == %lx\n",
                 InitialCommand, Status);
         return Status;
     }
 
-    /* Execute the initial command -- but defer its full execution */
-    Status = SmpExecuteImage(&ImageFileName,
-                             &ImageFileDirectory,
+    /* Execute the initial command, but defer its full execution */
+    Status = SmpExecuteImage(&FileName,
+                             &Directory,
                              InitialCommand,
                              MuSessionId,
                              SMP_DEFERRED_FLAG,
                              &ProcessInfo);
 
-    /* Free any buffers we had lying around */
-    if (ImageFileName.Buffer)
-    {
-        RtlFreeHeap(RtlGetProcessHeap(), 0, ImageFileName.Buffer);
-    }
-    if (ImageFileDirectory.Buffer)
-    {
-        RtlFreeHeap(RtlGetProcessHeap(), 0, ImageFileDirectory.Buffer);
-    }
+    /* Free all the token parameters */
+    if (FileName.Buffer)  RtlFreeHeap(RtlGetProcessHeap(), 0, FileName.Buffer);
+    if (Directory.Buffer) RtlFreeHeap(RtlGetProcessHeap(), 0, Directory.Buffer);
     if (Arguments.Buffer) RtlFreeHeap(RtlGetProcessHeap(), 0, Arguments.Buffer);
 
     /* Bail out if we couldn't execute the initial command */
@@ -388,19 +369,20 @@ SmpExecuteInitialCommand(IN ULONG MuSessionId,
 
 NTSTATUS
 NTAPI
-SmpTerminate(IN PULONG_PTR Parameters,
-             IN ULONG ParameterMask,
-             IN ULONG ParameterCount)
+SmpTerminate(
+    _In_reads_(ParameterCount) PULONG_PTR Parameters,
+    _In_ ULONG ParameterMask,
+    _In_ ULONG ParameterCount)
 {
     NTSTATUS Status;
-    BOOLEAN Old;
     ULONG Response;
+    BOOLEAN Old;
 
     /* Give the shutdown privilege to the thread */
-    if (RtlAdjustPrivilege(SE_SHUTDOWN_PRIVILEGE, TRUE, TRUE, &Old) ==
-        STATUS_NO_TOKEN)
+    Status = RtlAdjustPrivilege(SE_SHUTDOWN_PRIVILEGE, TRUE, TRUE, &Old);
+    if (Status == STATUS_NO_TOKEN)
     {
-        /* Thread doesn't have a token, give it to the entire process */
+        /* The thread doesn't have a token, give it to the entire process */
         RtlAdjustPrivilege(SE_SHUTDOWN_PRIVILEGE, TRUE, FALSE, &Old);
     }
 
@@ -412,30 +394,55 @@ SmpTerminate(IN PULONG_PTR Parameters,
                               OptionShutdownSystem,
                               &Response);
 
-    /* Terminate the process if the hard error didn't already */
+    /* Terminate the process if the hard error didn't already.
+     * In case the Parameters array has at least 2 elements,
+     * use Parameters[1] that contains the actual failure code,
+     * instead of what NtRaiseHardError() returned. */
+    if (ParameterCount >= 2) Status = Parameters[1];
     return NtTerminateProcess(NtCurrentProcess(), Status);
 }
 
 LONG
-SmpUnhandledExceptionFilter(IN PEXCEPTION_POINTERS ExceptionInfo)
+NTAPI
+SmpUnhandledExceptionFilter(
+    _In_ PEXCEPTION_POINTERS ExceptionInfo)
 {
+    PEXCEPTION_RECORD ExceptionRecord = ExceptionInfo->ExceptionRecord;
     ULONG_PTR Parameters[4];
-    UNICODE_STRING DestinationString;
+    UNICODE_STRING ErrorString;
 
-    /* Print and breakpoint into the debugger */
+#if DBG
+    /* Print the message and break into the debugger */
     DbgPrint("SMSS: Unhandled exception - Status == %x  IP == %p\n",
-             ExceptionInfo->ExceptionRecord->ExceptionCode,
-             ExceptionInfo->ExceptionRecord->ExceptionAddress);
-    DbgPrint("      Memory Address: %x  Read/Write: %x\n",
-             ExceptionInfo->ExceptionRecord->ExceptionInformation[0],
-             ExceptionInfo->ExceptionRecord->ExceptionInformation[1]);
-    DbgBreakPoint();
+             ExceptionRecord->ExceptionCode,
+             ExceptionRecord->ExceptionAddress);
+    if ((ExceptionRecord->ExceptionCode == STATUS_IN_PAGE_ERROR) &&
+        (ExceptionRecord->NumberParameters >= 3))
+    {
+        DbgPrint("      Memory Address: %x  Read/Write: %x  I/O Error: %x\n",
+                 ExceptionRecord->ExceptionInformation[1],
+                 ExceptionRecord->ExceptionInformation[0],
+                 ExceptionRecord->ExceptionInformation[2]);
+    }
+    else
+    if ((ExceptionRecord->ExceptionCode == STATUS_ACCESS_VIOLATION ||
+         ExceptionRecord->ExceptionCode == STATUS_GUARD_PAGE_VIOLATION ||
+         ExceptionRecord->ExceptionCode == STATUS_STACK_OVERFLOW ||
+         ExceptionRecord->ExceptionCode == STATUS_IN_PAGE_ERROR) &&
+        (ExceptionRecord->NumberParameters >= 2))
+    {
+        DbgPrint("      Memory Address: %x  Read/Write: %x\n",
+                 ExceptionRecord->ExceptionInformation[1],
+                 ExceptionRecord->ExceptionInformation[0]);
+    }
+    if (NtCurrentPeb()->BeingDebugged) DbgBreakPoint();
+#endif
 
     /* Build the hard error and terminate */
-    RtlInitUnicodeString(&DestinationString, L"Unhandled Exception in Session Manager");
-    Parameters[0] = (ULONG_PTR)&DestinationString;
-    Parameters[1] = ExceptionInfo->ExceptionRecord->ExceptionCode;
-    Parameters[2] = (ULONG_PTR)ExceptionInfo->ExceptionRecord->ExceptionAddress;
+    RtlInitUnicodeString(&ErrorString, L"Unhandled Exception in Session Manager");
+    Parameters[0] = (ULONG_PTR)&ErrorString;
+    Parameters[1] = ExceptionRecord->ExceptionCode;
+    Parameters[2] = (ULONG_PTR)ExceptionRecord->ExceptionAddress;
     Parameters[3] = (ULONG_PTR)ExceptionInfo->ContextRecord;
     SmpTerminate(Parameters, 1, RTL_NUMBER_OF(Parameters));
 
@@ -483,7 +490,7 @@ _main(IN INT argc,
     _SEH2_TRY
     {
         /* Initialize SMSS */
-        Status = SmpInit(&InitialCommand, Handles);
+        Status = SmpInit(&InitialCommand, &Handles[0]);
         if (!NT_SUCCESS(Status))
         {
             DPRINT1("SMSS: SmpInit return failure - Status == %x\n", Status);
@@ -531,7 +538,7 @@ _main(IN INT argc,
         }
         SmpReleasePrivilege(State);
 
-        /* Wait on either CSRSS or Winlogon to die */
+        /* Wait on either CSRSS or the initial command to die */
         Status = NtWaitForMultipleObjects(RTL_NUMBER_OF(Handles),
                                           Handles,
                                           WaitAny,
@@ -539,22 +546,23 @@ _main(IN INT argc,
                                           NULL);
         if (Status == STATUS_WAIT_0)
         {
-            /* CSRSS is dead, get exit code and prepare for the hard error */
-            RtlInitUnicodeString(&DbgString, L"Windows SubSystem");
+            /* CSRSS is dead, get its exit code */
+            RtlInitUnicodeString(&DbgString, DEFAULT_SUBSYSTEM_DESC);
             Status = NtQueryInformationProcess(Handles[0],
                                                ProcessBasicInformation,
                                                &ProcessInfo,
                                                sizeof(ProcessInfo),
                                                NULL);
-            DPRINT1("SMSS: Windows subsystem terminated when it wasn't supposed to.\n");
+            DPRINT1("SMSS: %S terminated when it wasn't supposed to.\n",
+                    DEFAULT_SUBSYSTEM_DESC);
         }
         else
         {
             /* The initial command is dead or we have another failure */
-            RtlInitUnicodeString(&DbgString, L"Windows Logon Process");
+            RtlInitUnicodeString(&DbgString, DEFAULT_INITIAL_COMMAND_DESC);
             if (Status == STATUS_WAIT_1)
             {
-                /* Winlogon.exe got terminated, get its exit code */
+                /* The initial command got terminated, get its exit code */
                 Status = NtQueryInformationProcess(Handles[1],
                                                    ProcessBasicInformation,
                                                    &ProcessInfo,

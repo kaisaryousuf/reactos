@@ -6,12 +6,15 @@
 #define IDI_DEVMGR    51
 #define IDI_HARDPROF  52
 #define IDI_USERPROF  53
+#define IDI_LICENSE   54
 #define IDI_UP        2500
 #define IDI_DOWN      2501
 #define IDI_ADDHW     2502
 
 #define IDB_ROSBMP 55
 #define IDB_ROSMASK 56
+
+#define IDS_PERFORMANCEOPTIONS 35
 
 #define IDS_CPLSYSTEMNAME        60
 #define IDS_CPLSYSTEMDESCRIPTION 61
@@ -62,6 +65,10 @@
 #define IDS_GIGAHERTZ 131
 
 #define IDS_UPTIME_FORMAT 140
+
+#define IDS_ENVIRONMENT_WARNING            150
+#define IDS_ENVIRONMENT_WARNING_TITLE      151
+#define IDS_FILE_BROWSE_FILTER             152
 
 /* Propsheet - general */
 #define IDD_PROPPAGEGENERAL  100
@@ -129,11 +136,33 @@
 #define IDC_SYSTEM_VARIABLE_NEW    606
 #define IDC_SYSTEM_VARIABLE_EDIT   607
 #define IDC_SYSTEM_VARIABLE_DELETE 608
+#define IDC_USER_VARIABLE_GROUP    609
+#define IDC_SYSTEM_VARIABLE_GROUP  610
 
 /* Edit environment variables */
-#define IDD_EDIT_VARIABLE  700
-#define IDC_VARIABLE_NAME  701
-#define IDC_VARIABLE_VALUE 702
+#define IDD_EDIT_VARIABLE        700
+#define IDC_VARIABLE_NAME        701
+#define IDC_VARIABLE_VALUE       702
+#define IDC_BUTTON_BROWSE_FILE   703
+#define IDC_BUTTON_BROWSE_FOLDER 704
+#define IDD_EDIT_VARIABLE_FANCY  705
+#define IDC_LIST_VARIABLE_VALUE  706
+#define IDC_BUTTON_NEW           707
+#define IDC_BUTTON_EDIT          708
+#define IDC_BUTTON_DELETE        709
+#define IDC_BUTTON_MOVE_UP       710
+#define IDC_BUTTON_MOVE_DOWN     711
+#define IDC_BUTTON_EDIT_TEXT     712
+
+/* Visual Effects */
+#define IDD_VISUALEFFECTS 112
+#define IDC_TREE 100
+
+/* Advanced Performance */
+#define IDD_ADVANCEDPERF 115
+#define IDC_CPUCLIENT    100
+#define IDC_CPUSERVER    101
+#define IDC_CHANGESWAP   102
 
 /* Virtual memory */
 #define IDD_VIRTMEM      900
@@ -211,3 +240,5 @@
 #define RTDATA               1503
 
 #define IDS_DEVS 2000
+
+#define IDC_DIALOG_GRIP     3000

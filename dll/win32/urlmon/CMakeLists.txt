@@ -1,23 +1,16 @@
 
 add_definitions(
-    -D__WINESRC__
     -D_URLMON_
     -DENTRY_PREFIX=URLMON_
     -DPROXY_DELEGATION
     -DWINE_REGISTER_DLL)
 
-include_directories(${REACTOS_SOURCE_DIR}/sdk/include/reactos/wine)
 spec2def(urlmon.dll urlmon.spec ADD_IMPORTLIB)
 add_rpcproxy_files(urlmon_urlmon.idl)
 
 set(_source_file ${CMAKE_CURRENT_SOURCE_DIR}/urlmon.inf)
 set(_converted_file ${CMAKE_CURRENT_BINARY_DIR}/urlmon_utf16.inf)
-add_custom_command(
-    OUTPUT "${_converted_file}"
-    COMMAND native-utf16le "${_source_file}" "${_converted_file}"
-    DEPENDS native-utf16le "${_source_file}")
-
-set_source_files_properties(${_converted_file} PROPERTIES GENERATED TRUE)
+utf16le_convert(${_source_file} ${_converted_file})
 set_source_files_properties(urlmon.rc PROPERTIES OBJECT_DEPENDS "${_converted_file}")
 
 list(APPEND SOURCE
@@ -55,8 +48,19 @@ add_library(urlmon MODULE
     ${CMAKE_CURRENT_BINARY_DIR}/urlmon.def)
 
 set_module_type(urlmon win32dll)
-target_link_libraries(urlmon uuid wine ${PSEH_LIB})
+add_idl_reg_scripts(urlmon registry urlmon_urlmon.idl)
+target_link_libraries(urlmon msvcrtex uuid wine oldnames)
 add_delay_importlibs(urlmon advpack)
-add_importlibs(urlmon rpcrt4 propsys ole32 oleaut32 shlwapi shell32 wininet user32 advapi32 kernel32_vista msvcrt kernel32 ntdll)
+add_importlibs(urlmon rpcrt4 propsys ole32 oleaut32 shlwapi shell32 wininet normaliz user32 advapi32 kernel32_vista msvcrt kernel32 ntdll)
 add_pch(urlmon precomp.h "${PCH_SKIP_SOURCE}")
 add_cd_file(TARGET urlmon DESTINATION reactos/system32 FOR all)
+set_wine_module_FIXME(urlmon) # CORE-5743: No ARRAY_SIZE macro
+
+# Hack for CMake not being able to properly escape command line GUID definition on some Unix hosts.
+if (CMAKE_HOST_WIN32)
+    add_compile_definitions(PROXY_CLSID_IS={0x79EAC9F1,0xBAF9,0x11CE,{0x8C,0x82,0x00,0xAA,0x00,0x4B,0xA9,0x0B}})
+elseif(MSVC AND CMAKE_C_COMPILER_ID STREQUAL "Clang")
+    target_compile_options(urlmon PRIVATE /FI${CMAKE_SOURCE_DIR}/dll/win32/urlmon/clsid.h)
+else()
+    target_compile_options(urlmon PRIVATE -include ${CMAKE_SOURCE_DIR}/dll/win32/urlmon/clsid.h)
+endif()

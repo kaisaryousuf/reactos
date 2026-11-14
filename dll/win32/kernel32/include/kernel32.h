@@ -56,9 +56,6 @@
 #define __EXCEPT_PAGE_FAULT _SEH2_EXCEPT(_SEH2_GetExceptionCode() == STATUS_ACCESS_VIOLATION)
 #define __ENDTRY _SEH2_END
 
-/* Undocumented CreateProcess flag */
-#define STARTF_SHELLPRIVATE         0x400
-
 typedef struct _CODEPAGE_ENTRY
 {
     LIST_ENTRY Entry;
@@ -234,22 +231,25 @@ BasepProbeForDllManifest(
     OUT PVOID *ActCtx
 );
 
-__declspec(noreturn)
+DECLSPEC_NORETURN
 VOID
 WINAPI
-BaseThreadStartup(LPTHREAD_START_ROUTINE lpStartAddress,
-                  LPVOID lpParameter);
+BaseThreadStartup(
+    _In_ LPTHREAD_START_ROUTINE lpStartAddress,
+    _In_ LPVOID lpParameter);
 
-__declspec(noreturn)
+DECLSPEC_NORETURN
 VOID
 WINAPI
 BaseFiberStartup(VOID);
 
-typedef UINT (WINAPI *PPROCESS_START_ROUTINE)(VOID);
+typedef DWORD (WINAPI *PPROCESS_START_ROUTINE)(VOID);
 
+DECLSPEC_NORETURN
 VOID
 WINAPI
-BaseProcessStartup(PPROCESS_START_ROUTINE lpStartAddress);
+BaseProcessStartup(
+    _In_ PPROCESS_START_ROUTINE lpStartAddress);
 
 PVOID
 WINAPI
@@ -299,13 +299,13 @@ extern HANDLE BaseNamedObjectDirectory;
 
 HANDLE
 WINAPI
-BaseGetNamedObjectDirectory(VOID);
+BasepGetNamedObjectDirectory(VOID);
 
 NTSTATUS
 WINAPI
 BasepMapFile(IN LPCWSTR lpApplicationName,
              OUT PHANDLE hSection,
-             IN PUNICODE_STRING ApplicationName);
+             OUT PUNICODE_STRING ApplicationName);
 
 PCODEPAGE_ENTRY FASTCALL
 IntGetCodePageEntry(UINT CodePage);

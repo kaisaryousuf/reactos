@@ -294,10 +294,10 @@ PreloadGlobalMessageTable(IN PVOID ImageBase)
     TotalLength = 0;
     for (MessageId = 1; MessageId != SAC_MAX_MESSAGES; MessageId++)
     {
-        /* Find this message ID in the string table*/
+        /* Find this message in the message table */
         Status2 = RtlFindMessage(ImageBase,
-                                 11,
-                                 LANG_NEUTRAL,
+                                 RT_MESSAGETABLE,
+                                 MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL),
                                  MessageId,
                                  &MessageEntry);
         if (NT_SUCCESS(Status2))
@@ -339,10 +339,10 @@ PreloadGlobalMessageTable(IN PVOID ImageBase)
     /* Now loop over our entries again */
     for (i = 0, MessageId = 1; MessageId != SAC_MAX_MESSAGES; MessageId++)
     {
-        /* Make sure the message is still there...! */
+        /* Make sure the message is still there! */
         Status2 = RtlFindMessage(ImageBase,
-                                 11,
-                                 LANG_NEUTRAL,
+                                 RT_MESSAGETABLE,
+                                 MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL),
                                  MessageId,
                                  &MessageEntry);
         if (NT_SUCCESS(Status2))
@@ -403,10 +403,10 @@ GetRegistryValueBuffer(IN PCWSTR KeyName,
     CHECK_PARAMETER2(ValueName);
 
     /* Open the specified key */
-    RtlInitUnicodeString(&DestinationString, KeyName); 
+    RtlInitUnicodeString(&DestinationString, KeyName);
     InitializeObjectAttributes(&ObjectAttributes,
                                &DestinationString,
-                               OBJ_CASE_INSENSITIVE,
+                               OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE,
                                NULL,
                                NULL);
     Status = ZwOpenKey(&Handle,
@@ -427,7 +427,8 @@ GetRegistryValueBuffer(IN PCWSTR KeyName,
                              NULL,
                              0,
                              &ResultLength);
-    if (!ResultLength) return Status;
+    if (!ResultLength)
+        goto Quit;
 
     /* Allocate the buffer for the partial info structure and our integer data */
     ResultLength += sizeof(ULONG);
@@ -435,7 +436,7 @@ GetRegistryValueBuffer(IN PCWSTR KeyName,
     if (!*Buffer)
     {
         SAC_DBG(SAC_DBG_ENTRY_EXIT, "SAC GetRegistryValueBuffer: failed allocation\n");
-        return Status;
+        goto Quit;
     }
 
     /* Now read the data */
@@ -452,8 +453,10 @@ GetRegistryValueBuffer(IN PCWSTR KeyName,
         SacFreePool(*Buffer);
     }
 
-    /* Return the result */
-    SAC_DBG(SAC_DBG_ENTRY_EXIT, "SAC SetRegistryValue: Exiting.\n");
+Quit:
+    /* Close the handle and exit */
+    ZwClose(Handle);
+    SAC_DBG(SAC_DBG_ENTRY_EXIT, "SAC GetRegistryValueBuffer: Exiting.\n");
     return Status;
 }
 
@@ -475,10 +478,10 @@ SetRegistryValue(IN PCWSTR KeyName,
     CHECK_PARAMETER4(Data);
 
     /* Open the specified key */
-    RtlInitUnicodeString(&DestinationString, KeyName); 
+    RtlInitUnicodeString(&DestinationString, KeyName);
     InitializeObjectAttributes(&ObjectAttributes,
                                &DestinationString,
-                               OBJ_CASE_INSENSITIVE,
+                               OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE,
                                NULL,
                                NULL);
     Status = ZwOpenKey(&Handle,
@@ -501,7 +504,7 @@ SetRegistryValue(IN PCWSTR KeyName,
     }
 
     /* Close the handle and exit */
-    NtClose(Handle);
+    ZwClose(Handle);
     SAC_DBG(SAC_DBG_ENTRY_EXIT, "SAC SetRegistryValue: Exiting.\n");
     return Status;
 }
@@ -625,51 +628,51 @@ TranslateMachineInformationXML(IN PWCHAR *Buffer,
 
     if (MachineInformation->MachineName)
     {
-        p += swprintf(p,
-                      L"<name>%s</name>\r\n",
-                      MachineInformation->MachineName);
+        p += _swprintf(p,
+                       L"<name>%s</name>\r\n",
+                       MachineInformation->MachineName);
     }
 
     if (MachineInformation->MachineGuid)
     {
-        p += swprintf(p,
-                      L"<guid>%s</guid>\r\n",
-                      MachineInformation->MachineGuid);
+        p += _swprintf(p,
+                       L"<guid>%s</guid>\r\n",
+                       MachineInformation->MachineGuid);
     }
 
     if (MachineInformation->ProcessorArchitecture)
     {
-        p += swprintf(p,
-                      L"<processor-architecture>%s</processor-architecture>\r\n",
-                      MachineInformation->ProcessorArchitecture);
+        p += _swprintf(p,
+                       L"<processor-architecture>%s</processor-architecture>\r\n",
+                       MachineInformation->ProcessorArchitecture);
     }
 
     if (MachineInformation->MajorVersion)
     {
-        p += swprintf(p,
-                      L"<os-version>%s</os-version>\r\n",
-                      MachineInformation->MajorVersion);
+        p += _swprintf(p,
+                       L"<os-version>%s</os-version>\r\n",
+                       MachineInformation->MajorVersion);
     }
 
     if (MachineInformation->BuildNumber)
     {
-        p += swprintf(p,
-                      L"<os-build-number>%s</os-build-number>\r\n",
-                      MachineInformation->BuildNumber);
+        p += _swprintf(p,
+                       L"<os-build-number>%s</os-build-number>\r\n",
+                       MachineInformation->BuildNumber);
     }
 
     if (MachineInformation->ProductType)
     {
-        p += swprintf(p,
-                      L"<os-product>%s</os-product>\r\n",
-                      MachineInformation->ProductType);
+        p += _swprintf(p,
+                       L"<os-product>%s</os-product>\r\n",
+                       MachineInformation->ProductType);
     }
 
     if (MachineInformation->ServicePack)
     {
-        p += swprintf(p,
-                      L"<os-service-pack>%s</os-service-pack>\r\n",
-                      MachineInformation->ServicePack);
+        p += _swprintf(p,
+                       L"<os-service-pack>%s</os-service-pack>\r\n",
+                       MachineInformation->ServicePack);
     }
 
     if (ExtraData)
@@ -806,19 +809,19 @@ InitializeMachineInformation(VOID)
         }
 
         /* Build the string with the GUID in it, and save the ppointer to it */
-        swprintf(GuidString,
-                 L"%08lx-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x",
-                 SystemGuid.Data1,
-                 SystemGuid.Data2,
-                 SystemGuid.Data3,
-                 SystemGuid.Data4[0],
-                 SystemGuid.Data4[1],
-                 SystemGuid.Data4[2],
-                 SystemGuid.Data4[3],
-                 SystemGuid.Data4[4],
-                 SystemGuid.Data4[5],
-                 SystemGuid.Data4[6],
-                 SystemGuid.Data4[7]);
+        _swprintf(GuidString,
+                  L"%08lx-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+                  SystemGuid.Data1,
+                  SystemGuid.Data2,
+                  SystemGuid.Data3,
+                  SystemGuid.Data4[0],
+                  SystemGuid.Data4[1],
+                  SystemGuid.Data4[2],
+                  SystemGuid.Data4[3],
+                  SystemGuid.Data4[4],
+                  SystemGuid.Data4[5],
+                  SystemGuid.Data4[6],
+                  SystemGuid.Data4[7]);
         MachineInformation->MachineGuid = GuidString;
     }
 
@@ -856,10 +859,10 @@ InitializeMachineInformation(VOID)
     }
 
     /* Build the buffer and set a pointer to it */
-    swprintf(MajorVersion,
-             L"%d.%d",
-             VersionInformation.dwMajorVersion,
-             VersionInformation.dwMinorVersion);
+    _swprintf(MajorVersion,
+              L"%d.%d",
+              VersionInformation.dwMajorVersion,
+              VersionInformation.dwMinorVersion);
     MachineInformation->MajorVersion = MajorVersion;
 
     /* Now allocate a buffer for the OS build number */
@@ -871,7 +874,7 @@ InitializeMachineInformation(VOID)
     }
 
     /* Build the buffer and set a pointer to it */
-    swprintf(BuildNumber, L"%d", VersionInformation.dwBuildNumber);
+    _swprintf(BuildNumber, L"%d", VersionInformation.dwBuildNumber);
     MachineInformation->BuildNumber = BuildNumber;
 
     /* Now check what kind of SKU this is */
@@ -928,10 +931,10 @@ InitializeMachineInformation(VOID)
         if (ServicePack)
         {
             /* Build the buffer and set a pointer to it */
-            swprintf(ServicePack,
-                     L"%d.%d",
-                     VersionInformation.wServicePackMajor,
-                     VersionInformation.wServicePackMinor);
+            _swprintf(ServicePack,
+                      L"%d.%d",
+                      VersionInformation.wServicePackMajor,
+                      VersionInformation.wServicePackMinor);
             MachineInformation->ServicePack = ServicePack;
 
             /* We've collected all the machine info and are done! */
@@ -1083,7 +1086,7 @@ InitializeCmdEventInfo(VOID)
         }
     }
 
-    /* Claer everything */ 
+    /* Claer everything */
     RequestSacCmdEventObjectBody = NULL;
     RequestSacCmdEventWaitObjectBody = NULL;
     RequestSacCmdSuccessEventObjectBody = NULL;

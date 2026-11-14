@@ -77,10 +77,11 @@ NdisAllocateMemory(
   if (MemoryFlags & NDIS_MEMORY_CONTIGUOUS)
   {
       /* Allocate contiguous memory (possibly noncached) */
+      const PHYSICAL_ADDRESS ZeroAddress = RTL_CONSTANT_LARGE_INTEGER(0LL);
       *VirtualAddress = MmAllocateContiguousMemorySpecifyCache(Length,
-                                                               RtlConvertUlongToLargeInteger(0),
+                                                               ZeroAddress,
                                                                HighestAcceptableAddress,
-                                                               RtlConvertUlongToLargeInteger(0),
+                                                               ZeroAddress,
                                                                (MemoryFlags & NDIS_MEMORY_NONCACHED) ? MmNonCached : MmCached);
   }
   else if (MemoryFlags & NDIS_MEMORY_NONCACHED)
@@ -238,7 +239,7 @@ NdisMFreeSharedMemory(
   NDIS_DbgPrint(MAX_TRACE,("Called.\n"));
 
   ASSERT(KeGetCurrentIrql() <= DISPATCH_LEVEL);
-    
+
   /* Call FreeCommonBuffer synchronously if we are at PASSIVE_LEVEL */
   if (KeGetCurrentIrql() == PASSIVE_LEVEL)
   {
@@ -314,7 +315,7 @@ NdisMAllocateSharedMemoryPassive(
 
   if (Memory->Adapter->DriverHandle->MiniportCharacteristics.AllocateCompleteHandler)
       Memory->Adapter->DriverHandle->MiniportCharacteristics.AllocateCompleteHandler(
-             Memory->Adapter->MiniportAdapterContext, Memory->VirtualAddress, 
+             Memory->Adapter->MiniportAdapterContext, Memory->VirtualAddress,
              &Memory->PhysicalAddress, Memory->Length, Memory->Context);
 
   IoFreeWorkItem(Memory->WorkItem);

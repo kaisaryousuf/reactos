@@ -4,19 +4,20 @@
  * FILE:            hal/halx86/apic/apic.c
  * PURPOSE:         HAL APIC Management and Control Code
  * PROGRAMMERS:     Timo Kreuzer (timo.kreuzer@reactos.org)
- * REFERENCES:      http://www.joseflores.com/docs/ExploringIrql.html
- *                  http://www.codeproject.com/KB/system/soviet_kernel_hack.aspx
- *                  http://bbs.unixmap.net/thread-2022-1-1.html
+ * REFERENCES:      https://web.archive.org/web/20190407074221/http://www.joseflores.com/docs/ExploringIrql.html
+ *                  https://www.codeproject.com/KB/system/soviet_kernel_hack.aspx
+ *                  http://bbs.unixmap.net/thread-2022-1-1.html (DEAD_LINK)
+ *                  https://codemachine.com/articles/interrupt_dispatching.html
+ *                  https://www.osronline.com/article.cfm%5Earticle=211.htm
  */
 
 /* INCLUDES *******************************************************************/
 
 #include <hal.h>
+#include "apicp.h"
+#include <smp.h>
 #define NDEBUG
 #include <debug.h>
-
-#include "apic.h"
-void __cdecl HackEoi(void);
 
 #ifndef _M_AMD64
 #define APIC_LAZY_IRQL
@@ -25,7 +26,34 @@ void __cdecl HackEoi(void);
 /* GLOBALS ********************************************************************/
 
 ULONG ApicVersion;
+
+/* Always updated together. */
 UCHAR HalpVectorToIndex[256];
+UCHAR HalpGsivToVector[256];
+
+extern HALP_APIC_INFO_TABLE HalpApicInfoTable;
+
+typedef struct _HALP_IOAPIC_UNIT
+{
+    ULONG_PTR Base;
+    ULONG InputBase;
+    ULONG InputCount;
+} HALP_IOAPIC_UNIT, *PHALP_IOAPIC_UNIT;
+
+/* I/O APICs in use, the first one is mapped at IOAPIC_BASE */
+HALP_IOAPIC_UNIT HalpIoApics[HALP_MAX_IOAPICS];
+ULONG HalpIoApicCount;
+
+/* One past the highest input served by an I/O APIC */
+ULONG HalpMaxGsi;
+
+/*
+ * Last value written to each redirection entry
+ * This is done for a few reasons but the biggest benefit
+ * is preperation for ACPI Sleep. Which we need to cache the last
+ * known state to restore. IOAPIC data lost during ACPI Sleep!
+ */
+IOAPIC_REDIRECTION_REGISTER HalpIoApicShadow[HALP_MAX_INPUTS];
 
 #ifndef _M_AMD64
 const UCHAR
@@ -91,68 +119,165 @@ HalVectorToIRQL[16] =
 
 FORCEINLINE
 ULONG
-IOApicRead(UCHAR Register)
+IOApicRead(
+    _In_ ULONG_PTR Base,
+    _In_ UCHAR Register)
 {
     /* Select the register, then do the read */
-    *(volatile UCHAR *)(IOAPIC_BASE + IOAPIC_IOREGSEL) = Register;
-    return *(volatile ULONG *)(IOAPIC_BASE + IOAPIC_IOWIN);
+    WRITE_REGISTER_ULONG((PULONG)(Base + IOAPIC_IOREGSEL), Register);
+    return READ_REGISTER_ULONG((PULONG)(Base + IOAPIC_IOWIN));
 }
 
 FORCEINLINE
 VOID
-IOApicWrite(UCHAR Register, ULONG Value)
+IOApicWrite(
+    _In_ ULONG_PTR Base,
+    _In_ UCHAR Register,
+    _In_ ULONG Value)
 {
     /* Select the register, then do the write */
-    *(volatile UCHAR *)(IOAPIC_BASE + IOAPIC_IOREGSEL) = Register;
-    *(volatile ULONG *)(IOAPIC_BASE + IOAPIC_IOWIN) = Value;
+    WRITE_REGISTER_ULONG((PULONG)(Base + IOAPIC_IOREGSEL), Register);
+    WRITE_REGISTER_ULONG((PULONG)(Base + IOAPIC_IOWIN), Value);
 }
 
+/**
+ * @brief
+ * Finds the I/O APIC that serves an input.
+ *
+ * @param[in] Input
+ * The global system interrupt to look up.
+ *
+ * @param[out] Unit
+ * Receives the I/O APIC serving the input.
+ *
+ * @return
+ * TRUE if an I/O APIC serves the input, FALSE otherwise.
+ */
+FORCEINLINE
+BOOLEAN
+HalpFindIoApicInput(
+    _In_ ULONG Input,
+    _Out_ PHALP_IOAPIC_UNIT *Unit)
+{
+    ULONG Index;
+
+    for (Index = 0; Index < HalpIoApicCount; Index++)
+    {
+        if ((Input >= HalpIoApics[Index].InputBase) &&
+            (Input - HalpIoApics[Index].InputBase < HalpIoApics[Index].InputCount))
+        {
+            *Unit = &HalpIoApics[Index];
+            return TRUE;
+        }
+    }
+
+    return FALSE;
+}
+
+/**
+ * @brief
+ * Programs a redirection entry and records it in the shadow table.
+ *
+ * @remarks
+ * Callers serialize through the dispatcher lock or run before other
+ * processors are started, since IOREGSEL and IOWIN are shared.
+ */
 FORCEINLINE
 VOID
 ApicWriteIORedirectionEntry(
-    UCHAR Index,
-    IOAPIC_REDIRECTION_REGISTER ReDirReg)
+    _In_ ULONG Input,
+    _In_ IOAPIC_REDIRECTION_REGISTER ReDirReg)
 {
-    IOApicWrite(IOAPIC_REDTBL + 2 * Index, ReDirReg.Long0);
-    IOApicWrite(IOAPIC_REDTBL + 2 * Index + 1, ReDirReg.Long1);
+    PHALP_IOAPIC_UNIT Unit;
+    UCHAR Register;
+
+    if (!HalpFindIoApicInput(Input, &Unit))
+    {
+        ASSERT(FALSE);
+        return;
+    }
+
+    HalpIoApicShadow[Input] = ReDirReg;
+
+    /* The destination has to be in place before the low half unmasks the
+       entry, so that an asserted input cannot reach a stale processor */
+    Register = (UCHAR)(IOAPIC_REDTBL + 2 * (Input - Unit->InputBase));
+    IOApicWrite(Unit->Base, Register + 1, ReDirReg.Long1);
+    IOApicWrite(Unit->Base, Register, ReDirReg.Long0);
 }
 
+/**
+ * @brief
+ * Returns a redirection entry from the shadow table, without accessing
+ * the I/O APIC.
+ */
 FORCEINLINE
 IOAPIC_REDIRECTION_REGISTER
 ApicReadIORedirectionEntry(
-    UCHAR Index)
+    _In_ ULONG Input)
 {
-    IOAPIC_REDIRECTION_REGISTER ReDirReg;
-
-    ReDirReg.Long0 = IOApicRead(IOAPIC_REDTBL + 2 * Index);
-    ReDirReg.Long1 = IOApicRead(IOAPIC_REDTBL + 2 * Index + 1);
-
-    return ReDirReg;
+    ASSERT(Input < HalpMaxGsi);
+    return HalpIoApicShadow[Input];
 }
 
 FORCEINLINE
 VOID
-ApicRequestInterrupt(IN UCHAR Vector, UCHAR TriggerMode)
+ApicRequestSelfInterrupt(IN UCHAR Vector, UCHAR TriggerMode)
 {
-    APIC_COMMAND_REGISTER CommandRegister;
+    ULONG Flags;
+    APIC_INTERRUPT_COMMAND_REGISTER Icr;
+    APIC_INTERRUPT_COMMAND_REGISTER IcrStatus;
+
+    /*
+     * The IRR registers are spaced 16 bytes apart and hold 32 status bits each.
+     * Pre-compute the register and bit that match our vector.
+     */
+    ULONG VectorHigh = Vector / 32;
+    ULONG VectorLow = Vector % 32;
+    ULONG Irr = APIC_IRR + 0x10 * VectorHigh;
+    ULONG IrrBit = 1UL << VectorLow;
 
     /* Setup the command register */
-    CommandRegister.Long0 = 0;
-    CommandRegister.Vector = Vector;
-    CommandRegister.MessageType = APIC_MT_Fixed;
-    CommandRegister.TriggerMode = TriggerMode;
-    CommandRegister.DestinationShortHand = APIC_DSH_Self;
+    Icr.LongLong = 0;
+    Icr.Vector = Vector;
+    Icr.MessageType = APIC_MT_Fixed;
+    Icr.TriggerMode = TriggerMode;
+    Icr.DestinationShortHand = APIC_DSH_Self;
 
-    /* Write the low dword to send the interrupt */
-    ApicWrite(APIC_ICR0, CommandRegister.Long0);
+    /* Disable interrupts so that we can change IRR without being interrupted */
+    Flags = __readeflags();
+    _disable();
+
+    /* Wait for the APIC to be idle */
+    do
+    {
+        IcrStatus.Long0 = ApicRead(APIC_ICR0);
+    } while (IcrStatus.DeliveryStatus);
+
+    /* Write high dword first, then low dword to send the interrupt */
+    ApicWrite(APIC_ICR1, Icr.Long1);
+    ApicWrite(APIC_ICR0, Icr.Long0);
+
+    /* Wait until we see the interrupt request.
+     * It will stay in requested state until we re-enable interrupts.
+     */
+    while (!(ApicRead(Irr) & IrrBit))
+    {
+        YieldProcessor();
+    }
+
+    /* Finally, restore the original interrupt state */
+    if (Flags & EFLAGS_INTERRUPT_MASK)
+    {
+        _enable();
+    }
 }
 
 FORCEINLINE
 VOID
 ApicSendEOI(void)
 {
-    //ApicWrite(APIC_EOI, 0);
-    HackEoi();
+    ApicWrite(APIC_EOI, 0);
 }
 
 FORCEINLINE
@@ -170,15 +295,9 @@ ApicGetCurrentIrql(VOID)
 #ifdef _M_AMD64
     return (KIRQL)__readcr8();
 #elif defined(APIC_LAZY_IRQL)
-    // HACK: some magic to Sync VBox's APIC registers
-    ApicRead(APIC_VER);
-
     /* Return the field in the PCR */
     return (KIRQL)__readfsbyte(FIELD_OFFSET(KPCR, Irql));
 #else
-    // HACK: some magic to Sync VBox's APIC registers
-    ApicRead(APIC_VER);
-
     /* Read the TPR and convert it to an IRQL */
     return TprToIrql(ApicRead(APIC_TPR));
 #endif
@@ -222,15 +341,11 @@ ApicLowerIrql(KIRQL Irql)
 
 UCHAR
 FASTCALL
-HalpIrqToVector(UCHAR Irq)
+HalpIrqToVector(
+    _In_ UCHAR Irq)
 {
-    IOAPIC_REDIRECTION_REGISTER ReDirReg;
-
-    /* Read low dword of the redirection entry */
-    ReDirReg.Long0 = IOApicRead(IOAPIC_REDTBL + 2 * Irq);
-
-    /* Return the vector */
-    return (UCHAR)ReDirReg.Vector;
+    /* Firmware can leave a vector in an entry, so use the allocation table */
+    return HalpGsivToVector[Irq];
 }
 
 KIRQL
@@ -256,17 +371,21 @@ HalpSendEOI(VOID)
 
 VOID
 NTAPI
-ApicInitializeLocalApic(ULONG Cpu)
+ApicInitializeLocalApic(
+    _In_ ULONG Cpu)
 {
-    APIC_BASE_ADRESS_REGISTER BaseRegister;
+    APIC_BASE_ADDRESS_REGISTER BaseRegister;
     APIC_SPURIOUS_INERRUPT_REGISTER SpIntRegister;
+    APIC_VERSION_REGISTER VersionRegister;
+    APIC_EXTENDED_FEATURE_REGISTER FeatureRegister;
     LVT_REGISTER LvtEntry;
+    ULONG Index;
 
     /* Enable the APIC if it wasn't yet */
-    BaseRegister.Long = __readmsr(MSR_APIC_BASE);
+    BaseRegister.LongLong = __readmsr(MSR_APIC_BASE);
     BaseRegister.Enable = 1;
     BaseRegister.BootStrapCPUCore = (Cpu == 0);
-    __writemsr(MSR_APIC_BASE, BaseRegister.Long);
+    __writemsr(MSR_APIC_BASE, BaseRegister.LongLong);
 
     /* Set spurious vector and SoftwareEnable to 1 */
     SpIntRegister.Long = ApicRead(APIC_SIVR);
@@ -289,7 +408,7 @@ ApicInitializeLocalApic(ULONG Cpu)
 
     /* Create a template LVT */
     LvtEntry.Long = 0;
-    LvtEntry.Vector = 0xFF;
+    LvtEntry.Vector = APIC_FREE_VECTOR;
     LvtEntry.MessageType = APIC_MT_Fixed;
     LvtEntry.DeliveryStatus = 0;
     LvtEntry.RemoteIRR = 0;
@@ -297,14 +416,29 @@ ApicInitializeLocalApic(ULONG Cpu)
     LvtEntry.Mask = 1;
     LvtEntry.TimerMode = 0;
 
-    /* Initialize and mask LVTs */
+    /* Initialize and mask LVTs. Accessing one this APIC lacks is an illegal register error */
+    VersionRegister.Long = ApicRead(APIC_VER);
     ApicWrite(APIC_TMRLVTR, LvtEntry.Long);
-    ApicWrite(APIC_THRMLVTR, LvtEntry.Long);
-    ApicWrite(APIC_PCLVTR, LvtEntry.Long);
-    ApicWrite(APIC_EXT0LVTR, LvtEntry.Long);
-    ApicWrite(APIC_EXT1LVTR, LvtEntry.Long);
-    ApicWrite(APIC_EXT2LVTR, LvtEntry.Long);
-    ApicWrite(APIC_EXT3LVTR, LvtEntry.Long);
+
+    /* The performance counter LVT came with 5 LVT entries, the thermal LVT with 6 */
+    if (VersionRegister.MaxLVT >= 4)
+    {
+        ApicWrite(APIC_PCLVTR, LvtEntry.Long);
+    }
+    if (VersionRegister.MaxLVT >= 5)
+    {
+        ApicWrite(APIC_THRMLVTR, LvtEntry.Long);
+    }
+
+    /* AMD extended LVTs reset unmasked */
+    if (VersionRegister.ExtRegSpacePresent)
+    {
+        FeatureRegister.Long = ApicRead(APIC_EAFR);
+        for (Index = 0; Index < min(FeatureRegister.ExtLvtCount, 4); Index++)
+        {
+            ApicWrite((APIC_REGISTER)(APIC_EXT0LVTR + Index * 0x10), LvtEntry.Long);
+        }
+    }
 
     /* LINT0 */
     LvtEntry.Vector = APIC_SPURIOUS_VECTOR;
@@ -318,7 +452,11 @@ ApicInitializeLocalApic(ULONG Cpu)
     LvtEntry.TriggerMode = APIC_TGM_Level;
     ApicWrite(APIC_LINT1, LvtEntry.Long);
 
+    /* Clear any error from the writes above */
+    ApicWrite(APIC_ESR, 0);
+
     /* Enable error LVTR */
+    KeRegisterInterruptHandler(APIC_ERROR_VECTOR, ApicErrorService);
     LvtEntry.Vector = APIC_ERROR_VECTOR;
     LvtEntry.MessageType = APIC_MT_Fixed;
     ApicWrite(APIC_ERRLVTR, LvtEntry.Long);
@@ -334,34 +472,17 @@ ApicInitializeLocalApic(ULONG Cpu)
 UCHAR
 NTAPI
 HalpAllocateSystemInterrupt(
-    IN UCHAR Irq,
-    IN KIRQL Irql)
+    _In_ UCHAR Irq,
+    _In_ UCHAR Vector)
 {
     IOAPIC_REDIRECTION_REGISTER ReDirReg;
-    IN UCHAR Vector;
 
-    /* Start with lowest vector */
-    Vector = IrqlToTpr(Irql) & 0xF0;
-
-    /* Find an empty vector */
-    while (HalpVectorToIndex[Vector] != 0xFF)
-    {
-        Vector++;
-
-        /* Check if we went over the edge */
-        if (TprToIrql(Vector) > Irql)
-        {
-            /* Nothing free, return failure */
-            return 0;
-        }
-    }
-
-    /* Save irq in the table */
-    HalpVectorToIndex[Vector] = Irq;
+    ASSERT(Irq < HalpMaxGsi);
+    ASSERT(HalpVectorToIndex[Vector] == APIC_FREE_VECTOR);
 
     /* Setup a redirection entry */
     ReDirReg.Vector = Vector;
-    ReDirReg.DeliveryMode = APIC_MT_LowestPriority;
+    ReDirReg.MessageType = APIC_MT_LowestPriority;
     ReDirReg.DestinationMode = APIC_DM_Logical;
     ReDirReg.DeliveryStatus = 0;
     ReDirReg.Polarity = 0;
@@ -369,80 +490,215 @@ HalpAllocateSystemInterrupt(
     ReDirReg.TriggerMode = APIC_TGM_Edge;
     ReDirReg.Mask = 1;
     ReDirReg.Reserved = 0;
-    ReDirReg.Destination = 0;
+    ReDirReg.Destination = ApicRead(APIC_ID) >> 24;
 
     /* Initialize entry */
-    IOApicWrite(IOAPIC_REDTBL + 2 * Irq, ReDirReg.Long0);
-    IOApicWrite(IOAPIC_REDTBL + 2 * Irq + 1, ReDirReg.Long1);
+    ApicWriteIORedirectionEntry(Irq, ReDirReg);
+
+    /* Record the allocation in both tables */
+    HalpVectorToIndex[Vector] = Irq;
+    HalpGsivToVector[Irq] = Vector;
 
     return Vector;
 }
 
+ULONG
+NTAPI
+HalpGetRootInterruptVector(
+    _In_ ULONG BusInterruptLevel,
+    _In_ ULONG BusInterruptVector,
+    _Out_ PKIRQL OutIrql,
+    _Out_ PKAFFINITY OutAffinity)
+{
+    PHALP_IOAPIC_UNIT Unit;
+    UCHAR Vector;
+    KIRQL Irql;
+
+    /* Resources that already hold a system vector are translated here too, so stay quiet */
+    if (!HalpFindIoApicInput(BusInterruptLevel, &Unit))
+    {
+        DPRINT("No I/O APIC serves input %lu\n", BusInterruptLevel);
+        *OutAffinity = 0;
+        *OutIrql = 0;
+        return 0;
+    }
+
+    /* Get the vector currently registered */
+    Vector = HalpIrqToVector(BusInterruptLevel);
+
+    /* Check if it's used */
+    if (Vector != APIC_FREE_VECTOR)
+    {
+        /* Calculate IRQL */
+        NT_ASSERT(HalpVectorToIndex[Vector] == BusInterruptLevel);
+        *OutIrql = HalpVectorToIrql(Vector);
+    }
+    else
+    {
+        ULONG Offset;
+
+        /* Outer loop to find alternative slots, when all IRQLs are in use */
+        for (Offset = 0; Offset < 15; Offset++)
+        {
+            /* Loop allowed IRQL range */
+            for (Irql = CLOCK_LEVEL - 1; Irql >= CMCI_LEVEL; Irql--)
+            {
+                /* Calculate the vactor */
+                Vector = IrqlToTpr(Irql) + Offset;
+
+                /* Check if the vector is free */
+                if (HalpVectorToIrq(Vector) == APIC_FREE_VECTOR)
+                {
+                    /* Found one, allocate the interrupt */
+                    Vector = HalpAllocateSystemInterrupt(BusInterruptLevel, Vector);
+                    *OutIrql = Irql;
+                    goto Exit;
+                }
+            }
+        }
+
+        DPRINT1("Failed to get an interrupt vector for IRQ %lu\n", BusInterruptLevel);
+        *OutAffinity = 0;
+        *OutIrql = 0;
+        return 0;
+    }
+
+Exit:
+
+    *OutAffinity = HalpDefaultInterruptAffinity;
+    ASSERT(HalpDefaultInterruptAffinity);
+
+    return Vector;
+}
+
+/**
+ * @brief
+ * Maps an I/O APIC and adds it to the units in use.
+ *
+ * @param[in] PhysicalBase
+ * Physical address of the I/O APIC registers.
+ *
+ * @param[in] InputBase
+ * Global system interrupt of the first redirection entry.
+ */
+static
 VOID
 NTAPI
-ApicInitializeIOApic(VOID)
+HalpMapIoApic(
+    _In_ ULONG PhysicalBase,
+    _In_ ULONG InputBase)
 {
+    PHALP_IOAPIC_UNIT Unit;
     PHARDWARE_PTE Pte;
-    IOAPIC_REDIRECTION_REGISTER ReDirReg;
-    UCHAR Index;
-    ULONG Vector;
+    ULONG Version;
 
-    /* Map the I/O Apic page */
-    Pte = HalAddressToPte(IOAPIC_BASE);
-    Pte->PageFrameNumber = IOAPIC_PHYS_BASE / PAGE_SIZE;
+    if ((HalpIoApicCount == HALP_MAX_IOAPICS) || (InputBase >= HALP_MAX_INPUTS))
+    {
+        DPRINT1("I/O APIC at 0x%lx with input base %lu ignored\n", PhysicalBase, InputBase);
+        return;
+    }
+
+    /* Each I/O APIC takes the next page from IOAPIC_BASE */
+    Unit = &HalpIoApics[HalpIoApicCount];
+    Unit->Base = (ULONG_PTR)IOAPIC_BASE + HalpIoApicCount * PAGE_SIZE;
+    Pte = HalAddressToPte(Unit->Base);
+    Pte->PageFrameNumber = PhysicalBase / PAGE_SIZE;
     Pte->Valid = 1;
     Pte->Write = 1;
     Pte->Owner = 1;
     Pte->CacheDisable = 1;
     Pte->Global = 1;
     _ReadWriteBarrier();
+    Unit->Base += BYTE_OFFSET(PhysicalBase);
 
-    /* Setup a redirection entry */
-    ReDirReg.Vector = 0xFF;
-    ReDirReg.DeliveryMode = APIC_MT_Fixed;
-    ReDirReg.DestinationMode = APIC_DM_Physical;
-    ReDirReg.DeliveryStatus = 0;
-    ReDirReg.Polarity = 0;
-    ReDirReg.RemoteIRR = 0;
-    ReDirReg.TriggerMode = APIC_TGM_Edge;
-    ReDirReg.Mask = 1;
-    ReDirReg.Reserved = 0;
-    ReDirReg.Destination = 0;
-
-    /* Loop all table entries */
-    for (Index = 0; Index < 24; Index++)
+    /* Nothing decodes the address when all bits read back set */
+    Version = IOApicRead(Unit->Base, IOAPIC_VER);
+    if (Version == 0xFFFFFFFF)
     {
-        /* Initialize entry */
-        IOApicWrite(IOAPIC_REDTBL + 2 * Index, ReDirReg.Long0);
-        IOApicWrite(IOAPIC_REDTBL + 2 * Index + 1, ReDirReg.Long1);
+        DPRINT1("No I/O APIC responds at 0x%lx\n", PhysicalBase);
+        return;
     }
 
-    /* Init the vactor to index table */
-    for (Vector = 0; Vector <= 255; Vector++)
-    {
-        HalpVectorToIndex[Vector] = 0xFF;
-    }
-
-    // HACK: Allocate all IRQs, should rather do that on demand
-    for (Index = 0; Index <= 15; Index++)
-    {
-        /* Map the IRQs to IRQLs like with the PIC */
-        HalpAllocateSystemInterrupt(Index, 27 - Index);
-    }
-
-    /* Enable the timer interrupt */
-    ReDirReg.Vector = APIC_CLOCK_VECTOR;
-    ReDirReg.DeliveryMode = APIC_MT_Fixed;
-    ReDirReg.DestinationMode = APIC_DM_Physical;
-    ReDirReg.TriggerMode = APIC_TGM_Edge;
-    ReDirReg.Mask = 0;
-    ReDirReg.Destination = ApicRead(APIC_ID);
-    IOApicWrite(IOAPIC_REDTBL + 2 * APIC_CLOCK_INDEX, ReDirReg.Long0);
+    /* Bits 23:16 hold the index of the last redirection entry, the register index caps the count */
+    Unit->InputBase = InputBase;
+    Unit->InputCount = min(((Version >> 16) & 0xFF) + 1, HALP_IOAPIC_MAX_ENTRIES);
+    Unit->InputCount = min(Unit->InputCount, HALP_MAX_INPUTS - InputBase);
+    HalpMaxGsi = max(HalpMaxGsi, InputBase + Unit->InputCount);
+    HalpIoApicCount++;
 }
 
 VOID
 NTAPI
-HalpInitializePICs(IN BOOLEAN EnableInterrupts)
+ApicInitializeIOApic(VOID)
+{
+    PHALP_IOAPIC_UNIT Unit;
+    IOAPIC_REDIRECTION_REGISTER ReDirReg, Current;
+    ULONG Index, Vector, Input;
+    UCHAR Register;
+
+    /* Use the I/O APICs from the MADT, or the default one without it */
+    for (Index = 0; Index < HALP_APIC_INFO_TABLE_IOAPIC_NUMBER; Index++)
+    {
+        if (HalpApicInfoTable.IoApicPA[Index] != 0)
+        {
+            HalpMapIoApic(HalpApicInfoTable.IoApicPA[Index],
+                          HalpApicInfoTable.IoApicIrqBase[Index]);
+        }
+    }
+    if (HalpIoApicCount == 0)
+    {
+        HalpMapIoApic(IOAPIC_PHYS_BASE, 0);
+    }
+
+    /* Setup a redirection entry */
+    ReDirReg.LongLong = 0;
+    ReDirReg.Vector = APIC_FREE_VECTOR;
+    ReDirReg.MessageType = APIC_MT_Fixed;
+    ReDirReg.DestinationMode = APIC_DM_Physical;
+    ReDirReg.TriggerMode = APIC_TGM_Edge;
+    ReDirReg.Mask = 1;
+    ReDirReg.Destination = ApicRead(APIC_ID) >> 24;
+
+    /* Initialize all entries of all I/O APICs */
+    for (Unit = HalpIoApics; Unit < HalpIoApics + HalpIoApicCount; Unit++)
+    {
+        for (Input = Unit->InputBase; Input < Unit->InputBase + Unit->InputCount; Input++)
+        {
+            /* Entries the firmware routes to SMI stay as they are */
+            Register = (UCHAR)(IOAPIC_REDTBL + 2 * (Input - Unit->InputBase));
+            Current.Long0 = IOApicRead(Unit->Base, Register);
+            if (Current.MessageType == APIC_MT_SMI)
+            {
+                Current.Long1 = IOApicRead(Unit->Base, Register + 1);
+                HalpIoApicShadow[Input] = Current;
+                continue;
+            }
+
+            ApicWriteIORedirectionEntry(Input, ReDirReg);
+        }
+    }
+
+    /* Init the vector and input tables */
+    for (Vector = 0; Vector <= 255; Vector++)
+    {
+        HalpVectorToIndex[Vector] = APIC_FREE_VECTOR;
+        HalpGsivToVector[Vector] = APIC_FREE_VECTOR;
+    }
+
+    /* Enable the timer interrupt (but keep it masked) */
+    ReDirReg.Vector = APIC_CLOCK_VECTOR;
+    ReDirReg.MessageType = APIC_MT_Fixed;
+    ReDirReg.DestinationMode = APIC_DM_Physical;
+    ReDirReg.TriggerMode = APIC_TGM_Level;
+    ReDirReg.Mask = 1;
+    ReDirReg.Destination = ApicRead(APIC_ID) >> 24;
+    ApicWriteIORedirectionEntry(APIC_CLOCK_INDEX, ReDirReg);
+}
+
+VOID
+NTAPI
+HalpInitializePICs(
+    _In_ BOOLEAN EnableInterrupts)
 {
     ULONG_PTR EFlags;
 
@@ -457,12 +713,22 @@ HalpInitializePICs(IN BOOLEAN EnableInterrupts)
     ApicInitializeIOApic();
 
     /* Manually reserve some vectors */
-    HalpVectorToIndex[APIC_CLOCK_VECTOR] = 8;
-    HalpVectorToIndex[APC_VECTOR] = 99;
-    HalpVectorToIndex[DISPATCH_VECTOR] = 99;
+    HalpVectorToIndex[APC_VECTOR] = APIC_RESERVED_VECTOR;
+    HalpVectorToIndex[DISPATCH_VECTOR] = APIC_RESERVED_VECTOR;
+    HalpVectorToIndex[APIC_CLOCK_VECTOR] = APIC_CLOCK_INDEX;
+    HalpGsivToVector[APIC_CLOCK_INDEX] = APIC_CLOCK_VECTOR;
+    HalpVectorToIndex[CLOCK_IPI_VECTOR] = APIC_RESERVED_VECTOR;
+    HalpVectorToIndex[APIC_SPURIOUS_VECTOR] = APIC_RESERVED_VECTOR;
+
+    /* Local APIC sources, all above the device vector range */
+    HalpVectorToIndex[APIC_PROFILE_VECTOR] = APIC_RESERVED_VECTOR;
+    HalpVectorToIndex[APIC_ERROR_VECTOR] = APIC_RESERVED_VECTOR;
+    HalpVectorToIndex[APIC_IPI_VECTOR] = APIC_RESERVED_VECTOR;
+    HalpVectorToIndex[APIC_NMI_VECTOR] = APIC_RESERVED_VECTOR;
 
     /* Set interrupt handlers in the IDT */
     KeRegisterInterruptHandler(APIC_CLOCK_VECTOR, HalpClockInterrupt);
+    KeRegisterInterruptHandler(CLOCK_IPI_VECTOR, HalpClockIpi);
 #ifndef _M_AMD64
     KeRegisterInterruptHandler(APC_VECTOR, HalpApcInterrupt);
     KeRegisterInterruptHandler(DISPATCH_VECTOR, HalpDispatchInterrupt);
@@ -581,7 +847,7 @@ FASTCALL
 HalRequestSoftwareInterrupt(IN KIRQL Irql)
 {
     /* Convert irql to vector and request an interrupt */
-    ApicRequestInterrupt(IrqlToSoftVector(Irql), APIC_TGM_Edge);
+    ApicRequestSelfInterrupt(IrqlToSoftVector(Irql), APIC_TGM_Edge);
 }
 
 VOID
@@ -595,15 +861,104 @@ HalClearSoftwareInterrupt(
 
 /* SYSTEM INTERRUPTS **********************************************************/
 
+/**
+ * @brief
+ * Asks the ACPI driver for the input of a vector it allocated.
+ *
+ * @param[in] Vector
+ * The interrupt vector to look up.
+ *
+ * @param[out] Input
+ * Receives the global system interrupt of the vector.
+ *
+ * @param[out] Polarity
+ * Receives the polarity reported for the input.
+ *
+ * @return
+ * STATUS_SUCCESS when an I/O APIC serves the input, STATUS_INVALID_PARAMETER
+ * for a message-signaled vector, or another error status otherwise.
+ */
+static
+NTSTATUS
+NTAPI
+HalpQueryVectorInput(
+    _In_ ULONG Vector,
+    _Out_ PULONG Input,
+    _Out_ PKINTERRUPT_POLARITY Polarity)
+{
+    PHALP_IOAPIC_UNIT Unit;
+    NTSTATUS Status;
+
+    *Input = 0;
+    *Polarity = InterruptPolarityUnknown;
+
+    if (HalGetVectorInputOverride == NULL)
+        return STATUS_NOT_FOUND;
+
+    Status = HalGetVectorInputOverride(Vector, HalpDefaultInterruptAffinity, Input, Polarity);
+    if (NT_SUCCESS(Status) && !HalpFindIoApicInput(*Input, &Unit))
+    {
+        DPRINT1("No I/O APIC serves input %lu of vector 0x%lx\n", *Input, Vector);
+        return STATUS_NOT_FOUND;
+    }
+
+    return Status;
+}
+
+/**
+ * @brief
+ * Picks the polarity to program for an input.
+ *
+ * @param[in] Input
+ * The global system interrupt being enabled.
+ *
+ * @param[in] Mode
+ * The trigger mode of the input.
+ *
+ * @param[in] Reported
+ * The polarity reported by the ACPI driver, or InterruptPolarityUnknown.
+ *
+ * @return
+ * The reported polarity, else the one of an MADT interrupt source override
+ * targeting the input, else the default of the trigger mode.
+ */
+static
+KINTERRUPT_POLARITY
+NTAPI
+HalpGetInputPolarity(
+    _In_ ULONG Input,
+    _In_ KINTERRUPT_MODE Mode,
+    _In_ KINTERRUPT_POLARITY Reported)
+{
+    ULONG Irq;
+
+    if (Reported != InterruptPolarityUnknown)
+        return Reported;
+
+    for (Irq = 0; Irq < HALP_ISA_IRQ_COUNT; Irq++)
+    {
+        if ((HalpApicInfoTable.IsaIrqPolarity[Irq] != InterruptPolarityUnknown) &&
+            (HalpApicInfoTable.IsaIrqGsi[Irq] == Input))
+        {
+            return HalpApicInfoTable.IsaIrqPolarity[Irq];
+        }
+    }
+
+    /* PCI lines are level and active low, ISA lines are edge and active high */
+    return (Mode == LevelSensitive) ? InterruptActiveLow : InterruptActiveHigh;
+}
+
 BOOLEAN
 NTAPI
 HalEnableSystemInterrupt(
-    IN ULONG Vector,
-    IN KIRQL Irql,
-    IN KINTERRUPT_MODE InterruptMode)
+    _In_ ULONG Vector,
+    _In_ KIRQL Irql,
+    _In_ KINTERRUPT_MODE InterruptMode)
 {
     IOAPIC_REDIRECTION_REGISTER ReDirReg;
-    PKPRCB Prcb = KeGetCurrentPrcb();
+    KINTERRUPT_POLARITY Polarity;
+    NTSTATUS Status;
+    ULONG Input;
     UCHAR Index;
     ASSERT(Irql <= HIGH_LEVEL);
     ASSERT((IrqlToTpr(Irql) & 0xF0) == (Vector & 0xF0));
@@ -611,8 +966,36 @@ HalEnableSystemInterrupt(
     /* Get the irq for this vector */
     Index = HalpVectorToIndex[Vector];
 
+    /* Message-signaled interrupts have no input to unmask */
+    if (Index == APIC_MSI_VECTOR)
+    {
+        return TRUE;
+    }
+
+    /* The ACPI driver allocates vectors itself when it arbitrates interrupts */
+    Polarity = InterruptPolarityUnknown;
+    if (Index == APIC_FREE_VECTOR)
+    {
+        Status = HalpQueryVectorInput(Vector, &Input, &Polarity);
+        if (Status == STATUS_INVALID_PARAMETER)
+        {
+            HalpVectorToIndex[Vector] = APIC_MSI_VECTOR;
+            return TRUE;
+        }
+
+        /* Don't take over an input that belongs to another vector */
+        if (!NT_SUCCESS(Status) || (HalpGsivToVector[Input] != APIC_FREE_VECTOR))
+        {
+            DPRINT1("No free input for vector 0x%lx, status 0x%lx\n", Vector, Status);
+            return FALSE;
+        }
+
+        HalpAllocateSystemInterrupt((UCHAR)Input, (UCHAR)Vector);
+        Index = (UCHAR)Input;
+    }
+
     /* Check if its valid */
-    if (Index == 0xff)
+    if (Index >= HalpMaxGsi)
     {
         /* Interrupt is not in use */
         return FALSE;
@@ -621,26 +1004,23 @@ HalEnableSystemInterrupt(
     /* Read the redirection entry */
     ReDirReg = ApicReadIORedirectionEntry(Index);
 
-    /* Check if the interrupt was unused */
-    if (ReDirReg.Vector != Vector)
+    /* Check if the interrupt is already enabled */
+    if (ReDirReg.Mask == FALSE)
     {
-        ReDirReg.Vector = Vector;
-        ReDirReg.DeliveryMode = APIC_MT_LowestPriority;
-        ReDirReg.DestinationMode = APIC_DM_Logical;
-        ReDirReg.Destination = 0;
+        /* If the vector matches, there is nothing more to do,
+           otherwise something is wrong. */
+        return (ReDirReg.Vector == Vector);
     }
 
-    /* Check if the destination is logical */
-    if (ReDirReg.DestinationMode == APIC_DM_Logical)
-    {
-        /* Set the bit for this cpu */
-        ReDirReg.Destination |= ApicLogicalId(Prcb->Number);
-    }
-
-    /* Set the trigger mode */
-    ReDirReg.TriggerMode = 1 - InterruptMode;
-
-    /* Now unmask it */
+    /* Set up the redirection entry */
+    ReDirReg.Vector = Vector;
+    ReDirReg.MessageType = APIC_MT_Fixed;
+    ReDirReg.DestinationMode = APIC_DM_Physical;
+    ReDirReg.Destination = ApicRead(APIC_ID) >> 24;
+    ReDirReg.TriggerMode = (InterruptMode == LevelSensitive) ?
+        APIC_TGM_Level : APIC_TGM_Edge;
+    ReDirReg.Polarity =
+        (HalpGetInputPolarity(Index, InterruptMode, Polarity) == InterruptActiveLow);
     ReDirReg.Mask = FALSE;
 
     /* Write back the entry */
@@ -652,8 +1032,8 @@ HalEnableSystemInterrupt(
 VOID
 NTAPI
 HalDisableSystemInterrupt(
-    IN ULONG Vector,
-    IN KIRQL Irql)
+    _In_ ULONG Vector,
+    _In_ KIRQL Irql)
 {
     IOAPIC_REDIRECTION_REGISTER ReDirReg;
     UCHAR Index;
@@ -662,23 +1042,22 @@ HalDisableSystemInterrupt(
 
     Index = HalpVectorToIndex[Vector];
 
-    /* Read lower dword of redirection entry */
-    ReDirReg.Long0 = IOApicRead(IOAPIC_REDTBL + 2 * Index);
+    /* Message-signaled and reserved vectors have no entry to mask */
+    if (Index >= HalpMaxGsi)
+        return;
 
-    /* Mask it */
+    /* Mask the redirection entry */
+    ReDirReg = ApicReadIORedirectionEntry(Index);
     ReDirReg.Mask = 1;
-
-    /* Write back lower dword */
-    IOApicWrite(IOAPIC_REDTBL + 2 * Irql, ReDirReg.Long0);
+    ApicWriteIORedirectionEntry(Index, ReDirReg);
 }
 
-#ifndef _M_AMD64
 BOOLEAN
 NTAPI
 HalBeginSystemInterrupt(
-    IN KIRQL Irql,
-    IN ULONG Vector,
-    OUT PKIRQL OldIrql)
+    _In_ KIRQL Irql,
+    _In_ ULONG Vector,
+    _Out_ PKIRQL OldIrql)
 {
     KIRQL CurrentIrql;
 
@@ -704,19 +1083,22 @@ HalBeginSystemInterrupt(
         /* Get the irq for this vector */
         Index = HalpVectorToIndex[Vector];
 
-        /* Check if its valid */
-        if (Index != 0xff)
+        /* Check if it's valid */
+        if (Index < HalpMaxGsi)
         {
             /* Read the I/O redirection entry */
             RedirReg = ApicReadIORedirectionEntry(Index);
 
             /* Re-request the interrupt to be handled later */
-            ApicRequestInterrupt(Vector, (UCHAR)RedirReg.TriggerMode);
+            ApicRequestSelfInterrupt(Vector, (UCHAR)RedirReg.TriggerMode);
        }
        else
        {
+            /* This should be a reserved or message-signaled vector! */
+            ASSERT((Index == APIC_RESERVED_VECTOR) || (Index == APIC_MSI_VECTOR));
+
             /* Re-request the interrupt to be handled later */
-            ApicRequestInterrupt(Vector, APIC_TGM_Edge);
+            ApicRequestSelfInterrupt(Vector, APIC_TGM_Edge);
        }
 
         /* Pretend it was a spurious interrupt */
@@ -752,6 +1134,7 @@ HalEndSystemInterrupt(
 
 /* IRQL MANAGEMENT ************************************************************/
 
+#ifndef _M_AMD64
 KIRQL
 NTAPI
 KeGetCurrentIrql(VOID)

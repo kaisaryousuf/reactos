@@ -140,7 +140,7 @@ LoadCurrentScheme(OUT COLOR_SCHEME *scheme)
 #if (WINVER >= 0x0600)
     /* Size of NONCLIENTMETRICSA/W depends on current version of the OS.
      * see:
-     *  https://msdn.microsoft.com/en-us/library/windows/desktop/ff729175%28v=vs.85%29.aspx
+     *  https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-nonclientmetricsa
      */
     if (GetVersionEx(&osvi))
     {
@@ -204,7 +204,7 @@ LoadCurrentScheme(OUT COLOR_SCHEME *scheme)
                                 0);
     if (!ret) return FALSE;
 
-    /* Show shadows under menus */
+    /* Show shadows under windows */
     ret = SystemParametersInfoW(SPI_GETDROPSHADOW,
                                 0,
                                 &scheme->Effects.bDropShadow,
@@ -361,6 +361,21 @@ ApplyScheme(IN COLOR_SCHEME *scheme, IN PTHEME_SELECTION pSelectedTheme)
         RegCloseKey(hKey);
     }
 
+    /* Save the icon size to registry */
+    Result = RegCreateKeyW(HKEY_CURRENT_USER, g_CPMetrics, &hKey);
+    if (Result == ERROR_SUCCESS)
+    {
+        wsprintf(clText, L"%d", scheme->iIconSize);
+
+        RegSetValueExW(hKey,
+                       L"Shell Icon Size",
+                       0,
+                       REG_SZ,
+                       (BYTE *)clText,
+                       (lstrlen(clText) + 1) * sizeof(WCHAR));
+        RegCloseKey(hKey);
+    }
+
     /* Apply non client metrics */
     SystemParametersInfoW(SPI_SETNONCLIENTMETRICS,
                           sizeof(NONCLIENTMETRICS),
@@ -399,10 +414,7 @@ ApplyScheme(IN COLOR_SCHEME *scheme, IN PTHEME_SELECTION pSelectedTheme)
      */
     InvalidateRect(NULL, NULL, TRUE);
 
-    /* Use large icons */
-    //SYS_CONFIG(SPI_GETDRAGFULLWINDOWS,   (PVOID) g->SchemeAdv.Effects.bMenuFade);
-
-    /* Show shadows under menus */
+    /* Show shadows under windows */
     SYS_CONFIG(SPI_SETDROPSHADOW,                0, IntToPtr(scheme->Effects.bDropShadow));
 
     /* Show window contents while dragging */
@@ -437,6 +449,19 @@ ApplyScheme(IN COLOR_SCHEME *scheme, IN PTHEME_SELECTION pSelectedTheme)
                     REG_SZ,
                     StyleName,
                     (lstrlenW(StyleName) + 1) * sizeof(WCHAR));
+    }
+
+    if (pSelectedTheme->ThemeActive)
+    {
+        SHSetValueW(HKEY_CURRENT_USER, L"Control Panel\\Appearance", L"Current", REG_SZ, NULL, 0);
+        SHSetValueW(HKEY_CURRENT_USER, L"Control Panel\\Appearance", L"NewCurrent", REG_SZ, NULL, 0);
+    }
+    else if (pSelectedTheme->Color)
+    {
+        PCWSTR ClassicSchemeName = pSelectedTheme->Color->DisplayName;
+        DWORD cb = (lstrlenW(ClassicSchemeName) + 1) * sizeof(WCHAR);
+        SHSetValueW(HKEY_CURRENT_USER, L"Control Panel\\Appearance", L"Current", REG_SZ, ClassicSchemeName, cb); // 95+
+        SHSetValueW(HKEY_CURRENT_USER, L"Control Panel\\Appearance", L"NewCurrent", REG_SZ, ClassicSchemeName, cb); // XP+
     }
 }
 
@@ -707,7 +732,7 @@ EnumThemeStyles(IN LPCWSTR pszThemeFileName, IN ENUMTHEMESTYLE pfnEnumTheme)
 PTHEME LoadTheme(IN LPCWSTR pszThemeFileName,IN LPCWSTR pszThemeName)
 {
     PTHEME pTheme = CreateTheme(pszThemeFileName, pszThemeName);
-    if (pTheme == NULL) 
+    if (pTheme == NULL)
         return NULL;
 
     pTheme->SizesList = EnumThemeStyles( pszThemeFileName, (ENUMTHEMESTYLE)EnumThemeSizes);
@@ -784,11 +809,11 @@ LoadThemes(VOID)
 }
 
 /*
- * FindSelectedTheme: Finds the specified theme in the list of themes 
+ * FindSelectedTheme: Finds the specified theme in the list of themes
  *                    or loads it if it was not loaded already.
  */
 BOOL
-FindOrAppendTheme(IN PTHEME pThemeList, 
+FindOrAppendTheme(IN PTHEME pThemeList,
                   IN LPCWSTR pwszThemeFileName,
                   IN LPCWSTR pwszColorBuff,
                   IN LPCWSTR pwszSizeBuff,
@@ -855,7 +880,7 @@ GetActiveTheme(IN PTHEME pThemeList, OUT PTHEME_SELECTION pSelectedTheme)
                                MAX_PATH,
                                szSizeBuff,
                                MAX_PATH);
-    if (FAILED(hret))  
+    if (FAILED(hret))
         return FALSE;
 
     return FindOrAppendTheme(pThemeList, szThemeFileName, szColorBuff, szSizeBuff, pSelectedTheme);
@@ -997,7 +1022,8 @@ DrawThemePreview(IN HDC hdcMem, IN PCOLOR_SCHEME scheme, IN PTHEME_SELECTION pSe
     FillRect(hdcMem, prcWindow, hbrBack);
     DeleteObject(hbrBack);
 
-    InflateRect(prcWindow, -10, -10);
+    InflateRect(prcWindow, -8, -8);
+    prcWindow->bottom -= 12;
 
     hres = DrawNCPreview(hdcMem,
                          DNCP_DRAW_ALL,

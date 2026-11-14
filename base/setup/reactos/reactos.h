@@ -1,27 +1,10 @@
 /*
- *  ReactOS applications
- *  Copyright (C) 2004-2008 ReactOS Team
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
-/*
- * COPYRIGHT:   See COPYING in the top level directory
  * PROJECT:     ReactOS GUI first stage setup application
- * FILE:        base/setup/reactos/reactos.c
- * PROGRAMMERS: Matthias Kupfer
- *              Dmitry Chapyshev (dmitry@reactos.org)
+ * LICENSE:     GPL-2.0-or-later (https://spdx.org/licenses/GPL-2.0-or-later)
+ * PURPOSE:     Precompiled header
+ * COPYRIGHT:   Copyright 2008-2010 Matthias Kupfer <mkupfer@reactos.org>
+ *              Copyright 2008-2009 Dmitry Chapyshev <dmitry@reactos.org>
+ *              Copyright 2018-2026 Hermès Bélusca-Maïto <hermes.belusca-maito@reactos.org>
  */
 
 #ifndef _REACTOS_PCH_
@@ -45,8 +28,19 @@
 #include <commctrl.h>
 #include <windowsx.h>
 
+#define EnableDlgItem(hDlg, nID, bEnable)   \
+    EnableWindow(GetDlgItem((hDlg), (nID)), (bEnable))
+
+#define ShowDlgItem(hDlg, nID, nCmdShow)    \
+    ShowWindow(GetDlgItem((hDlg), (nID)), (nCmdShow))
+
+#define SetDlgItemFont(hDlg, nID, hFont, bRedraw)   \
+    SetWindowFont(GetDlgItem((hDlg), (nID)), (hFont), (bRedraw))
+
+// Property Sheet string IDs
+#define IDS_CLOSE   4160 // 0x1040
 /* These are public names and values determined from MFC, and compatible with Windows */
-// Property Sheet control id's (determined with Spy++)
+// Property Sheet control IDs (determined with Spy++)
 #define IDC_TAB_CONTROL                 0x3020
 #define ID_APPLY_NOW                    0x3021
 #define ID_WIZBACK                      0x3023
@@ -69,14 +63,18 @@
 // #include <reactos/rosioctl.h>
 #include <../lib/setuplib.h>
 
-#if 0
-typedef struct _KBLAYOUT
+
+/* UI elements */
+typedef struct _UI_CONTEXT
 {
-    TCHAR LayoutId[9];
-    TCHAR LayoutName[128];
-    TCHAR DllName[128];
-} KBLAYOUT, *PKBLAYOUT;
-#endif
+    HWND hPartList; // Disks & partitions list
+    HWND hwndDlg;   // Install progress page
+    HWND hWndItem;  // Progress action
+    HWND hWndProgress;  // Progress gauge
+    LONG_PTR dwPbStyle; // Progress gauge style
+} UI_CONTEXT, *PUI_CONTEXT;
+
+extern UI_CONTEXT UiContext;
 
 
 /*
@@ -108,20 +106,50 @@ typedef struct _NT_WIN32_PATH_MAPPING_LIST
 } NT_WIN32_PATH_MAPPING_LIST, *PNT_WIN32_PATH_MAPPING_LIST;
 
 
+#if 0
+typedef struct _KBLAYOUT
+{
+    TCHAR LayoutId[9];
+    TCHAR LayoutName[128];
+    TCHAR DllName[128];
+} KBLAYOUT, *PKBLAYOUT;
+#endif
+
+#define InterlockedFlagsTestAndSet8(Target, Flags) \
+    !!(InterlockedOr8((PCHAR)(Target), (Flags)) & (Flags))
+
+#define InterlockedFlagsTestAndReset8(Target, Flags) \
+    !!(InterlockedAnd8((PCHAR)(Target), ~(Flags)) & (Flags))
+
 typedef struct _SETUPDATA
 {
     /* General */
     HINSTANCE hInstance;
     BOOL bUnattend;
+    BOOL bMustReboot;
 
     HFONT hTitleFont;
+    HFONT hBoldFont;
 
     HANDLE hInstallThread;
     HANDLE hHaltInstallEvent;
-    BOOL bStopInstall;
-
-    TCHAR szAbortMessage[512];
-    TCHAR szAbortTitle[64];
+    union
+    {
+        struct
+        {
+#define SETUP_ABORT_INSTALL     1
+            UCHAR bAbortInstall  :2; /**< TRUE if the installation is to be aborted;
+                                      **  FALSE if not (regular termination). */
+#define SETUP_IS_CANCELLING     4
+            UCHAR bIsCancelling  :2; /**< TRUE if the installation is being cancelled
+                                      **  (via PSN_QUERYCANCEL); FALSE if not. */
+#define SETUP_PAGE_SWITCHING    16
+            UCHAR bPageSwitching :2; /**< TRUE if a page switch is occurring
+                                      **  (PSN_KILLACTIVE running); FALSE if not. */
+            UCHAR bReserved      :2;
+        };
+        BOOLEAN bStopInstall;
+    };
 
     NT_WIN32_PATH_MAPPING_LIST MappingList;
 
@@ -136,10 +164,6 @@ typedef struct _SETUPDATA
 
     /* Settings */
     LONG DestPartSize; // if partition doesn't exist, size of partition
-    LONG FSType;       // file system type on partition
-    LONG FormatPart;   // type of format the partition
-
-    LONG SelectedLangId; // selected language (table index)
 
     /* txtsetup.sif data */
     // LONG DefaultLang;     // default language (table index)
@@ -151,9 +175,35 @@ typedef struct _SETUPDATA
 } SETUPDATA, *PSETUPDATA;
 
 extern HANDLE ProcessHeap;
-extern BOOLEAN IsUnattendedSetup;
-
 extern SETUPDATA SetupData;
+
+extern PPARTENTRY InstallPartition;
+extern PPARTENTRY SystemPartition;
+
+/**
+ * @brief   Data structure stored when a partition/volume needs to be formatted.
+ **/
+typedef struct _VOL_CREATE_INFO
+{
+    PVOLENTRY Volume;
+
+    /* Volume-related parameters:
+     * Cached input information that will be set to
+     * the FORMAT_VOLUME_INFO structure given to the
+     * 'FSVOLNOTIFY_STARTFORMAT' step */
+    // PCWSTR FileSystemName;
+    WCHAR FileSystemName[MAX_PATH+1];
+    FMIFS_MEDIA_FLAG MediaFlag;
+    PCWSTR Label;
+    BOOLEAN QuickFormat;
+    ULONG ClusterSize;
+} VOL_CREATE_INFO, *PVOL_CREATE_INFO;
+
+/* See drivepage.c */
+PVOL_CREATE_INFO
+FindVolCreateInTreeByVolume(
+    _In_ HWND hTreeList,
+    _In_ PVOLENTRY Volume);
 
 
 /*
@@ -170,6 +220,17 @@ ConvertNtPathToWin32Path(
 
 /* drivepage.c */
 
+INT_PTR
+CALLBACK
+DriveDlgProc(
+    _In_ HWND hwndDlg,
+    _In_ UINT uMsg,
+    _In_ WPARAM wParam,
+    _In_ LPARAM lParam);
+
+
+/* reactos.c */
+
 BOOL
 CreateListViewColumns(
     IN HINSTANCE hInstance,
@@ -179,14 +240,68 @@ CreateListViewColumns(
     IN const INT* pColsAlign,
     IN UINT nNumOfColumns);
 
-INT_PTR
-CALLBACK
-DriveDlgProc(
-    HWND hwndDlg,
-    UINT uMsg,
-    WPARAM wParam,
-    LPARAM lParam);
+size_t
+LoadAllocStringW(
+    _In_opt_ HINSTANCE hInstance,
+    _In_ UINT uID,
+    _In_opt_ _Outptr_ PWSTR* pString,
+    _In_opt_ size_t cchBufferLen /*,
+    _In_opt_ PCWSTR pDefaultString*/);
+
+size_t
+FormatAllocStringWV(
+    _In_opt_ _Outptr_ PWSTR* pString,
+    _In_opt_ size_t cchBufferLen,
+    _In_ PCWSTR pszFormat,
+    _In_ va_list args);
+
+INT
+DisplayMessageV(
+    _In_opt_ HWND hWnd,
+    _In_ UINT uType,
+    _In_opt_ PCWSTR pszTitle,
+    _In_opt_ PCWSTR pszFormatMessage,
+    _In_ va_list args);
+
+INT
+__cdecl
+DisplayMessage(
+    _In_opt_ HWND hWnd,
+    _In_ UINT uType,
+    _In_opt_ PCWSTR pszTitle,
+    _In_opt_ PCWSTR pszFormatMessage,
+    ...);
+
+INT
+__cdecl
+DisplayError(
+    _In_opt_ HWND hWnd,
+    _In_ UINT uIDTitle,
+    _In_ UINT uIDMessage,
+    ...);
+
+VOID
+SetWindowResTextW(
+    _In_ HWND hWnd,
+    _In_opt_ HINSTANCE hInstance,
+    _In_ UINT uID /*,
+    _In_opt_ PCWSTR pDefaultString*/);
+
+VOID
+SetWindowResPrintfVW(
+    _In_ HWND hWnd,
+    _In_opt_ HINSTANCE hInstance,
+    _In_ UINT uID,
+    _In_ va_list args);
+
+VOID
+__cdecl
+SetWindowResPrintfW(
+    _In_ HWND hWnd,
+    _In_opt_ HINSTANCE hInstance,
+    _In_ UINT uID,
+    ...);
 
 #endif /* _REACTOS_PCH_ */
 
-/* EOP */
+/* EOF */

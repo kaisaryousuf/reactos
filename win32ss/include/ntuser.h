@@ -6,15 +6,15 @@ struct _THREADINFO;
 struct _DESKTOP;
 struct _WND;
 struct tagPOPUPMENU;
-#ifndef HIMC
-typedef HANDLE HIMC;
-#endif
 
 #define FIRST_USER_HANDLE 0x0020 /* first possible value for low word of user handle */
 #define LAST_USER_HANDLE 0xffef /* last possible value for low word of user handle */
 
 #define HANDLEENTRY_DESTROY 1
 #define HANDLEENTRY_INDESTROY 2
+/* A job was granted access to this handle, so freeing it has
+   to sweep the granted lists (see IntCleanupGrantedHandle) */
+#define HANDLEENTRY_GRANTED 4
 
 typedef struct _USER_HANDLE_ENTRY
 {
@@ -129,6 +129,10 @@ RtlLargeStringToUnicodeString(
 
 #define NB_HOOKS (WH_MAXHOOK - WH_MINHOOK + 1)
 
+/*
+ * DESKTOPINFO structure.
+ * See also: https://reactos.org/wiki/Techwiki:Win32k/DESKTOP
+ */
 typedef struct _DESKTOPINFO
 {
     PVOID pvDesktopBase;
@@ -160,6 +164,10 @@ typedef struct _DESKTOPINFO
 #define CTI_THREADSYSLOCK 0x0001
 #define CTI_INSENDMESSAGE 0x0002
 
+/*
+ * CLIENTTHREADINFO structure.
+ * See also: https://reactos.org/wiki/Techwiki:Win32k/CLIENTTHREADINFO
+ */
 typedef struct _CLIENTTHREADINFO
 {
     DWORD CTI_flags;
@@ -190,6 +198,23 @@ typedef struct _THRDESKHEAD
     PVOID pSelf;
 } THRDESKHEAD, *PTHRDESKHEAD;
 
+typedef struct tagIMC
+{
+    THRDESKHEAD    head;
+    struct tagIMC *pImcNext;
+    ULONG_PTR      dwClientImcData;
+    HWND           hImeWnd;
+} IMC, *PIMC;
+
+#ifndef _WIN64
+C_ASSERT(offsetof(IMC, head.h) == 0x0);
+C_ASSERT(offsetof(IMC, head.cLockObj) == 0x4);
+C_ASSERT(offsetof(IMC, head.pti) == 0x8);
+C_ASSERT(offsetof(IMC, pImcNext) == 0x14);
+C_ASSERT(offsetof(IMC, dwClientImcData) == 0x18);
+C_ASSERT(offsetof(IMC, hImeWnd) == 0x1c);
+#endif
+
 typedef struct _PROCDESKHEAD
 {
     HEAD;
@@ -206,6 +231,7 @@ typedef struct _PROCMARKHEAD
 } PROCMARKHEAD, *PPROCMARKHEAD;
 
 #define UserHMGetHandle(obj) ((obj)->head.h)
+#define UserHMSetHandle(obj, handle) ((obj)->head.h = (handle))
 
 /* Window Client Information structure */
 struct _ETHREAD;
@@ -266,6 +292,7 @@ typedef struct tagCLIPBOARDDATA
 #define TIF_INGETTEXTLENGTH         0x08000000
 #define TIF_ANSILENGTH              0x10000000
 #define TIF_DISABLEHOOKS            0x20000000
+#define TIF_JOBRESTRICTED           0x40000000
 
 typedef struct _CALLBACKWND
 {
@@ -280,8 +307,17 @@ typedef struct _CALLBACKWND
 #define CI_INITTHREAD        0x00000008
 #define CI_CURTHPRHOOK       0x00000010
 #define CI_CLASSESREGISTERED 0x00000020
-#define CI_IMMACTIVATE       0x00000040
+#define CI_IMMACTIVATE       0x00000040 /* IMM/IME (Asian input) */
+#define CI_CTFCOINIT         0x00000080 /* Did CTF CoInitialize? */
+#define CI_CTFTIM            0x00000100 /* CTF Thread Input Manager (TIM) */
+#define CI_CICERO_STARTED    0x00000200 /* Is Cicero started in the thread? */
+#define CI_TSFDISABLED       0x00000400 /* TSF (Text Services Framework a.k.a. Cicero) */
+#define CI_AIMMACTIVATED     0x00000800 /* Active IMM (AIMM) */
 
+/*
+ * CLIENTINFO structure.
+ * See also: https://reactos.org/wiki/Techwiki:Win32k/CLIENTINFO
+ */
 typedef struct _CLIENTINFO
 {
     ULONG_PTR CI_flags;
@@ -569,7 +605,7 @@ typedef struct _SBINFOEX
     SCROLLINFO ScrollInfo;
 } SBINFOEX, *PSBINFOEX;
 
-/* State Flags !Not Implemented! */
+/* State Flags !Not ALL Implemented! */
 #define WNDS_HASMENU                 0X00000001
 #define WNDS_HASVERTICALSCROOLLBAR   0X00000002
 #define WNDS_HASHORIZONTALSCROLLBAR  0X00000004
@@ -605,7 +641,7 @@ typedef struct _SBINFOEX
 
 #define WNDSACTIVEFRAME              0x00000006
 
-/* State2 Flags !Not Implemented! */
+/* State2 Flags !Not ALL Implemented! */
 #define WNDS2_WMPAINTSENT               0X00000001
 #define WNDS2_ENDPAINTINVALIDATE        0X00000002
 #define WNDS2_STARTPAINT                0X00000004
@@ -654,6 +690,10 @@ typedef struct _SBINFOEX
 #define WPF_MININIT 0x0008
 #define WPF_MAXINIT 0x0010
 
+/*
+ * WND structure.
+ * See also: https://reactos.org/wiki/Techwiki:Win32k/WND
+ */
 typedef struct _WND
 {
     THRDESKHEAD head;
@@ -726,6 +766,8 @@ typedef struct _WND
     PSBINFOEX pSBInfoex; // convert to PSBINFO
     /* Entry in the list of thread windows. */
     LIST_ENTRY ThreadListEntry;
+
+    PVOID DialogPointer;
 } WND, *PWND;
 
 #define PWND_BOTTOM ((PWND)1)
@@ -778,6 +820,9 @@ typedef struct _PFNCLIENT
     WNDPROC pfnDispatchDefWindowProc;
     WNDPROC pfnDispatchMessage;
     WNDPROC pfnMDIActivateDlgProc;
+#if (NTDDI_VERSION >= NTDDI_WIN10)
+    WNDPROC pfnFilteredProcessRedirectingWndProc;
+#endif
 } PFNCLIENT, *PPFNCLIENT;
 
 /*
@@ -850,10 +895,11 @@ typedef LONG_PTR
 #define FNID_TOOLTIPS               0x02B6
 #define FNID_SENDNOTIFYMESSAGE      0x02B7
 #define FNID_SENDMESSAGECALLBACK    0x02B8
-#define FNID_LAST                   0x02B9
 
-#define FNID_NUM FNID_LAST - FNID_FIRST + 1
-#define FNID_NUMSERVERPROC FNID_SWITCH - FNID_FIRST + 1
+#define FNID_LAST                   FNID_SENDMESSAGECALLBACK
+
+#define FNID_NUM                    (FNID_LAST - FNID_FIRST + 1)
+#define FNID_NUMSERVERPROC          (FNID_SWITCH - FNID_FIRST + 1)
 
 #define FNID_DDEML   0x2000 /* Registers DDEML */
 #define FNID_DESTROY 0x4000 /* This is sent when WM_NCDESTROY or in the support routine. */
@@ -909,7 +955,7 @@ typedef LONG_PTR
 #define SRVINFO_DBCSENABLED 0x0002
 #define SRVINFO_IMM32       0x0004
 #define SRVINFO_APIHOOK     0x0010
-#define SRVINFO_METRICS     0x0020
+#define SRVINFO_CTFIME_ENABLED 0x0020
 #define SRVINFO_KBDPREF     0x0080
 
 #define NUM_SYSCOLORS 31
@@ -957,6 +1003,10 @@ typedef struct tagDPISERVERINFO
 #define PUSIF_LISTBOXSMOOTHSCROLLING 0x08
 #define PUSIF_KEYBOARDCUES           0x20
 
+/*
+ * PERUSERSERVERINFO structure.
+ * See also: https://reactos.org/wiki/Techwiki:Win32k/SERVERINFO
+ */
 typedef struct _PERUSERSERVERINFO
 {
     INT aiSysMet[SM_CMETRICS];
@@ -999,6 +1049,10 @@ typedef struct _PERUSERSERVERINFO
     DWORD dwRIPFlags;
 } PERUSERSERVERINFO, *PPERUSERSERVERINFO;
 
+/*
+ * SERVERINFO structure.
+ * See also: https://reactos.org/wiki/Techwiki:Win32k/SERVERINFO
+ */
 typedef struct tagSERVERINFO
 {
     DWORD dwSRVIFlags;
@@ -1074,13 +1128,17 @@ typedef struct _WNDMSG
     PINT abMsgs;
 } WNDMSG, *PWNDMSG;
 
+/*
+ * SHAREDINFO structure.
+ * See also: https://reactos.org/wiki/Techwiki:Win32k/SHAREDINFO
+ */
 typedef struct _SHAREDINFO
 {
-    PSERVERINFO psi; /* global Server Info */
-    PVOID aheList; /* Handle Entry List */
-    PVOID pDispInfo; /* global PDISPLAYINFO pointer */
-    ULONG_PTR ulSharedDelta; /* Heap delta */
-    WNDMSG awmControl[FNID_LAST - FNID_FIRST];
+    PSERVERINFO psi;         /* Global Server Info */
+    PVOID aheList;           /* Handle Entry List */
+    PVOID pDispInfo;         /* Global PDISPLAYINFO pointer */
+    ULONG_PTR ulSharedDelta; /* Shared USER mapped section delta */
+    WNDMSG awmControl[FNID_NUM];
     WNDMSG DefWindowMsgs;
     WNDMSG DefWindowSpecMsgs;
 } SHAREDINFO, *PSHAREDINFO;
@@ -1155,32 +1213,14 @@ typedef struct tagCURSORDATA
 #define CURSORF_LINKED       0x0100
 #define CURSORF_CURRENT      0x0200
 
-typedef struct tagIMEINFOEX
-{
-    HKL hkl;
-    IMEINFO ImeInfo;
-    WCHAR wszUIClass[16];
-    ULONG fdwInitConvMode;
-    INT fInitOpen;
-    INT fLoadFlag;
-    DWORD dwProdVersion;
-    DWORD dwImeWinVersion;
-    WCHAR wszImeDescription[50];
-    WCHAR wszImeFile[80];
-    struct
-    {
-        INT fSysWow64Only:1;
-        INT fCUASLayer:1;
-    };
-} IMEINFOEX, *PIMEINFOEX;
+/* Flags for dwCompatFlags2 */
+#define COMPAT_FLAG_2_CICERO_DISABLED 2
 
-typedef enum IMEINFOEXCLASS
-{
-    ImeInfoExKeyboardLayout,
-    ImeInfoExImeFileName
-} IMEINFOEXCLASS;
-
-#define IS_IME_HKL(hkl) ((((ULONG_PTR)(hkl)) & 0xF0000000) == 0xE0000000)
+#define IS_IMM_MODE() (gpsi && (gpsi->dwSRVIFlags & SRVINFO_IMM32))
+#define IS_CICERO_MODE() (gpsi && (gpsi->dwSRVIFlags & SRVINFO_CTFIME_ENABLED))
+#define IS_16BIT_MODE() (GetWin32ClientInfo()->dwTIFlags & TIF_16BIT)
+#define IS_CICERO_COMPAT_DISABLED() \
+    (GetWin32ClientInfo()->dwCompatFlags2 & COMPAT_FLAG_2_CICERO_DISABLED)
 
 typedef struct tagIMEUI
 {
@@ -1189,7 +1229,7 @@ typedef struct tagIMEUI
     HWND hwndIMC;
     HKL hKL;
     HWND hwndUI;
-    INT nCntInIMEProc;
+    LONG nCntInIMEProc;
     struct {
         UINT fShowStatus:1;
         UINT fActivate:1;
@@ -1199,29 +1239,34 @@ typedef struct tagIMEUI
         UINT fCtrlShowStatus:1;
         UINT fFreeActiveEvent:1;
     };
+    DWORD dwLastStatus;
 } IMEUI, *PIMEUI;
 
-/* Window Extra data container. */
-typedef struct _IMEWND
+typedef struct tagIMEWND
 {
-    WND;
+    WND wnd;
     PIMEUI pimeui;
 } IMEWND, *PIMEWND;
+
+#define GWLP_IMEWND_PIMEUI 0
+
+/* IMEWND and GWLP_IMEWND_PIMEUI assume this alignment */
+C_ASSERT(sizeof(WND) % sizeof(PVOID) == 0);
 
 DWORD
 NTAPI
 NtUserAssociateInputContext(
-    DWORD dwUnknown1,
-    DWORD dwUnknown2,
-    DWORD dwUnknown3);
+    _In_ HWND hWnd,
+    _In_opt_ HIMC hIMC,
+    _In_ DWORD dwFlags);
 
-DWORD
+NTSTATUS
 NTAPI
 NtUserBuildHimcList(
-    DWORD dwUnknown1,
-    DWORD dwUnknown2,
-    DWORD dwUnknown3,
-    DWORD dwUnknown4);
+    _In_ DWORD dwThreadId,
+    _In_ DWORD dwCount,
+    _Out_ HIMC *phList,
+    _Out_ PDWORD pdwCount);
 
 DWORD
 NTAPI
@@ -1245,7 +1290,7 @@ NtUserCtxDisplayIOCtl(
     DWORD dwUnknown1,
     DWORD dwUnknown2,
     DWORD dwUnknown3);
-    
+
 DWORD
 APIENTRY
 NtUserDbgWin32HeapFail(
@@ -1391,17 +1436,17 @@ NtUserThunkedMenuItemInfo(
 BOOL
 NTAPI
 NtUserTrackPopupMenuEx(
-    HMENU hmenu,
-    UINT fuFlags,
-    int x,
-    int y,
-    HWND hwnd,
-    LPTPMPARAMS lptpm);
+    _In_ HMENU hMenu,
+    _In_ UINT fuFlags,
+    _In_ INT x,
+    _In_ INT y,
+    _In_ HWND hwnd,
+    _In_opt_ LPTPMPARAMS lptpm);
 
 HKL
 NTAPI
 NtUserActivateKeyboardLayout(
-    HKL hKl,
+    HKL hKL,
     ULONG Flags);
 
 DWORD
@@ -1447,9 +1492,9 @@ NtUserBuildHwndList(
     HWND hwndParent,
     BOOLEAN bChildren,
     ULONG dwThreadId,
-    ULONG lParam,
-    HWND *pWnd,
-    ULONG *pBufSize);
+    ULONG cHwnd,
+    HWND *phwndList,
+    ULONG *pcHwndNeeded);
 
 NTSTATUS
 NTAPI
@@ -1613,7 +1658,7 @@ enum SimpleCallRoutines
     HWNDLOCK_ROUTINE_SETSYSMENU,
     HWNDLOCK_ROUTINE_UPDATECKIENTRECT,
     HWNDLOCK_ROUTINE_UPDATEWINDOW,
-    X_ROUTINE_IMESHOWSTATUSCHANGE,
+    TWOPARAM_ROUTINE_IMESHOWSTATUSCHANGE,
     TWOPARAM_ROUTINE_ENABLEWINDOW,
     TWOPARAM_ROUTINE_REDRAWTITLE,
     TWOPARAM_ROUTINE_SHOWOWNEDPOPUPS,
@@ -1648,7 +1693,7 @@ enum SimpleCallRoutines
     TWOPARAM_ROUTINE_WOWCLEANUP
 };
 
-DWORD
+DWORD_PTR
 NTAPI
 NtUserCallHwnd(
     HWND hWnd,
@@ -1741,8 +1786,8 @@ NtUserCheckWindowThreadDesktop(
 DWORD
 NTAPI
 NtUserCheckImeHotKey(
-    DWORD dwUnknown1,
-    LPARAM dwUnknown2);
+    _In_ UINT uVirtualKey,
+    _In_ LPARAM lParam);
 
 HWND NTAPI
 NtUserChildWindowFromPointEx(
@@ -1832,10 +1877,9 @@ NtUserCreateDesktop(
     DWORD dwFlags,
     ACCESS_MASK dwDesiredAccess);
 
-DWORD
+HIMC
 NTAPI
-NtUserCreateInputContext(
-    DWORD dwUnknown1);
+NtUserCreateInputContext(_In_ ULONG_PTR dwClientImcData);
 
 NTSTATUS
 NTAPI
@@ -1927,20 +1971,19 @@ NtUserDestroyCursor(
   _In_ HANDLE Handle,
   _In_ BOOL bForce);
 
-DWORD
+BOOL
 NTAPI
-NtUserDestroyInputContext(
-    DWORD dwUnknown1);
+NtUserDestroyInputContext(_In_ HIMC hIMC);
 
 BOOLEAN
 NTAPI
 NtUserDestroyWindow(
     HWND Wnd);
 
-DWORD
+BOOL
 NTAPI
 NtUserDisableThreadIme(
-    DWORD dwUnknown1);
+    _In_ DWORD dwThreadID);
 
 LRESULT
 NTAPI
@@ -2028,7 +2071,7 @@ BOOL
 NTAPI
 NtUserEndDeferWindowPosEx(
     HDWP WinPosInfo,
-    DWORD Unknown1);
+    BOOL bAsync);
 
 BOOL
 NTAPI
@@ -2118,13 +2161,12 @@ NtUserGetAltTabInfo(
 HWND
 NTAPI
 NtUserGetAncestor(
-    HWND hWnd,
-    UINT Flags);
+    _In_ HWND hWnd,
+    _In_ UINT uType);
 
 DWORD
 NTAPI
-NtUserGetAppImeLevel(
-    DWORD dwUnknown1);
+NtUserGetAppImeLevel(_In_ HWND hWnd);
 
 SHORT
 NTAPI
@@ -2286,17 +2328,19 @@ NtUserGetIconSize(
     LONG *plcx,
     LONG *plcy);
 
-BOOL NTAPI
-NtUserGetImeHotKey(IN DWORD dwHotKey,
-                   OUT LPUINT lpuModifiers,
-                   OUT LPUINT lpuVKey,
-                   OUT LPHKL lphKL);
+BOOL
+NTAPI
+NtUserGetImeHotKey(
+    _In_ DWORD dwHotKeyId,
+    _Out_ PUINT lpuModifiers,
+    _Out_ PUINT lpuVirtualKey,
+    _Out_opt_ LPHKL lphKL);
 
 BOOL
 NTAPI
 NtUserGetImeInfoEx(
-    PIMEINFOEX pImeInfoEx,
-    IMEINFOEXCLASS SearchType);
+    _Inout_ PIMEINFOEX pImeInfoEx,
+    _In_ IMEINFOEXCLASS SearchType);
 
 DWORD
 NTAPI
@@ -2319,7 +2363,7 @@ NtUserGetKeyboardLayoutList(
 BOOL
 NTAPI
 NtUserGetKeyboardLayoutName(
-    LPWSTR lpszName);
+    _Inout_ PUNICODE_STRING pustrName);
 
 DWORD
 NTAPI
@@ -2449,19 +2493,27 @@ NtUserGetThreadDesktop(
 
 enum ThreadStateRoutines
 {
-    THREADSTATE_GETTHREADINFO,
-    THREADSTATE_INSENDMESSAGE,
-    THREADSTATE_FOCUSWINDOW,
+    THREADSTATE_FOCUSWINDOW = 0,
     THREADSTATE_ACTIVEWINDOW,
     THREADSTATE_CAPTUREWINDOW,
-    THREADSTATE_PROGMANWINDOW,
-    THREADSTATE_TASKMANWINDOW,
-    THREADSTATE_GETMESSAGETIME,
+    THREADSTATE_DEFAULTIMEWINDOW,
+    THREADSTATE_DEFAULTINPUTCONTEXT,
     THREADSTATE_GETINPUTSTATE,
-    THREADSTATE_UPTIMELASTREAD,
-    THREADSTATE_FOREGROUNDTHREAD,
     THREADSTATE_GETCURSOR,
-    THREADSTATE_GETMESSAGEEXTRAINFO
+    THREADSTATE_CHANGEBITS,
+    THREADSTATE_UPTIMELASTREAD,
+    THREADSTATE_GETMESSAGEEXTRAINFO,
+    THREADSTATE_INSENDMESSAGE,
+    THREADSTATE_GETMESSAGETIME,
+    THREADSTATE_FOREGROUNDTHREAD,
+    THREADSTATE_IMECOMPATFLAGS,
+    THREADSTATE_OLDKEYBOARDLAYOUT,
+    THREADSTATE_ISWINLOGON,
+    THREADSTATE_UNKNOWN_0x10,
+    THREADSTATE_CHECKCONIME,
+    THREADSTATE_GETTHREADINFO,
+    THREADSTATE_PROGMANWINDOW, /* FIXME: Delete this HACK */
+    THREADSTATE_TASKMANWINDOW, /* FIXME: Delete this HACK */
 };
 
 DWORD_PTR
@@ -2585,12 +2637,12 @@ NtUserKillTimer(
 HKL
 NTAPI
 NtUserLoadKeyboardLayoutEx(
-    IN HANDLE Handle,
+    IN HANDLE hFile,
     IN DWORD offTable,
-    IN PUNICODE_STRING puszKeyboardName,
-    IN HKL hKL,
+    IN PVOID pTables,
+    IN HKL hOldKL,
     IN PUNICODE_STRING puszKLID,
-    IN DWORD dwKLID,
+    IN DWORD dwNewKL,
     IN UINT Flags);
 
 BOOL
@@ -2671,9 +2723,9 @@ NtUserMoveWindow(
 DWORD
 NTAPI
 NtUserNotifyIMEStatus(
-    DWORD Unknown0,
-    DWORD Unknown1,
-    DWORD Unknown2);
+    _In_ HWND hwnd,
+    _In_ BOOL fOpen,
+    _In_ DWORD dwConversion);
 
 BOOL
 NTAPI
@@ -2729,7 +2781,7 @@ NtUserPaintMenuBar(
     HDC hDC,
     ULONG left,    // x,
     ULONG right,   // width, // Scale the edge thickness, offset?
-    ULONG top,     // y, 
+    ULONG top,     // y,
     BOOL bActive); // DWORD Flags); DC_ACTIVE or WS_ACTIVECAPTION, by checking WNDS_ACTIVEFRAME and foreground.
 
 BOOL
@@ -2779,11 +2831,11 @@ NtUserQueryInformationThread(
     OUT PVOID ThreadInformation,
     IN ULONG ThreadInformationLength);
 
-DWORD
+DWORD_PTR
 NTAPI
 NtUserQueryInputContext(
-    DWORD dwUnknown1,
-    DWORD dwUnknown2);
+    HIMC hIMC,
+    DWORD dwType);
 
 DWORD
 NTAPI
@@ -2976,11 +3028,11 @@ NTAPI
 NtUserSetActiveWindow(
     HWND Wnd);
 
-DWORD
+BOOL
 NTAPI
 NtUserSetAppImeLevel(
-    DWORD dwUnknown1,
-    DWORD dwUnknown2);
+    HWND hWnd,
+    DWORD dwLevel);
 
 HWND
 NTAPI
@@ -2990,11 +3042,22 @@ NtUserSetCapture(
 ULONG_PTR
 NTAPI
 NtUserSetClassLong(
-    HWND hWnd,
-    INT Offset,
-    ULONG_PTR dwNewLong,
-    BOOL Ansi);
+    _In_ HWND hWnd,
+    _In_ INT Offset,
+    _In_ ULONG dwNewLong,
+    _In_ BOOL Ansi);
 
+#ifdef _WIN64
+
+ULONG_PTR
+APIENTRY
+NtUserSetClassLongPtr(
+    _In_ HWND hWnd,
+    _In_ INT Offset,
+    _In_ ULONG_PTR dwNewLong,
+    _In_ BOOL Ansi);
+
+#endif // _WIN64
 WORD
 NTAPI
 NtUserSetClassWord(
@@ -3065,7 +3128,7 @@ NTAPI
 NtUserSetDbgTag(
     DWORD Unknown0,
     DWORD Unknown1);
-    
+
 DWORD
 APIENTRY
 NtUserSetDbgTagCount(
@@ -3076,25 +3139,23 @@ NTAPI
 NtUserSetFocus(
     HWND hWnd);
 
-DWORD
+BOOL
 NTAPI
 NtUserSetImeHotKey(
-    DWORD Unknown0,
-    DWORD Unknown1,
-    DWORD Unknown2,
-    DWORD Unknown3,
-    DWORD Unknown4);
+    _In_ DWORD dwHotKeyId,
+    _In_ UINT uModifiers,
+    _In_ UINT uVirtualKey,
+    _In_opt_ HKL hKL,
+    _In_ DWORD dwAction);
 
-DWORD
+BOOL
 NTAPI
 NtUserSetImeInfoEx(
-    PIMEINFOEX pImeInfoEx);
+    _In_ const IMEINFOEX *pImeInfoEx);
 
-DWORD
+BOOL
 NTAPI
-NtUserSetImeOwnerWindow(
-    DWORD Unknown0,
-    DWORD Unknown1);
+NtUserSetImeOwnerWindow(_In_ HWND hImeWnd, _In_opt_ HWND hwndFocus);
 
 DWORD
 NTAPI
@@ -3219,8 +3280,8 @@ NtUserSetSystemTimer(
 DWORD
 NTAPI
 NtUserSetThreadLayoutHandles(
-    DWORD dwUnknown1,
-    DWORD dwUnknown2);
+    _In_ HKL hNewKL,
+    _In_ HKL hOldKL);
 
 UINT_PTR
 NTAPI
@@ -3252,6 +3313,8 @@ NtUserSetWindowLongPtr(
     DWORD Index,
     LONG_PTR NewValue,
     BOOL Ansi);
+#else
+#define NtUserSetWindowLongPtr NtUserSetWindowLong
 #endif // _WIN64
 
 BOOL
@@ -3439,12 +3502,12 @@ BOOL
 NTAPI
 NtUserUnregisterUserApiHook(VOID);
 
-DWORD
+BOOL
 NTAPI
 NtUserUpdateInputContext(
-    DWORD Unknown0,
-    DWORD Unknown1,
-    DWORD Unknown2);
+    HIMC hIMC,
+    DWORD dwType,
+    DWORD_PTR dwValue);
 
 DWORD
 NTAPI
@@ -3476,9 +3539,9 @@ NtUserUpdatePerUserSystemParameters(
 BOOL
 NTAPI
 NtUserUserHandleGrantAccess(
-    IN HANDLE hUserHandle,
-    IN HANDLE hJob,
-    IN BOOL bGrant);
+    _In_ HANDLE hUserHandle,
+    _In_ HANDLE hJob,
+    _In_ BOOL bGrant);
 
 BOOL
 NTAPI
@@ -3571,20 +3634,20 @@ NtUserGetMonitorInfo(
 HMONITOR
 NTAPI
 NtUserMonitorFromPoint(
-    IN POINT point,
-    IN DWORD dwFlags);
+    _In_ POINT point,
+    _In_ DWORD dwFlags);
 
 HMONITOR
 NTAPI
 NtUserMonitorFromRect(
-    IN LPCRECT pRect,
-    IN DWORD dwFlags);
+    _In_ LPCRECT pRect,
+    _In_ DWORD dwFlags);
 
 HMONITOR
 NTAPI
 NtUserMonitorFromWindow(
-    IN HWND hWnd,
-    IN DWORD dwFlags);
+    _In_ HWND hWnd,
+    _In_ DWORD dwFlags);
 
 typedef struct _SETSCROLLBARINFO
 {
@@ -3599,6 +3662,9 @@ NtUserSetScrollBarInfo(
     HWND hwnd,
     LONG idObject,
     SETSCROLLBARINFO *info);
+
+ULONG
+RtlGetExpWinVer(_In_ PVOID BaseAddress);
 
 #endif /* __WIN32K_NTUSER_H */
 

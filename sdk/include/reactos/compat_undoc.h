@@ -9,6 +9,10 @@ typedef struct _ReactOS_ShimData
     DWORD dwMagic;
     DWORD dwReserved2[242];
     DWORD dwRosProcessCompatVersion;
+
+#ifdef _M_AMD64
+    PVOID RtlGetCurrentDirectory_U_RtlpMsysDecoy;
+#endif
 } ReactOS_ShimData;
 
 
@@ -34,5 +38,24 @@ DWORD RosGetProcessCompatVersion(VOID)
     return g_CompatVersion < REACTOS_COMPATVERSION_UNINITIALIZED ? g_CompatVersion : 0;
 }
 
+static
+inline
+UINT RosGetProcessEffectiveVersion(VOID)
+{
+    PPEB peb = NtCurrentPeb();
+    UINT shimVer = RosGetProcessCompatVersion();
+    if (shimVer)
+        return shimVer;
+    else
+        return (peb->OSMajorVersion << 8) | (peb->OSMinorVersion);
+}
+
+BOOL
+WINAPI
+BaseCheckAppcompatCache(
+    _In_ PCWSTR ApplicationName,
+    _In_ HANDLE FileHandle,
+    _In_opt_ PCWSTR Environment,
+    _Out_opt_ PULONG pdwReason);
 
 #endif // COMPAT_UNDOC_H

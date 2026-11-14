@@ -23,12 +23,12 @@
 
 typedef struct tagOperatingSystemItem
 {
-    ULONG_PTR SectionId;
-    PCSTR LoadIdentifier;
+    ULONG_PTR SectionId;        //< Boot entry ID
+    PCSTR LoadIdentifier;       //< Boot entry identifier
+    CHAR AdvBootOptsDesc[260];  //< Per-OS human-readable boot-option descriptions.
 } OperatingSystemItem;
 
 OperatingSystemItem*
 InitOperatingSystemList(
-    IN ULONG_PTR FrLdrSectionId,
-    OUT PULONG OperatingSystemCount,
-    OUT PULONG DefaultOperatingSystem);
+    _Out_ PULONG OperatingSystemCount,
+    _Out_ PULONG DefaultOperatingSystem);

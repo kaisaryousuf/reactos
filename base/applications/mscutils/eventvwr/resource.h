@@ -1,3 +1,12 @@
+/*
+ * PROJECT:     ReactOS Event Log Viewer
+ * LICENSE:     GPL-2.0-or-later (https://spdx.org/licenses/GPL-2.0-or-later)
+ * PURPOSE:     Resources header.
+ * COPYRIGHT:   Copyright 2007 Marc Piulachs <marc.piulachs@codexchange.net>
+ *              Copyright 2008-2016 Eric Kohl <eric.kohl@reactos.org>
+ *              Copyright 2016-2022 Hermès Bélusca-Maïto <hermes.belusca-maito@reactos.org>
+ */
+
 #pragma once
 
 /* Icon IDs */
@@ -41,7 +50,7 @@
 #define IDC_EVENTTEXTEDIT       1011
 #define IDC_DETAILS_STATIC      -2
 #define IDC_BYTESRADIO          1012
-#define IDC_WORDRADIO           1013
+#define IDC_WORDSRADIO          1013
 #define IDC_EVENTDATAEDIT       1014
 #define IDC_DISPLAYNAME         1015
 #define IDC_LOGNAME             1016
@@ -79,6 +88,7 @@
 #define IDM_SAVE_SETTINGS       32784
 #define IDM_HELP                32785
 #define IDM_ABOUT               32786
+#define IDM_EVENTWR_CTX         32787
 
 
 /* String IDs */
@@ -95,6 +105,8 @@
 #define IDS_CLEAREVENTS_MSG             110
 #define IDS_EVENTSTRINGIDNOTFOUND       111
 #define IDS_RESTOREDEFAULTS             112
+#define IDS_CONTFROMBEGINNING           113
+#define IDS_CONTFROMEND                 114
 
 #define IDS_USAGE                       120
 #define IDS_EVENTLOGFILE                121
@@ -118,7 +130,16 @@
 #define IDS_COLUMNUSER      226
 #define IDS_COLUMNCOMPUTER  227
 
-#define IDS_COPY            240
+#define IDS_COPY_EVTTYPE    240
+#define IDS_COPY_EVTSRC     241
+#define IDS_COPY_EVTCAT     242
+#define IDS_COPY_EVTID      243
+#define IDS_COPY_EVTDATE    244
+#define IDS_COPY_EVTTIME    245
+#define IDS_COPY_EVTUSER    246
+#define IDS_COPY_EVTCOMP    247
+#define IDS_COPY_EVTTEXT    248
+#define IDS_COPY_EVTDATA    249
 
 #define IDS_NONE            250
 #define IDS_NOT_AVAILABLE   251

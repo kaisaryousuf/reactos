@@ -39,7 +39,7 @@
 #include <debug.h>
 
 /* List of supported OIDs */
-static ULONG MiniportOIDList[] =
+static const NDIS_OID MiniportOIDList[] =
 {
   OID_GEN_SUPPORTED_LIST,
   OID_GEN_HARDWARE_STATUS,
@@ -76,10 +76,11 @@ static ULONG MiniportOIDList[] =
   OID_802_3_MAC_OPTIONS,
   OID_802_3_RCV_ERROR_ALIGNMENT,
   OID_802_3_XMIT_ONE_COLLISION,
-  OID_802_3_XMIT_MORE_COLLISIONS
+  OID_802_3_XMIT_MORE_COLLISIONS,
+  OID_GEN_PHYSICAL_MEDIUM
 };
 
-
+
 NDIS_STATUS
 NTAPI
 MiniportQueryInformation(
@@ -109,7 +110,7 @@ MiniportQueryInformation(
  */
 {
   NDIS_STATUS Status;
-  PVOID CopyFrom;
+  const VOID* CopyFrom;
   UINT CopySize;
   ULONG GenericULONG;
   PADAPTER Adapter = (PADAPTER)MiniportAdapterContext;
@@ -128,7 +129,7 @@ MiniportQueryInformation(
     {
     case OID_GEN_SUPPORTED_LIST:
         {
-          CopyFrom = (PVOID)&MiniportOIDList;
+          CopyFrom = MiniportOIDList;
           CopySize = sizeof(MiniportOIDList);
           break;
         }
@@ -211,7 +212,7 @@ MiniportQueryInformation(
 
     case OID_GEN_VENDOR_DESCRIPTION:
         {
-          static UCHAR VendorDesc[] = "ReactOS Team";
+          static const CHAR VendorDesc[] = "AMD PCNet Ethernet Adapter";
           CopyFrom = VendorDesc;
           CopySize = sizeof(VendorDesc);
           break;
@@ -335,9 +336,13 @@ MiniportQueryInformation(
         GenericULONG = Adapter->Statistics.XmtMoreThanOneRetry;
         break;
 
+    case OID_GEN_PHYSICAL_MEDIUM:
+        GenericULONG = NdisPhysicalMedium802_3;
+        break;
+
     default:
         {
-          DPRINT1("Unknown OID\n");
+          DPRINT1("Unknown OID 0x%x\n", Oid);
           Status = NDIS_STATUS_NOT_SUPPORTED;
           break;
         }

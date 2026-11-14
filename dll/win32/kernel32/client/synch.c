@@ -343,35 +343,11 @@ CreateWaitableTimerW(IN LPSECURITY_ATTRIBUTES lpTimerAttributes OPTIONAL,
  */
 HANDLE
 WINAPI
-CreateWaitableTimerA(IN LPSECURITY_ATTRIBUTES lpTimerAttributes OPTIONAL,
-                     IN BOOL bManualReset,
-                     IN LPCSTR lpTimerName OPTIONAL)
-{
-    ConvertWin32AnsiObjectApiToUnicodeApi(WaitableTimer, lpTimerName, lpTimerAttributes, bManualReset);
-}
-
-/*
- * @implemented
- */
-HANDLE
-WINAPI
 OpenWaitableTimerW(IN DWORD dwDesiredAccess,
                    IN BOOL bInheritHandle,
                    IN LPCWSTR lpTimerName)
 {
     OpenNtObjectFromWin32Api(Timer, dwDesiredAccess, bInheritHandle, lpTimerName);
-}
-
-/*
- * @implemented
- */
-HANDLE
-WINAPI
-OpenWaitableTimerA(IN DWORD dwDesiredAccess,
-                   IN BOOL bInheritHandle,
-                   IN LPCSTR lpTimerName)
-{
-    ConvertOpenWin32AnsiObjectApiToUnicodeApi(WaitableTimer, dwDesiredAccess, bInheritHandle, lpTimerName);
 }
 
 /*
@@ -427,20 +403,6 @@ CancelWaitableTimer(IN HANDLE hTimer)
 HANDLE
 WINAPI
 DECLSPEC_HOTPATCH
-CreateSemaphoreA(IN LPSECURITY_ATTRIBUTES lpSemaphoreAttributes  OPTIONAL,
-                 IN LONG lInitialCount,
-                 IN LONG lMaximumCount,
-                 IN LPCSTR lpName  OPTIONAL)
-{
-    ConvertWin32AnsiObjectApiToUnicodeApi(Semaphore, lpName, lpSemaphoreAttributes, lInitialCount, lMaximumCount);
-}
-
-/*
- * @implemented
- */
-HANDLE
-WINAPI
-DECLSPEC_HOTPATCH
 CreateSemaphoreW(IN LPSECURITY_ATTRIBUTES lpSemaphoreAttributes  OPTIONAL,
                  IN LONG lInitialCount,
                  IN LONG lMaximumCount,
@@ -481,7 +443,7 @@ CreateSemaphoreExA(IN LPSECURITY_ATTRIBUTES lpSemaphoreAttributes OPTIONAL,
                    IN DWORD dwDesiredAccess OPTIONAL)
 {
     ConvertAnsiToUnicodePrologue
-    
+
     if (!lpName)
     {
         return CreateSemaphoreExW(lpSemaphoreAttributes,
@@ -505,19 +467,6 @@ CreateSemaphoreExA(IN LPSECURITY_ATTRIBUTES lpSemaphoreAttributes OPTIONAL,
     }
 
     ConvertAnsiToUnicodeEpilogue
-}
-
-/*
- * @implemented
- */
-HANDLE
-WINAPI
-DECLSPEC_HOTPATCH
-OpenSemaphoreA(IN DWORD dwDesiredAccess,
-               IN BOOL bInheritHandle,
-               IN LPCSTR lpName)
-{
-    ConvertOpenWin32AnsiObjectApiToUnicodeApi(Semaphore, dwDesiredAccess, bInheritHandle, lpName);
 }
 
 /*
@@ -581,19 +530,6 @@ CreateMutexW(IN LPSECURITY_ATTRIBUTES lpMutexAttributes  OPTIONAL,
                                lpMutexAttributes,
                                lpName,
                                bInitialOwner);
-}
-
-/*
- * @implemented
- */
-HANDLE
-WINAPI
-DECLSPEC_HOTPATCH
-OpenMutexA(IN DWORD dwDesiredAccess,
-           IN BOOL bInheritHandle,
-           IN LPCSTR lpName)
-{
-    ConvertOpenWin32AnsiObjectApiToUnicodeApi(Mutex, dwDesiredAccess, bInheritHandle, lpName);
 }
 
 /*
@@ -834,7 +770,7 @@ SleepEx(IN DWORD dwMilliseconds,
         errCode = NtDelayExecution((BOOLEAN)bAlertable, TimePtr);
     }
     while ((bAlertable) && (errCode == STATUS_ALERTED));
-    
+
     /* Cleanup the activation context */
     if (bAlertable) RtlDeactivateActivationContextUnsafeFast(&ActCtx);
 

@@ -292,7 +292,7 @@ Severity=Success
 Facility=System
 SymbolicName=CREATE_DELETE_LOCK_NOT_LOCKED
 Language=English
-The thread reaper was handed a thread to reap, but the thread's process'
+CREATE_DELETE_LOCK_NOT_LOCKED
 .
 
 MessageId=0x15
@@ -1179,6 +1179,14 @@ Language=English
 WIN32K_INIT_OR_RIT_FAILURE
 .
 
+MessageId=0x92
+Severity=Success
+Facility=System
+SymbolicName=UP_DRIVER_ON_MP_SYSTEM
+Language=English
+UP_DRIVER_ON_MP_SYSTEM
+.
+
 MessageId=0x93
 Severity=Success
 Facility=System
@@ -1215,6 +1223,14 @@ If this is the first time you have seen this error screen, read
 <http://www.gnu.org/philosophy/free-sw.html>.
 
 If problems continue, remove all nonfree software from your computer.
+.
+
+MessageId=0x9F
+Severity=Success
+Facility=System
+SymbolicName=DRIVER_POWER_STATE_FAILURE
+Language=English
+DRIVER_POWER_STATE_FAILURE
 .
 
 MessageId=0xA0
@@ -1596,6 +1612,14 @@ Facility=System
 SymbolicName=POWER_FAILURE_SIMULATE
 Language=English
 POWER_FAILURE_SIMULATE
+.
+
+MessageId=0xE7
+Severity=Success
+Facility=System
+SymbolicName=INVALID_FLOATING_POINT_STATE
+Language=English
+INVALID_FLOATING_POINT_STATE
 .
 
 MessageId=0xE8

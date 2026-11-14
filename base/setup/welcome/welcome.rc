@@ -55,11 +55,17 @@ END
 #ifdef LANGUAGE_ET_EE
     #include "lang/et-EE.rc"
 #endif
+#ifdef LANGUAGE_EU_ES
+    #include "lang/eu-ES.rc"
+#endif
 #ifdef LANGUAGE_FR_FR
     #include "lang/fr-FR.rc"
 #endif
 #ifdef LANGUAGE_HE_IL
     #include "lang/he-IL.rc"
+#endif
+#ifdef LANGUAGE_HR_HR
+    #include "lang/hr-HR.rc"
 #endif
 #ifdef LANGUAGE_HI_IN
     #include "lang/hi-IN.rc"
@@ -121,8 +127,14 @@ END
 #ifdef LANGUAGE_UK_UA
     #include "lang/uk-UA.rc"
 #endif
+#ifdef LANGUAGE_VI_VN
+    #include "lang/vi-VN.rc"
+#endif
 #ifdef LANGUAGE_ZH_CN
     #include "lang/zh-CN.rc"
+#endif
+#ifdef LANGUAGE_ZH_HK
+    #include "lang/zh-HK.rc"
 #endif
 #ifdef LANGUAGE_ZH_TW
     #include "lang/zh-TW.rc"

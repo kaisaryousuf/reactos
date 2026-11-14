@@ -61,7 +61,7 @@ GetVolumeNameForRoot(IN LPCWSTR lpszRootPath,
     {
         if (NtPathName.Buffer[(NtPathName.Length / sizeof(WCHAR)) - 1] == L':')
         {
-            NtPathName.Buffer[(NtPathName.Length / sizeof(WCHAR)) - 2] = _toupper(NtPathName.Buffer[(NtPathName.Length / sizeof(WCHAR)) - 2]);
+            NtPathName.Buffer[(NtPathName.Length / sizeof(WCHAR)) - 2] = towupper(NtPathName.Buffer[(NtPathName.Length / sizeof(WCHAR)) - 2]);
         }
     }
 
@@ -206,7 +206,7 @@ GetVolumeNameForRoot(IN LPCWSTR lpszRootPath,
             /* Make a string of it, to easy the checks */
             SymbolicLink.Length = MountPoints->MountPoints[CurrentMntPt].SymbolicLinkNameLength;
             SymbolicLink.MaximumLength = SymbolicLink.Length;
-            SymbolicLink.Buffer = (PVOID)((ULONG_PTR)&MountPoints->MountPoints[CurrentMntPt] + MountPoints->MountPoints[CurrentMntPt].SymbolicLinkNameOffset);
+            SymbolicLink.Buffer = (PVOID)((ULONG_PTR)MountPoints + MountPoints->MountPoints[CurrentMntPt].SymbolicLinkNameOffset);
             /* If that's a NT volume name (GUID form), keep it! */
             if (MOUNTMGR_IS_NT_VOLUME_NAME(&SymbolicLink))
             {
@@ -362,7 +362,7 @@ BasepGetVolumeNameFromReparsePoint(IN LPCWSTR lpszMountPoint,
 
     /* Copy the link target */
     RtlCopyMemory(lpszVolumeName,
-                  &ReparseBuffer->MountPointReparseBuffer.PathBuffer[ReparseBuffer->MountPointReparseBuffer.SubstituteNameOffset / sizeof(WCHAR)], 
+                  &ReparseBuffer->MountPointReparseBuffer.PathBuffer[ReparseBuffer->MountPointReparseBuffer.SubstituteNameOffset / sizeof(WCHAR)],
                   ReparseBuffer->MountPointReparseBuffer.SubstituteNameLength);
     /* Make it DOS valid */
     Old = lpszVolumeName[1];
@@ -452,7 +452,7 @@ BasepGetVolumeNameForVolumeMountPoint(IN LPCWSTR lpszMountPoint,
         if (!Ret)
         {
             /* It was a DOS volume as UNC name, so fail and zero output */
-            if (MountPoint.Length == 14 && MountPoint.Buffer[0] == '\\' && MountPoint.Buffer[1] == '\\' && 
+            if (MountPoint.Length == 14 && MountPoint.Buffer[0] == '\\' && MountPoint.Buffer[1] == '\\' &&
                 (MountPoint.Buffer[2] == '.' || MountPoint.Buffer[2] == '?') && MountPoint.Buffer[3] == L'\\' &&
                 MountPoint.Buffer[5] == ':')
             {
@@ -506,71 +506,6 @@ GetVolumeNameForVolumeMountPointW(IN LPCWSTR VolumeMountPoint,
     {
         VolumeName[0] = UNICODE_NULL;
     }
-
-    return Ret;
-}
-
-/*
- * @implemented
- */
-BOOL
-WINAPI
-GetVolumeNameForVolumeMountPointA(IN LPCSTR lpszVolumeMountPoint,
-                                  IN LPSTR lpszVolumeName,
-                                  IN DWORD cchBufferLength)
-{
-    BOOL Ret;
-    ANSI_STRING VolumeName;
-    UNICODE_STRING VolumeNameU;
-    PUNICODE_STRING VolumeMountPointU;
-
-    /* Convert mount point to unicode */
-    VolumeMountPointU = Basep8BitStringToStaticUnicodeString(lpszVolumeMountPoint);
-    if (VolumeMountPointU == NULL)
-    {
-        return FALSE;
-    }
-
-    /* Initialize the strings we'll use for convention */
-    VolumeName.Buffer = lpszVolumeName;
-    VolumeName.Length = 0;
-    VolumeName.MaximumLength = cchBufferLength - 1;
-
-    VolumeNameU.Length = 0;
-    VolumeNameU.MaximumLength = (cchBufferLength - 1) * sizeof(WCHAR) + sizeof(UNICODE_NULL);
-    /* Allocate a buffer big enough to contain the returned name */
-    VolumeNameU.Buffer = RtlAllocateHeap(RtlGetProcessHeap(), 0, VolumeNameU.MaximumLength);
-    if (VolumeNameU.Buffer == NULL)
-    {
-        SetLastError(ERROR_NOT_ENOUGH_MEMORY);
-        return FALSE;
-    }
-
-    /* Query -W */
-    Ret = GetVolumeNameForVolumeMountPointW(VolumeMountPointU->Buffer, VolumeNameU.Buffer, cchBufferLength);
-    /* If it succeed, perform -A conversion */
-    if (Ret)
-    {
-        NTSTATUS Status;
-
-        /* Reinit our string for length */
-        RtlInitUnicodeString(&VolumeNameU, VolumeNameU.Buffer);
-        /* Convert to ANSI */
-        Status = RtlUnicodeStringToAnsiString(&VolumeName, &VolumeNameU, FALSE);
-        /* If conversion failed, force failure, otherwise, just null terminate */
-        if (!NT_SUCCESS(Status))
-        {
-            Ret = FALSE;
-            BaseSetLastNTError(Status);
-        }
-        else
-        {
-            VolumeName.Buffer[VolumeName.Length] = ANSI_NULL;
-        }
-    }
-
-    /* Internal buffer no longer needed */
-    RtlFreeHeap(RtlGetProcessHeap(), 0, VolumeNameU.Buffer);
 
     return Ret;
 }

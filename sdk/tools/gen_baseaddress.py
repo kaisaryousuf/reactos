@@ -15,6 +15,9 @@ Specify the build output dir as commandline argument to the script:
 
 Multiple directories can be specified:
 `python gen_baseaddress r:/build/msvc r:/build/gcc`
+
+Specify -64 as first argument to use 64-bit addresses:
+`python gen_baseaddress -64 r:\\build\\msvc-x64`
 """
 
 import os
@@ -29,16 +32,23 @@ except ImportError:
 
 
 ALL_EXTENSIONS = (
-    '.dll', '.acm', '.ax', '.cpl', '.drv', '.ocx'
+    '.dll', '.acm', '.ax', '.cpl', '.drv', '.ocx', '.ime'
 )
 
 PRIORITIES = (
     'ntdll.dll',
+    'ntdll_vista.dll',
     'kernel32.dll',
+    'kernel32_vista.dll',
+    'kernelbase_ros.dll',
     'msvcrt.dll',
+    'ucrtbase.dll',
     'advapi32.dll',
+    'advapi32_vista.dll',
     'gdi32.dll',
+    'gdi32_vista.dll',
     'user32.dll',
+    'user32_vista.dll',
     'dhcpcsvc.dll',
     'dnsapi.dll',
     'icmp.dll',
@@ -77,7 +87,6 @@ PRIORITIES = (
     'glu32.dll',
     'opengl32.dll',
     'riched20.dll',
-    'smdll.dll',
     'userenv.dll',
     'uxtheme.dll',
     'cryptui.dll',
@@ -103,14 +112,20 @@ EXCLUDE = (
     'bmfd.dll',
     'bootvid.dll',
     'framebuf.dll',
-    'framebuf_new.dll',
     'ftfd.dll',
-    'fusion.dll',
     'genincdata.dll',
     'hal.dll',
     'halaacpi.dll',
     'halacpi.dll',
     'halapic.dll',
+    'halmacpi.dll',
+    'halmp.dll',
+    'halpc98.dll',
+    'halxbox.dll',
+    'kbd101.dll',
+    'kbd101a.dll',
+    'kbd106.dll',
+    'kbd106n.dll',
     'kbda1.dll',
     'kbda2.dll',
     'kbda3.dll',
@@ -125,22 +140,28 @@ EXCLUDE = (
     'kbdbgt.dll',
     'kbdblr.dll',
     'kbdbr.dll',
+    'kbdbu.dll',
     'kbdbur.dll',
     'kbdcan.dll',
+    'kbdcmk.dll',
     'kbdcr.dll',
     'kbdcz.dll',
     'kbdcz1.dll',
     'kbdda.dll',
     'kbddv.dll',
+    'kbdeo.dll',
     'kbdes.dll',
     'kbdest.dll',
     'kbdfc.dll',
     'kbdfi.dll',
+    'kbdfo.dll',
     'kbdfr.dll',
     'kbdgeo.dll',
     'kbdgerg.dll',
     'kbdgneo.dll',
     'kbdgr.dll',
+    'kbdgr1.dll',
+    'kbdgre1.dll',
     'kbdgrist.dll',
     'kbdhe.dll',
     'kbdheb.dll',
@@ -154,23 +175,34 @@ EXCLUDE = (
     'kbdir.dll',
     'kbdit.dll',
     'kbdja.dll',
+    'kbdjpn.dll',
     'kbdkaz.dll',
     'kbdko.dll',
+    'kbdkor.dll',
     'kbdla.dll',
     'kbdlt1.dll',
     'kbdlv.dll',
     'kbdmac.dll',
     'kbdne.dll',
+    'kbdnec.dll',
+    'kbdnec95.dll',
+    'kbdnecat.dll',
+    'kbdnecnt.dll',
     'kbdno.dll',
     'kbdpl.dll',
     'kbdpl1.dll',
     'kbdpo.dll',
     'kbdro.dll',
+    'kbdrost.dll',
     'kbdru.dll',
     'kbdru1.dll',
+    'kbdsf.dll',
     'kbdsg.dll',
     'kbdsk.dll',
     'kbdsk1.dll',
+    'kbdsl.dll',
+    'kbdsl1.dll',
+    'kbdsp.dll',
     'kbdsw.dll',
     'kbdtat.dll',
     'kbdth0.dll',
@@ -192,15 +224,37 @@ EXCLUDE = (
     'kbdycc.dll',
     'kbdycl.dll',
     'kdcom.dll',
+    'kdgdb.dll',
+    'kdstub.dll',
     'kdvbox.dll',
+    'lfbbvid.dll',
+    'pc98bvid.dll',
     'vgaddi.dll',
+    'xboxbvid.dll',
+    'custom.dll',
     'dllexport_test_dll1.dll',
     'dllexport_test_dll2.dll',
     'dllimport_test.dll',
+    'dummy.dll',
+    'empty_dll.dll',
+    'image.dll',
+    'imagehlp_testdll.dll',
+    'load_notifications.dll',
+    'localspl_apitest.dll',
+    'msvcrt_crt_dll_startup.dll',
     'MyEventProvider.dll',
-    'w32kdll_2k3sp2.dll',
-    'w32kdll_ros.dll',
-    'w32kdll_xpsp2.dll',
+    'ole32_testlib.dll',
+    'redirtest1.dll',
+    'redirtest2.dll',
+    'selfreg.dll',
+    'shlwapi_resource_dll.dll',
+    'testvdd.dll',
+    'threaddll.dll',
+    'win32u_2k3sp2.dll',
+    'win32u_vista.dll',
+    'win32u_xpsp2.dll',
+    'wine.combase.test.dll',
+    'wlntfytests.dll',
 )
 
 IMAGE_NT_OPTIONAL_HDR32_MAGIC = 0x10b
@@ -211,10 +265,11 @@ IMAGE_TYPES = {
     IMAGE_NT_OPTIONAL_HDR64_MAGIC: 0
 }
 
-def is_x64():
-    return IMAGE_TYPES[IMAGE_NT_OPTIONAL_HDR64_MAGIC] > IMAGE_TYPES[IMAGE_NT_OPTIONAL_HDR32_MAGIC]
+IS_64_BIT = False
 
 def size_of_image(filename):
+    if IS_64_BIT:
+        return 0xFE0000 # This results in 0x1000000 / 16MB space
     with open(filename, 'rb') as fin:
         if fin.read(2) != b'MZ':
             print(filename, 'No dos header found!')
@@ -285,7 +340,7 @@ class MemoryLayout(object):
 
     def _next_address(self, size):
         if self.start_at:
-            addr = (self.start_at - size - self.module_padding - 0xffff) & 0xffff0000
+            addr = (self.start_at - size - self.module_padding - 0xffff) & 0xffffffffffff0000
             self.start_at = addr
         else:
             addr = self.start_at = self.initial
@@ -339,10 +394,10 @@ def get_target_file(ntdll_path):
         ntdll_pe = pefile.PE(ntdll_path, fast_load=True)
         names = [sect.Name.strip(b'\0') for sect in ntdll_pe.sections]
         count = b'|'.join(names).count(b'/')
-        if b'.rossym' in names:
+        if IS_64_BIT:
+            return 'baseaddress64.cmake'
+        elif b'.rossym' in names:
             return 'baseaddress.cmake'
-        elif is_x64():
-            return 'baseaddress_msvc_x64.cmake'
         elif count == 0:
             return 'baseaddress_msvc.cmake'
         elif count > 3:
@@ -352,8 +407,11 @@ def get_target_file(ntdll_path):
     return None
 
 def run_dir(target):
-    layout = MemoryLayout(0x7c920000)
-    layout.add_reserved('user32.dll', 0x77a20000)
+    if IS_64_BIT:
+        layout = MemoryLayout(0x7FFB7000000)
+    else:
+        layout = MemoryLayout(0x7c920000)
+        layout.add_reserved('user32.dll', 0x77a20000)
     IMAGE_TYPES[IMAGE_NT_OPTIONAL_HDR64_MAGIC] = 0
     IMAGE_TYPES[IMAGE_NT_OPTIONAL_HDR32_MAGIC] = 0
     for root, _, files in os.walk(target):
@@ -376,6 +434,12 @@ def run_dir(target):
 
 def main():
     dirs = sys.argv[1:]
+
+    if len(dirs) > 0 and dirs[0] == '-64':
+        print('Using 64-bit addresses')
+        global IS_64_BIT
+        IS_64_BIT = True
+        dirs = sys.argv[2:]
     if len(dirs) < 1:
         trydir = os.getcwd()
         print(USAGE)

@@ -82,6 +82,9 @@ NTSTATUS FASTCALL InitSessionImpl(VOID);
 
 BOOL NTAPI InitMetrics(VOID);
 LONG NTAPI UserGetSystemMetrics(ULONG Index);
+BOOL FASTCALL UserIsDBCSEnabled(VOID);
+BOOL FASTCALL UserIsIMMEnabled(VOID);
+BOOL FASTCALL UserIsCTFIMEEnabled(VOID);
 
 /*************** KEYBOARD.C ***************/
 
@@ -157,10 +160,24 @@ LRESULT NC_HandleNCRButtonDown( PWND wnd, WPARAM wParam, LPARAM lParam );
 HBRUSH FASTCALL DefWndControlColor(HDC hDC,UINT ctlType);
 BOOL UserDrawSysMenuButton(PWND pWnd, HDC hDC, LPRECT Rect, BOOL Down);
 BOOL UserPaintCaption(PWND pWnd, INT Flags);
+PWND FASTCALL DWP_GetEnabledPopup(PWND pWnd);
 
 /************** LAYERED **************/
 
 BOOL FASTCALL SetLayeredStatus(PWND pWnd, BYTE set);
 BOOL FASTCALL GetLayeredStatus(PWND pWnd);
+
+/************** INPUT CONTEXT **************/
+
+PIMC FASTCALL UserCreateInputContext(_In_ ULONG_PTR dwClientImcData);
+VOID UserFreeInputContext(_In_opt_ PVOID Object);
+BOOLEAN UserDestroyInputContext(_In_opt_ PVOID Object);
+
+PVOID
+AllocInputContextObject(
+    _In_ PDESKTOP pDesk,
+    _In_ PTHREADINFO pti,
+    _In_ SIZE_T Size,
+    _Out_ PVOID* HandleOwner);
 
 /* EOF */

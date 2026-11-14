@@ -37,10 +37,10 @@ public:
     void Init(IContextMenu* menu, BSTR name);
 
     // *** FolderItemVerb methods ***
-    virtual HRESULT STDMETHODCALLTYPE get_Application(IDispatch **ppid);
-    virtual HRESULT STDMETHODCALLTYPE get_Parent(IDispatch **ppid);
-    virtual HRESULT STDMETHODCALLTYPE get_Name(BSTR *pbs);
-    virtual HRESULT STDMETHODCALLTYPE DoIt();
+    STDMETHOD(get_Application)(IDispatch **ppid) override;
+    STDMETHOD(get_Parent)(IDispatch **ppid) override;
+    STDMETHOD(get_Name)(BSTR *pbs) override;
+    STDMETHOD(DoIt)() override;
 
 
 DECLARE_NOT_AGGREGATABLE(CFolderItemVerb)
@@ -67,14 +67,15 @@ public:
     CFolderItemVerbs();
     virtual ~CFolderItemVerbs();
 
-    HRESULT Init(LPITEMIDLIST idlist);
+    HRESULT Init(IContextMenu &cm);
+    HRESULT Init(LPCITEMIDLIST idlist);
 
     // *** FolderItemVerbs methods ***
-    virtual HRESULT STDMETHODCALLTYPE get_Count(LONG *plCount);
-    virtual HRESULT STDMETHODCALLTYPE get_Application(IDispatch **ppid);
-    virtual HRESULT STDMETHODCALLTYPE get_Parent(IDispatch **ppid);
-    virtual HRESULT STDMETHODCALLTYPE Item(VARIANT index, FolderItemVerb **ppid);
-    virtual HRESULT STDMETHODCALLTYPE _NewEnum(IUnknown **ppunk);
+    STDMETHOD(get_Count)(LONG *plCount) override;
+    STDMETHOD(get_Application)(IDispatch **ppid) override;
+    STDMETHOD(get_Parent)(IDispatch **ppid) override;
+    STDMETHOD(Item)(VARIANT index, FolderItemVerb **ppid) override;
+    STDMETHOD(_NewEnum)(IUnknown **ppunk) override;
 
 DECLARE_NOT_AGGREGATABLE(CFolderItemVerbs)
 DECLARE_PROTECT_FINAL_CONSTRUCT()
@@ -83,6 +84,8 @@ BEGIN_COM_MAP(CFolderItemVerbs)
     COM_INTERFACE_ENTRY_IID(IID_FolderItemVerbs, FolderItemVerbs)
     COM_INTERFACE_ENTRY_IID(IID_IDispatch, IDispatch)
 END_COM_MAP()
+
+    static HRESULT CreateInstance(CComPtr<CFolderItemVerbs> &objref) { return ShellObjectCreator(objref); }
 };
 
 #endif

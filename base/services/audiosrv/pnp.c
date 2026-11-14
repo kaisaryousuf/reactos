@@ -1,9 +1,9 @@
 /*
- * PROJECT:          ReactOS
- * LICENSE:          GPL - See COPYING in the top level directory
- * FILE:             base/services/audiosrv/pnp.c
- * PURPOSE:          Audio Service Plug and Play
- * COPYRIGHT:        Copyright 2007 Andrew Greenwood
+ * PROJECT:     ReactOS
+ * LICENSE:     GPL-2.0-or-later (https://spdx.org/licenses/GPL-2.0-or-later)
+ * PURPOSE:     Audio Service Plug and Play
+ * COPYRIGHT:   Copyright 2007 Andrew Greenwood <silverblade@reactos.org>
+ *              Copyright 2026 Vitaly Orekhov <vkvo2000@vivaldi.net>
  */
 
 #include "audiosrv.h"
@@ -15,7 +15,11 @@
 #include <ks.h>
 #include <ksmedia.h>
 
+#define NDEBUG
+#include <debug.h>
+
 static HDEVNOTIFY device_notification_handle = NULL;
+static UINT uWinMMDeviceChange = 0;
 
 /*
     Finds all devices within the KSCATEGORY_AUDIO category and puts them
@@ -42,8 +46,6 @@ ProcessExistingDevices(VOID)
                                       NULL,
                                       NULL);
 
-/*    printf("%s:\n", ClassString); */
-
     interface_data.cbSize = sizeof(interface_data);
     interface_data.Reserved = 0;
 
@@ -60,7 +62,7 @@ ProcessExistingDevices(VOID)
 
     if ( ! detail_data )
     {
-        logmsg("ProcessExistingDevices() failed to allocate detail_data\n");
+        DPRINT("failed to allocate detail_data\n");
         return TRUE;
     }
 
@@ -99,6 +101,11 @@ ProcessExistingDevices(VOID)
 
     SetupDiDestroyDeviceInfoList(dev_info);
 
+    uWinMMDeviceChange = RegisterWindowMessageW(L"winmm_devicechange");
+
+    if (uWinMMDeviceChange == 0)
+        DPRINT1("Failed to register winmm_devicechange window message: GetLastError %u\n", GetLastError());
+
     return TRUE;
 }
 
@@ -114,6 +121,19 @@ ProcessDeviceArrival(DEV_BROADCAST_DEVICEINTERFACE* device)
     list_node = CreateDeviceDescriptor(device->dbcc_name, TRUE);
     AppendAudioDeviceToList(list_node);
     DestroyDeviceDescriptor(list_node);
+
+    DWORD dwInfo = BSM_ALLDESKTOPS | BSM_APPLICATIONS;
+    BroadcastSystemMessageW(BSF_POSTMESSAGE, &dwInfo, uWinMMDeviceChange, 0, 0);
+
+    return NO_ERROR;
+}
+
+DWORD
+ProcessDeviceRemovalComplete(DEV_BROADCAST_DEVICEINTERFACE* device)
+{
+    /* TODO: clean up appended audio devices */
+    DWORD dwInfo = BSM_ALLDESKTOPS | BSM_APPLICATIONS;
+    BroadcastSystemMessageW(BSF_POSTMESSAGE, &dwInfo, uWinMMDeviceChange, 0, 0);
 
     return NO_ERROR;
 }
@@ -138,12 +158,10 @@ RegisterForDeviceNotifications(VOID)
     device_notification_handle =
         RegisterDeviceNotificationW((HANDLE) service_status_handle,
                                     &notification_filter,
-                                    DEVICE_NOTIFY_SERVICE_HANDLE
-/* |
-                                   DEVICE_NOTIFY_ALL_INTERFACE_CLASSES*/);
+                                    DEVICE_NOTIFY_SERVICE_HANDLE);
     if (!device_notification_handle)
     {
-        logmsg("RegisterDeviceNotification() failed with error %d\n", GetLastError());
+        DPRINT("failed with error %d\n", GetLastError());
     }
 
     return ( device_notification_handle != NULL );
@@ -158,12 +176,10 @@ RegisterForDeviceNotifications(VOID)
 VOID
 UnregisterDeviceNotifications(VOID)
 {
-    /* TODO -- NOT IMPLEMENTED! */
-
     if (device_notification_handle)
     {
-        /* TODO */
-        device_notification_handle = NULL;
+        if (UnregisterDeviceNotification(device_notification_handle))
+            device_notification_handle = NULL;
     }
 }
 
@@ -187,7 +203,15 @@ HandleDeviceEvent(
             return ProcessDeviceArrival(incoming_device);
         }
 
-        default :
+        case DBT_DEVICEREMOVECOMPLETE:
+        {
+            DEV_BROADCAST_DEVICEINTERFACE* removed_device =
+                (DEV_BROADCAST_DEVICEINTERFACE*)lpEventData;
+            
+            return ProcessDeviceRemovalComplete(removed_device);
+        }
+
+        default:
         {
             break;
         }

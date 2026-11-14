@@ -1,26 +1,10 @@
 /*
- * ReactOS Sound Volume Control
- * Copyright (C) 2004-2005 Thomas Weidenmueller
- *
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Lesser General Public
- * License as published by the Free Software Foundation; either
- * version 2.1 of the License, or (at your option) any later version.
- *
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public
- * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
- */
-/*
- * COPYRIGHT:   See COPYING in the top level directory
  * PROJECT:     ReactOS Sound Volume Control
- * FILE:        base/applications/sndvol32/sndvol32.c
- * PROGRAMMERS: Thomas Weidenmueller <w3seek@reactos.com>
+ * LICENSE:     LGPL-2.1-or-later (https://spdx.org/licenses/LGPL-2.1-or-later)
+ * PURPOSE:     Main volume adjustment dialog
+ * COPYRIGHT:   Copyright 2004-2005 Thomas Weidenmueller <w3seek@reactos.com>
+ *              Copyright 2011 Johannes Anderwald <johannes.anderwald@reactos.org>
+ *              Copyright 2018-2019 Eric Kohl <eric.kohl@reactos.org>
  */
 
 #include "sndvol32.h"
@@ -340,7 +324,7 @@ UpdatePrefDlgControls(PPREFERENCES_CONTEXT Context,
     }
 }
 
-static 
+static
 VOID
 WriteLineSettings(PPREFERENCES_CONTEXT Context, HWND hwndDlg)
 {
@@ -576,11 +560,11 @@ DlgPreferencesProc(HWND hwndDlg,
                       IDCANCEL);
             break;
         }
-        
+
         case WM_SYSCOLORCHANGE:
         {
             HWND hwndControls;
-            
+
             /* Forward WM_SYSCOLORCHANGE */
             hwndControls = GetDlgItem(hwndDlg, IDC_CONTROLS);
             SendMessage(hwndControls, WM_SYSCOLORCHANGE, 0, 0);
@@ -636,7 +620,7 @@ SetVolumeCallback(PSND_MIXER Mixer, DWORD LineID, LPMIXERLINE Line, PVOID Ctx)
     PSET_VOLUME_CONTEXT Context = (PSET_VOLUME_CONTEXT)Ctx;
 
     /* check if the line name is equal */
-    if (wcsicmp(Line->szName, Context->LineName))
+    if (_wcsicmp(Line->szName, Context->LineName))
     {
         /* it is not */
         return TRUE;
@@ -879,7 +863,7 @@ MainWindowProc(HWND hwnd,
                LPARAM lParam)
 {
     PMIXER_WINDOW MixerWindow;
-    DWORD CtrlID, LineOffset;
+    DWORD CtrlID, LineOffset, TargetSlider;
     BOOL bRet;
     LRESULT Result = 0;
     SET_VOLUME_CONTEXT Context;
@@ -971,6 +955,7 @@ MainWindowProc(HWND hwnd,
                 case IDM_EXIT:
                 {
                     PostQuitMessage(0);
+                    UnregisterHotKey(hwnd, HOTKEY_CTRL_S);
                     break;
                 }
 
@@ -1081,15 +1066,24 @@ MainWindowProc(HWND hwnd,
             break;
         }
 
+        case WM_HSCROLL:
         case WM_VSCROLL:
+            TargetSlider = uMsg == WM_HSCROLL ? IDC_LINE_SLIDER_HORZ : IDC_LINE_SLIDER_VERT;
+
             switch (LOWORD(wParam))
             {
+                case TB_LINEUP:
+                case TB_LINEDOWN:
+                case TB_PAGEUP:
+                case TB_PAGEDOWN:
+                case TB_TOP:
+                case TB_BOTTOM:
                 case TB_THUMBTRACK:
                     /* get dialog item ctrl */
                     CtrlID = GetDlgCtrlID((HWND)lParam);
 
                     /* get line index */
-                    LineOffset = CtrlID / IDC_LINE_SLIDER_VERT;
+                    LineOffset = CtrlID / TargetSlider;
 
                     /* compute window id of line name static control */
                     CtrlID = LineOffset * IDC_LINE_NAME;
@@ -1105,53 +1099,21 @@ MainWindowProc(HWND hwnd,
                         /* set volume */
                         SndMixerEnumConnections(Preferences.MixerWindow->Mixer, Preferences.SelectedLine, SetVolumeCallback, (LPVOID)&Context);
                     }
-                    break;
-
-                case TB_ENDTRACK:
-                    MixerWindow = GetWindowData(hwnd,
-                                                MIXER_WINDOW);
-
-                    /* get dialog item ctrl */
-                    CtrlID = GetDlgCtrlID((HWND)lParam);
-
-                    /* get line index */
-                    LineOffset = CtrlID / IDC_LINE_SLIDER_VERT;
-
-                    if (LineOffset == 1 && MixerWindow->Mixer->MixerId == 0)
-                        PlaySound((LPCTSTR)SND_ALIAS_SYSTEMDEFAULT, NULL, SND_ASYNC | SND_ALIAS_ID);
                     break;
 
                 default:
                     break;
             }
-            break;
 
-        case WM_HSCROLL:
+            /* One more time to test if we released the slider or was there any other affection */
             switch (LOWORD(wParam))
             {
-                case TB_THUMBTRACK:
-                    /* get dialog item ctrl */
-                    CtrlID = GetDlgCtrlID((HWND)lParam);
-
-                    /* get line index */
-                    LineOffset = CtrlID / IDC_LINE_SLIDER_HORZ;
-
-                    /* compute window id of line name static control */
-                    CtrlID = LineOffset * IDC_LINE_NAME;
-
-                    /* get line name */
-                    if (GetDlgItemTextW(hwnd, CtrlID, Context.LineName, MIXER_LONG_NAME_CHARS) != 0)
-                    {
-                        /* setup context */
-                        Context.SliderPos = LineOffset;
-                        Context.bVertical = TRUE;
-                        Context.bSwitch = FALSE;
-
-                        /* set volume */
-                        SndMixerEnumConnections(Preferences.MixerWindow->Mixer, Preferences.SelectedLine, SetVolumeCallback, (LPVOID)&Context);
-                    }
-                    break;
-
+                case TB_LINEUP:
+                case TB_LINEDOWN:
+                case TB_PAGEUP:
+                case TB_PAGEDOWN:
+                case TB_TOP:
+                case TB_BOTTOM:
                 case TB_ENDTRACK:
                     MixerWindow = GetWindowData(hwnd,
                                                 MIXER_WINDOW);
@@ -1160,7 +1122,7 @@ MainWindowProc(HWND hwnd,
                     CtrlID = GetDlgCtrlID((HWND)lParam);
 
                     /* get line index */
-                    LineOffset = CtrlID / IDC_LINE_SLIDER_HORZ;
+                    LineOffset = CtrlID / TargetSlider;
 
                     if (LineOffset == 1 && MixerWindow->Mixer->MixerId == 0)
                         PlaySound((LPCTSTR)SND_ALIAS_SYSTEMDEFAULT, NULL, SND_ASYNC | SND_ALIAS_ID);
@@ -1248,6 +1210,8 @@ MainWindowProc(HWND hwnd,
                     Result = -1;
                 }
             }
+
+            RegisterHotKey(hwnd, HOTKEY_CTRL_S, MOD_CONTROL, 'S');
             break;
         }
 
@@ -1272,6 +1236,16 @@ MainWindowProc(HWND hwnd,
         {
             SaveXYCoordWnd(hwnd, &Preferences);
             PostQuitMessage(0);
+            break;
+        }
+
+        case WM_HOTKEY:
+        {
+            if (wParam == HOTKEY_CTRL_S) 
+            {
+                Preferences.MixerWindow->Mode = (Preferences.MixerWindow->Mode == NORMAL_MODE ? SMALL_MODE : NORMAL_MODE);
+                RebuildMixerWindowControls(&Preferences);
+            }
             break;
         }
 
@@ -1342,7 +1316,7 @@ CreateApplicationWindow(
         hWnd = CreateWindowEx(WS_EX_WINDOWEDGE | WS_EX_CONTROLPARENT,
                               SZ_APP_CLASS,
                               lpAppTitle,
-                              WS_DLGFRAME | WS_CAPTION | WS_MINIMIZEBOX | WS_SYSMENU | WS_CLIPCHILDREN | WS_CLIPSIBLINGS | WS_VISIBLE, 
+                              WS_DLGFRAME | WS_CAPTION | WS_MINIMIZEBOX | WS_SYSMENU | WS_CLIPCHILDREN | WS_CLIPSIBLINGS | WS_VISIBLE,
                               0, 0, 300, 315,
                               NULL,
                               LoadMenu(hAppInstance,

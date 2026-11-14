@@ -74,7 +74,7 @@ CClassFactory::CreateInstance(
 
     StringFromCLSID(riid, &lpstr);
 
-    swprintf(Buffer, L"riid %s", lpstr);
+    _swprintf(Buffer, L"riid %s", lpstr);
     OutputDebugStringW(Buffer);
 
 
@@ -94,10 +94,10 @@ CClassFactory::LockServer(
     return E_NOTIMPL;
 }
 
-IClassFactory * 
+IClassFactory *
 CClassFactory_fnConstructor(
-    LPFNCREATEINSTANCE lpfnCI, 
-    PLONG pcRefDll, 
+    LPFNCREATEINSTANCE lpfnCI,
+    PLONG pcRefDll,
     IID * riidInst)
 {
     CClassFactory* factory = new CClassFactory(lpfnCI, pcRefDll, riidInst);

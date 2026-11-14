@@ -233,7 +233,7 @@ USBH_QueryCapabilities(IN PDEVICE_OBJECT DeviceObject,
                            TRUE);
 
     IoStack = IoGetNextIrpStackLocation(Irp);
- 
+
     IoStack->MajorFunction = IRP_MJ_PNP;
     IoStack->MinorFunction = IRP_MN_QUERY_CAPABILITIES;
 
@@ -266,7 +266,7 @@ USBH_OpenConfiguration(IN PUSBHUB_FDO_EXTENSION HubExtension)
 
     DPRINT("USBH_OpenConfiguration ... \n");
 
-    if (HubExtension->HubFlags & USBHUB_FDO_FLAG_USB20_HUB && 
+    if (HubExtension->HubFlags & USBHUB_FDO_FLAG_USB20_HUB &&
         HubExtension->LowerPDO != HubExtension->RootHubPdo)
     {
         Pid = USBD_ParseConfigurationDescriptorEx(HubExtension->HubConfigDescriptor,
@@ -1250,11 +1250,11 @@ EnumStart:
                                               &PortData->PortStatus,
                                               sizeof(USB_PORT_STATUS_AND_CHANGE));
 
-            UsbPortStatus = PortData->PortStatus.PortStatus;
-
             if (NT_SUCCESS(NtStatus))
             {
                 ULONG ix = 0;
+
+                UsbPortStatus = PortData->PortStatus.PortStatus;
 
                 for (NtStatus = USBH_CreateDevice(HubExtension, Port, UsbPortStatus, ix);
                      !NT_SUCCESS(NtStatus);
@@ -1275,6 +1275,15 @@ EnumStart:
                     }
 
                     USBH_SyncResetPort(HubExtension, Port);
+
+                    /* The device can come back at another speed after the reset */
+                    if (NT_SUCCESS(USBH_SyncGetPortStatus(HubExtension,
+                                                          Port,
+                                                          &PortData->PortStatus,
+                                                          sizeof(PortData->PortStatus))))
+                    {
+                        UsbPortStatus = PortData->PortStatus.PortStatus;
+                    }
 
                     ix++;
                 }
@@ -1392,7 +1401,7 @@ RelationsWorker:
             if (PdoExt(PdoDevice)->EnumFlags & USBHUB_ENUM_FLAG_GHOST_DEVICE)
             {
                 for (GhostPort = Port;
-                     GhostPort < DeviceRelations->Count;
+                     GhostPort < DeviceRelations->Count - 1;
                      GhostPort++)
                 {
                     DeviceRelations->Objects[GhostPort] =
@@ -1900,7 +1909,7 @@ USBH_PdoQueryDeviceText(IN PUSBHUB_PORT_PDO_EXTENSION PortExtension,
             RtlZeroMemory(Descriptor, MAXIMUM_USB_STRING_LENGTH);
 
             for (Status = USBH_CheckDeviceLanguage(DeviceObject, LanguageId);
-                 ; 
+                 ;
                  Status = USBH_CheckDeviceLanguage(DeviceObject, DefaultId))
             {
                 if (NT_SUCCESS(Status))
@@ -2651,7 +2660,7 @@ USBH_PdoPnP(IN PUSBHUB_PORT_PDO_EXTENSION PortExtension,
             {
                 return Irp->IoStatus.Status;
             }
-  
+
             DeviceRelation = ExAllocatePoolWithTag(PagedPool,
                                                    sizeof(DEVICE_RELATIONS),
                                                    USB_HUB_TAG);
@@ -2671,7 +2680,7 @@ USBH_PdoPnP(IN PUSBHUB_PORT_PDO_EXTENSION PortExtension,
             {
                 Status = STATUS_INSUFFICIENT_RESOURCES;
             }
-  
+
             Irp->IoStatus.Information = (ULONG_PTR)DeviceRelation;
             break;
 

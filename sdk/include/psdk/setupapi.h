@@ -2,6 +2,8 @@
 #define _SETUPAPI_H_
 
 #include <commctrl.h>
+#include <devpropdef.h>
+
 #if defined(_WIN64)
 #include <pshpack8.h>
 #else
@@ -117,6 +119,7 @@ extern "C" {
 #define DICS_START	4
 #define DICS_FLAG_CONFIGGENERAL	4
 #define DICS_STOP	5
+#define DICUSTOMDEVPROP_MERGE_MULTISZ 0x00000001
 #define DIF_SELECTDEVICE                    1
 #define DIF_INSTALLDEVICE                   2
 #define DIF_ASSIGNRESOURCES                 3
@@ -272,6 +275,11 @@ extern "C" {
 #define DPROMPT_BUFFERTOOSMALL	3
 #define DPROMPT_OUTOFMEMORY	4
 #define DRIVER_HARDWAREID_RANK	0x00000FFF
+#if (_SETUPAPI_VER >= 0x0600)
+#define DRIVER_UNTRUSTED_RANK   0x80000000
+#else
+#define DRIVER_UNTRUSTED_RANK   0x00008000
+#endif
 #define DYNAWIZ_FLAG_PAGESADDED	0x00000001
 #define DYNAWIZ_FLAG_INSTALLDET_NEXT	0x00000002
 #define DYNAWIZ_FLAG_INSTALLDET_PREV	0x00000004
@@ -1461,6 +1469,34 @@ SetupDiGetActualSectionToInstallExW(
   _Out_opt_ PWSTR *Extension,
   _Reserved_ PVOID Reserved);
 
+WINSETUPAPI
+BOOL
+WINAPI
+SetupDiGetActualModelsSectionA(
+    _In_ PINFCONTEXT Context,
+    _In_opt_ PSP_ALTPLATFORM_INFO AlternatePlatformInfo,
+    _Out_writes_opt_(InfSectionWithExtSize) PSTR InfSectionWithExt,
+    _In_ DWORD InfSectionWithExtSize,
+    _Out_opt_ PDWORD RequiredSize,
+    _Reserved_ PVOID Reserved);
+
+WINSETUPAPI
+BOOL
+WINAPI
+SetupDiGetActualModelsSectionW(
+    _In_ PINFCONTEXT Context,
+    _In_opt_ PSP_ALTPLATFORM_INFO AlternatePlatformInfo,
+    _Out_writes_opt_(InfSectionWithExtSize) PWSTR InfSectionWithExt,
+    _In_ DWORD InfSectionWithExtSize,
+    _Out_opt_ PDWORD RequiredSize,
+    _Reserved_ PVOID Reserved);
+
+#ifdef UNICODE
+#define SetupDiGetActualModelsSection SetupDiGetActualModelsSectionW
+#else
+#define SetupDiGetActualModelsSection SetupDiGetActualModelsSectionA
+#endif
+
 WINSETUPAPI BOOL WINAPI SetupDiGetClassBitmapIndex(_In_opt_ CONST GUID*, _Out_ PINT);
 
 WINSETUPAPI
@@ -1561,7 +1597,7 @@ SetupDiGetClassRegistryPropertyW(
   _Out_writes_bytes_to_(PropertyBufferSize, *RequiredSize) PBYTE PropertyBuffer,
   _In_ DWORD PropertyBufferSize,
   _Out_opt_ PDWORD RequiredSize,
-  _In_opt_ PCWSTR MachineName, 
+  _In_opt_ PCWSTR MachineName,
   _Reserved_ PVOID Reserved);
 
 WINSETUPAPI BOOL WINAPI SetupDiGetDeviceInfoListClass(_In_ HDEVINFO, _Out_ LPGUID);
@@ -1600,7 +1636,7 @@ WINAPI
 SetupDiGetDeviceInterfaceDetailA(
   _In_ HDEVINFO DeviceInfoSet,
   _In_ PSP_DEVICE_INTERFACE_DATA DeviceInterfaceData,
-  _Inout_updates_bytes_to_opt_(DeviceInterfaceDetailDataSize, *RequiredSize) PSP_DEVICE_INTERFACE_DETAIL_DATA_A DeviceInterfaceDetailData, 
+  _Inout_updates_bytes_to_opt_(DeviceInterfaceDetailDataSize, *RequiredSize) PSP_DEVICE_INTERFACE_DETAIL_DATA_A DeviceInterfaceDetailData,
   _In_ DWORD DeviceInterfaceDetailDataSize,
   _Out_opt_ _Out_range_(>=, sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA_A)) PDWORD RequiredSize,
   _Out_opt_ PSP_DEVINFO_DATA DeviceInfoData);
@@ -1619,6 +1655,23 @@ SetupDiGetDeviceInterfaceDetailW(
   _Out_opt_ PSP_DEVINFO_DATA DeviceInfoData);
 
 _Success_(return != FALSE)
+_When_(*PropertyType == DEVPROP_TYPE_STRING, _At_((PWSTR) PropertyBuffer, _Out_writes_bytes_to_opt_(PropertyBufferSize, *RequiredSize)))
+_When_(*PropertyType == DEVPROP_TYPE_STRING_INDIRECT, _At_((PWSTR) PropertyBuffer, _Out_writes_bytes_to_opt_(PropertyBufferSize, *RequiredSize)))
+_When_(*PropertyType == DEVPROP_TYPE_STRING_LIST, _At_((PZZWSTR) PropertyBuffer, _Out_writes_bytes_to_opt_(PropertyBufferSize, *RequiredSize)))
+WINSETUPAPI
+BOOL
+WINAPI
+SetupDiGetDevicePropertyW(
+    _In_ HDEVINFO DeviceInfoSet,
+    _In_ PSP_DEVINFO_DATA DeviceInfoData,
+    _In_ const DEVPROPKEY *PropertyKey,
+    _Out_ DEVPROPTYPE *PropertyType,
+    _Out_writes_bytes_to_opt_(PropertyBufferSize, *RequiredSize) PBYTE PropertyBuffer,
+    _In_ DWORD PropertyBufferSize,
+    _Out_opt_ PDWORD RequiredSize,
+    _In_ DWORD Flags);
+
+_Success_(return != FALSE)
 _When_((*PropertyRegDataType == REG_SZ), _At_((PSTR) PropertyBuffer, _Post_valid_))
 _When_((*PropertyRegDataType == REG_MULTI_SZ), _At_((PZZSTR) PropertyBuffer, _Post_valid_))
 WINSETUPAPI
@@ -1628,7 +1681,7 @@ SetupDiGetDeviceRegistryPropertyA(
   _In_ HDEVINFO DeviceInfoSet,
   _In_ PSP_DEVINFO_DATA DeviceInfoData,
   _In_ DWORD Property,
-  _Out_opt_ PDWORD PropertyRegDataType, 
+  _Out_opt_ PDWORD PropertyRegDataType,
   _Out_writes_bytes_to_opt_(PropertyBufferSize, *RequiredSize) PBYTE PropertyBuffer,
   _In_ DWORD PropertyBufferSize,
   _Out_opt_ PDWORD RequiredSize);
@@ -1655,7 +1708,7 @@ SetupDiGetDriverInfoDetailA(
   _In_ HDEVINFO DeviceInfoSet,
   _In_opt_ PSP_DEVINFO_DATA DeviceInfoData,
   _In_ PSP_DRVINFO_DATA_A DriverInfoData,
-  _Inout_updates_bytes_opt_(DriverInfoDetailDataSize) PSP_DRVINFO_DETAIL_DATA_A DriverInfoDetailData, 
+  _Inout_updates_bytes_opt_(DriverInfoDetailDataSize) PSP_DRVINFO_DETAIL_DATA_A DriverInfoDetailData,
   _In_ DWORD DriverInfoDetailDataSize,
   _Out_opt_ PDWORD RequiredSize);
 
@@ -1824,7 +1877,7 @@ WINAPI
 SetupDiSetClassRegistryPropertyA(
   _In_ CONST GUID *ClassGuid,
   _In_ DWORD Property,
-  _In_reads_bytes_opt_(PropertyBufferSize) CONST BYTE *PropertyBuffer, 
+  _In_reads_bytes_opt_(PropertyBufferSize) CONST BYTE *PropertyBuffer,
   _In_ DWORD PropertyBufferSize,
   _In_opt_ PCSTR MachineName,
   _Reserved_ PVOID Reserved);
@@ -1903,7 +1956,7 @@ SetupGetFileCompressionInfoExA(
   _In_ PCSTR SourceFileName,
   _In_reads_opt_(ActualSourceFileNameBufferLen) PSTR ActualSourceFileNameBuffer,
   _In_ DWORD ActualSourceFileNameBufferLen,
-  _Out_opt_ PDWORD RequiredBufferLen, 
+  _Out_opt_ PDWORD RequiredBufferLen,
   _Out_ PDWORD SourceFileSize,
   _Out_ PDWORD TargetFileSize,
   _Out_ PUINT CompressionType);
@@ -1926,7 +1979,7 @@ WINAPI
 SetupGetInfFileListA(
   _In_opt_ PCSTR DirectoryPath,
   _In_ DWORD InfStyle,
-  _Out_writes_opt_(ReturnBufferSize) PSTR ReturnBuffer, 
+  _Out_writes_opt_(ReturnBufferSize) PSTR ReturnBuffer,
   _In_ DWORD ReturnBufferSize,
   _Out_opt_ PDWORD RequiredSize);
 
@@ -1947,7 +2000,7 @@ WINAPI
 SetupGetInfInformationA(
   _In_ LPCVOID InfSpec,
   _In_ DWORD SearchControl,
-  _Out_writes_bytes_to_opt_(ReturnBufferSize, *RequiredSize) PSP_INF_INFORMATION ReturnBuffer, 
+  _Out_writes_bytes_to_opt_(ReturnBufferSize, *RequiredSize) PSP_INF_INFORMATION ReturnBuffer,
   _In_ DWORD ReturnBufferSize,
   _Out_opt_ PDWORD RequiredSize);
 
@@ -2471,6 +2524,7 @@ WINSETUPAPI PSTR WINAPI UnicodeToMultiByte(PCWSTR lpUnicodeStr, UINT uCodePage);
 #define SetupDiGetDeviceInstanceId	SetupDiGetDeviceInstanceIdW
 #define SetupDiGetDeviceInterfaceDetail	SetupDiGetDeviceInterfaceDetailW
 #define SetupDiGetInterfaceDeviceDetail	SetupDiGetDeviceInterfaceDetailW
+#define SetupDiGetDeviceProperty	SetupDiGetDevicePropertyW
 #define SetupDiGetDeviceRegistryProperty	SetupDiGetDeviceRegistryPropertyW
 #define SetupDiGetDriverInfoDetail	SetupDiGetDriverInfoDetailW
 #define SetupDiGetDriverInstallParams	SetupDiGetDriverInstallParamsW

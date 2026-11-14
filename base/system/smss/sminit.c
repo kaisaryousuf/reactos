@@ -16,10 +16,11 @@
 /* GLOBALS ********************************************************************/
 
 UNICODE_STRING SmpSubsystemName, PosixName, Os2Name;
-LIST_ENTRY SmpBootExecuteList, SmpSetupExecuteList, SmpPagingFileList;
-LIST_ENTRY SmpDosDevicesList, SmpFileRenameList, SmpKnownDllsList;
-LIST_ENTRY SmpExcludeKnownDllsList, SmpSubSystemList, SmpSubSystemsToLoad;
-LIST_ENTRY SmpSubSystemsToDefer, SmpExecuteList, NativeProcessList;
+LIST_ENTRY SmpBootExecuteList, SmpSetupExecuteList;
+LIST_ENTRY SmpPagingFileList, SmpDosDevicesList, SmpFileRenameList;
+LIST_ENTRY SmpKnownDllsList, SmpExcludeKnownDllsList;
+LIST_ENTRY SmpSubSystemList, SmpSubSystemsToLoad, SmpSubSystemsToDefer;
+LIST_ENTRY SmpExecuteList, NativeProcessList;
 
 PVOID SmpHeap;
 ULONG SmBaseTag;
@@ -334,14 +335,22 @@ SmpConfigureObjectDirectories(IN PWSTR ValueName,
 
 NTSTATUS
 NTAPI
-SmpConfigureMemoryMgmt(IN PWSTR ValueName,
-                       IN ULONG ValueType,
-                       IN PVOID ValueData,
-                       IN ULONG ValueLength,
-                       IN PVOID Context,
-                       IN PVOID EntryContext)
+SmpConfigureExecute(IN PWSTR ValueName,
+                    IN ULONG ValueType,
+                    IN PVOID ValueData,
+                    IN ULONG ValueLength,
+                    IN PVOID Context,
+                    IN PVOID EntryContext)
 {
-    /* Save this is into a list */
+    NTSTATUS Status;
+    size_t StrLength;
+
+    /* If the value is invalid or empty, skip it */
+    Status = RtlStringCbLengthW(ValueData, ValueLength, &StrLength);
+    if (!NT_SUCCESS(Status) || (StrLength < sizeof(WCHAR)))
+        return STATUS_SUCCESS;
+
+    /* Save the value into the list */
     return SmpSaveRegistryValue(EntryContext, ValueData, NULL, TRUE);
 }
 
@@ -413,6 +422,19 @@ SmpConfigureExcludeKnownDlls(IN PWSTR ValueName,
 
 NTSTATUS
 NTAPI
+SmpConfigureMemoryMgmt(IN PWSTR ValueName,
+                       IN ULONG ValueType,
+                       IN PVOID ValueData,
+                       IN ULONG ValueLength,
+                       IN PVOID Context,
+                       IN PVOID EntryContext)
+{
+    /* Save the value into the list */
+    return SmpSaveRegistryValue(EntryContext, ValueData, NULL, TRUE);
+}
+
+NTSTATUS
+NTAPI
 SmpConfigureDosDevices(IN PWSTR ValueName,
                        IN ULONG ValueType,
                        IN PVOID ValueData,
@@ -420,7 +442,7 @@ SmpConfigureDosDevices(IN PWSTR ValueName,
                        IN PVOID Context,
                        IN PVOID EntryContext)
 {
-    /* Save into linked list */
+    /* Save the data into the list */
     return SmpSaveRegistryValue(EntryContext, ValueName, ValueData, TRUE);
 }
 
@@ -477,6 +499,12 @@ SmpConfigureKnownDlls(IN PWSTR ValueName,
     }
 }
 
+/**
+ * @remark
+ * SmpConfigureEnvironment() should be called twice in order to resolve
+ * forward references to environment variables.
+ * See the two L"Environment" entries in SmpRegistryConfigurationTable[].
+ **/
 NTSTATUS
 NTAPI
 SmpConfigureEnvironment(IN PWSTR ValueName,
@@ -493,7 +521,7 @@ SmpConfigureEnvironment(IN PWSTR ValueName,
     RtlInitUnicodeString(&ValueString, ValueName);
     RtlInitUnicodeString(&DataString, ValueData);
     DPRINT("Setting %wZ = %wZ\n", &ValueString, &DataString);
-    Status = RtlSetEnvironmentVariable(0, &ValueString, &DataString);
+    Status = RtlSetEnvironmentVariable(NULL, &ValueString, &DataString);
     if (!NT_SUCCESS(Status))
     {
         DPRINT1("SMSS: 'SET %wZ = %wZ' failed - Status == %lx\n",
@@ -627,7 +655,7 @@ SmpRegistryConfigurationTable[] =
     },
 
     {
-        SmpConfigureMemoryMgmt,
+        SmpConfigureExecute,
         0,
         L"BootExecute",
         &SmpBootExecuteList,
@@ -637,7 +665,7 @@ SmpRegistryConfigurationTable[] =
     },
 
     {
-        SmpConfigureMemoryMgmt,
+        SmpConfigureExecute,
         RTL_QUERY_REGISTRY_TOPKEY,
         L"SetupExecute",
         &SmpSetupExecuteList,
@@ -716,6 +744,13 @@ SmpRegistryConfigurationTable[] =
         0
     },
 
+    /**
+     * @remark
+     * SmpConfigureEnvironment() is expected to be called twice
+     * (see SmpCalledConfigEnv) in order to resolve forward references
+     * to environment variables (e.g. EnvVar1 referring to EnvVar2,
+     * before EnvVar2 is defined).
+     **/
     {
         SmpConfigureEnvironment,
         RTL_QUERY_REGISTRY_SUBKEY,
@@ -725,6 +760,17 @@ SmpRegistryConfigurationTable[] =
         NULL,
         0
     },
+
+    {
+        SmpConfigureEnvironment,
+        RTL_QUERY_REGISTRY_SUBKEY,
+        L"Environment",
+        NULL,
+        REG_NONE,
+        NULL,
+        0
+    },
+    /****/
 
     {
         SmpConfigureSubSystems,
@@ -767,7 +813,7 @@ SmpRegistryConfigurationTable[] =
     },
 
     {
-        SmpConfigureMemoryMgmt,
+        SmpConfigureExecute,
         RTL_QUERY_REGISTRY_TOPKEY,
         L"Execute",
         &SmpExecuteList,
@@ -786,16 +832,16 @@ NTAPI
 SmpTranslateSystemPartitionInformation(VOID)
 {
     NTSTATUS Status;
-    UNICODE_STRING UnicodeString, LinkTarget, SearchString, SystemPartition;
+    UNICODE_STRING UnicodeString, LinkTarget, SymLinkU, SystemPartition;
     OBJECT_ATTRIBUTES ObjectAttributes;
     HANDLE KeyHandle, LinkHandle;
     ULONG Length, Context;
     size_t StrLength;
     WCHAR LinkBuffer[MAX_PATH];
-    CHAR ValueBuffer[sizeof(KEY_VALUE_PARTIAL_INFORMATION) + 512];
-    PKEY_VALUE_PARTIAL_INFORMATION PartialInfo = (PVOID)ValueBuffer;
-    CHAR DirInfoBuffer[sizeof(OBJECT_DIRECTORY_INFORMATION) + 512];
-    POBJECT_DIRECTORY_INFORMATION DirInfo = (PVOID)DirInfoBuffer;
+    struct { KEY_VALUE_PARTIAL_INFORMATION; CHAR Buffer[512]; } ValueBuffer;
+    struct { OBJECT_DIRECTORY_INFORMATION; WCHAR Buffer[256]; } DirInfoBuffer;
+    PKEY_VALUE_PARTIAL_INFORMATION PartialInfo = (PVOID)&ValueBuffer;
+    POBJECT_DIRECTORY_INFORMATION DirInfo = (PVOID)&DirInfoBuffer;
 
     /* Open the setup key */
     RtlInitUnicodeString(&UnicodeString, L"\\Registry\\Machine\\System\\Setup");
@@ -816,7 +862,7 @@ SmpTranslateSystemPartitionInformation(VOID)
     Status = NtQueryValueKey(KeyHandle,
                              &UnicodeString,
                              KeyValuePartialInformation,
-                             PartialInfo,
+                             &ValueBuffer,
                              sizeof(ValueBuffer),
                              &Length);
     NtClose(KeyHandle);
@@ -824,7 +870,7 @@ SmpTranslateSystemPartitionInformation(VOID)
         ((PartialInfo->Type != REG_SZ) && (PartialInfo->Type != REG_EXPAND_SZ)))
     {
         DPRINT1("SMSS: Cannot query SystemPartition value (Type %lu, Status 0x%x)\n",
-                PartialInfo->Type, Status);
+                (NT_SUCCESS(Status) ? PartialInfo->Type : REG_NONE), Status);
         return;
     }
 
@@ -838,26 +884,20 @@ SmpTranslateSystemPartitionInformation(VOID)
     SystemPartition.Length = (USHORT)StrLength;
 
     /* Enumerate the directory looking for the symbolic link string */
-    RtlInitUnicodeString(&SearchString, L"SymbolicLink");
+    RtlInitUnicodeString(&SymLinkU, L"SymbolicLink");
     RtlInitEmptyUnicodeString(&LinkTarget, LinkBuffer, sizeof(LinkBuffer));
     Status = NtQueryDirectoryObject(SmpDosDevicesObjectDirectory,
-                                    DirInfo,
+                                    &DirInfoBuffer,
                                     sizeof(DirInfoBuffer),
                                     TRUE,
                                     TRUE,
                                     &Context,
                                     NULL);
-    if (!NT_SUCCESS(Status))
-    {
-        DPRINT1("SMSS: Cannot find drive letter for system partition\n");
-        return;
-    }
-
     /* Keep searching until we find it */
-    do
+    while (NT_SUCCESS(Status))
     {
         /* Is this it? */
-        if ((RtlEqualUnicodeString(&DirInfo->TypeName, &SearchString, TRUE)) &&
+        if (RtlEqualUnicodeString(&DirInfo->TypeName, &SymLinkU, TRUE) &&
             (DirInfo->Name.Length == 2 * sizeof(WCHAR)) &&
             (DirInfo->Name.Buffer[1] == L':'))
         {
@@ -879,13 +919,9 @@ SmpTranslateSystemPartitionInformation(VOID)
                 NtClose(LinkHandle);
 
                 /* Check if it matches the string we had found earlier */
-                if ((NT_SUCCESS(Status)) &&
-                    ((RtlEqualUnicodeString(&SystemPartition,
-                                            &LinkTarget,
-                                            TRUE)) ||
-                    ((RtlPrefixUnicodeString(&SystemPartition,
-                                             &LinkTarget,
-                                             TRUE)) &&
+                if (NT_SUCCESS(Status) &&
+                    (RtlEqualUnicodeString(&SystemPartition, &LinkTarget, TRUE) ||
+                    (RtlPrefixUnicodeString(&SystemPartition, &LinkTarget, TRUE) &&
                      (LinkTarget.Buffer[SystemPartition.Length / sizeof(WCHAR)] == L'\\'))))
                 {
                     /* All done */
@@ -896,17 +932,29 @@ SmpTranslateSystemPartitionInformation(VOID)
 
         /* Couldn't find it, try again */
         Status = NtQueryDirectoryObject(SmpDosDevicesObjectDirectory,
-                                        DirInfo,
+                                        &DirInfoBuffer,
                                         sizeof(DirInfoBuffer),
                                         TRUE,
                                         FALSE,
                                         &Context,
                                         NULL);
-    } while (NT_SUCCESS(Status));
+    }
     if (!NT_SUCCESS(Status))
     {
-        DPRINT1("SMSS: Cannot find drive letter for system partition\n");
+        DPRINT1("SMSS: Cannot find drive letter for system partition: 0x%x\n", Status);
+#if (NTDDI_VERSION > NTDDI_WIN7SP1) || defined(__REACTOS__)
+        /* If we failed because no drive letter associated to the system
+         * volume was found (none was assigned to it), fall back to using
+         * the OS boot drive letter instead. Otherwise, fail altogether.
+         * NOTE: This has been introduced in a post-SP1 Windows 7 update. */
+        if (Status != STATUS_NO_MORE_ENTRIES)
+            return;
+        DirInfo->Name.Buffer = DirInfoBuffer.Buffer;
+        DirInfo->Name.Buffer[0] = SharedUserData->NtSystemRoot[0];
+        DirInfo->Name.Buffer[1] = SharedUserData->NtSystemRoot[1]; // == L':';
+#else
         return;
+#endif
     }
 
     /* Open the setup key again, for full access this time */
@@ -920,15 +968,15 @@ SmpTranslateSystemPartitionInformation(VOID)
     Status = NtOpenKey(&KeyHandle, KEY_ALL_ACCESS, &ObjectAttributes);
     if (!NT_SUCCESS(Status))
     {
-        DPRINT1("SMSS: Cannot open software setup key for writing: 0x%x\n",
-                Status);
+        DPRINT1("SMSS: Cannot open software setup key for writing: 0x%x\n", Status);
         return;
     }
 
     /* Wrap up the end of the link buffer */
-    wcsncpy(LinkBuffer, DirInfo->Name.Buffer, 2);
+    LinkBuffer[0] = DirInfo->Name.Buffer[0];
+    LinkBuffer[1] = DirInfo->Name.Buffer[1]; // == L':';
     LinkBuffer[2] = L'\\';
-    LinkBuffer[3] = L'\0';
+    LinkBuffer[3] = UNICODE_NULL;
 
     /* Now set this as the "BootDir" */
     RtlInitUnicodeString(&UnicodeString, L"BootDir");
@@ -1257,14 +1305,14 @@ SmpInitializeDosDevices(VOID)
     PSMP_REGISTRY_VALUE RegEntry;
     SECURITY_DESCRIPTOR_CONTROL OldFlag = 0;
     OBJECT_ATTRIBUTES ObjectAttributes;
-    UNICODE_STRING DestinationString;
+    UNICODE_STRING GlobalName;
     HANDLE DirHandle;
     PLIST_ENTRY NextEntry, Head;
 
-    /* Open the GLOBAL?? directory */
-    RtlInitUnicodeString(&DestinationString, L"\\??");
+    /* Open the \GLOBAL?? directory */
+    RtlInitUnicodeString(&GlobalName, L"\\??");
     InitializeObjectAttributes(&ObjectAttributes,
-                               &DestinationString,
+                               &GlobalName,
                                OBJ_CASE_INSENSITIVE | OBJ_OPENIF | OBJ_PERMANENT,
                                NULL,
                                NULL);
@@ -1274,7 +1322,7 @@ SmpInitializeDosDevices(VOID)
     if (!NT_SUCCESS(Status))
     {
         DPRINT1("SMSS: Unable to open %wZ directory - Status == %lx\n",
-                &DestinationString, Status);
+                &GlobalName, Status);
         return Status;
     }
 
@@ -1401,7 +1449,7 @@ SmpInitializeKnownDllsInternal(IN PUNICODE_STRING Directory,
                                IN PUNICODE_STRING Path)
 {
     HANDLE DirFileHandle, DirHandle, SectionHandle, FileHandle, LinkHandle;
-    UNICODE_STRING NtPath, DestinationString;
+    UNICODE_STRING NtPath, SymLinkName;
     OBJECT_ATTRIBUTES ObjectAttributes;
     NTSTATUS Status, Status1;
     PLIST_ENTRY NextEntry;
@@ -1474,9 +1522,9 @@ SmpInitializeKnownDllsInternal(IN PUNICODE_STRING Directory,
     }
 
     /* Create a symbolic link to the directory in the object manager */
-    RtlInitUnicodeString(&DestinationString, L"KnownDllPath");
+    RtlInitUnicodeString(&SymLinkName, L"KnownDllPath");
     InitializeObjectAttributes(&ObjectAttributes,
-                               &DestinationString,
+                               &SymLinkName,
                                OBJ_CASE_INSENSITIVE | OBJ_OPENIF | OBJ_PERMANENT,
                                DirHandle,
                                SmpPrimarySecurityDescriptor);
@@ -1493,7 +1541,7 @@ SmpInitializeKnownDllsInternal(IN PUNICODE_STRING Directory,
     {
         /* It wasn't, so bail out since the OS needs it to exist */
         DPRINT1("SMSS: Unable to create %wZ symbolic link - Status == %lx\n",
-                &DestinationString, Status);
+                &SymLinkName, Status);
         LinkHandle = NULL;
         goto Quickie;
     }
@@ -1628,12 +1676,12 @@ SmpInitializeKnownDlls(VOID)
 {
     NTSTATUS Status;
     PSMP_REGISTRY_VALUE RegEntry;
-    UNICODE_STRING DestinationString;
+    UNICODE_STRING KnownDllsName;
     PLIST_ENTRY Head, NextEntry;
 
     /* Call the internal function */
-    RtlInitUnicodeString(&DestinationString, L"\\KnownDlls");
-    Status = SmpInitializeKnownDllsInternal(&DestinationString, &SmpKnownDllPath);
+    RtlInitUnicodeString(&KnownDllsName, L"\\KnownDlls");
+    Status = SmpInitializeKnownDllsInternal(&KnownDllsName, &SmpKnownDllPath);
 
     /* Wipe out the list regardless of success */
     Head = &SmpKnownDllsList;
@@ -1721,7 +1769,7 @@ SmpCreateDynamicEnvironmentVariables(VOID)
                            0,
                            REG_SZ,
                            ValueData,
-                           (wcslen(ValueData) + 1) * sizeof(WCHAR));
+                           (ULONG)(wcslen(ValueData) + 1) * sizeof(WCHAR));
     if (!NT_SUCCESS(Status))
     {
         DPRINT1("SMSS: Failed writing %wZ environment variable - %x\n",
@@ -1759,7 +1807,7 @@ SmpCreateDynamicEnvironmentVariables(VOID)
                            0,
                            REG_SZ,
                            ValueData,
-                           (wcslen(ValueData) + 1) * sizeof(WCHAR));
+                           (ULONG)(wcslen(ValueData) + 1) * sizeof(WCHAR));
     if (!NT_SUCCESS(Status))
     {
         DPRINT1("SMSS: Failed writing %wZ environment variable - %x\n",
@@ -1770,14 +1818,14 @@ SmpCreateDynamicEnvironmentVariables(VOID)
 
     /* And now let's write the processor level */
     RtlInitUnicodeString(&ValueName, L"PROCESSOR_LEVEL");
-    swprintf(ValueBuffer, L"%u", ProcessorInfo.ProcessorLevel);
+    _swprintf(ValueBuffer, L"%u", ProcessorInfo.ProcessorLevel);
     DPRINT("Setting %wZ to %S\n", &ValueName, ValueBuffer);
     Status = NtSetValueKey(KeyHandle,
                            &ValueName,
                            0,
                            REG_SZ,
                            ValueBuffer,
-                           (wcslen(ValueBuffer) + 1) * sizeof(WCHAR));
+                           (ULONG)(wcslen(ValueBuffer) + 1) * sizeof(WCHAR));
     if (!NT_SUCCESS(Status))
     {
         DPRINT1("SMSS: Failed writing %wZ environment variable - %x\n",
@@ -1808,7 +1856,7 @@ SmpCreateDynamicEnvironmentVariables(VOID)
     Status = NtQueryValueKey(KeyHandle2,
                              &ValueName,
                              KeyValuePartialInformation,
-                             PartialInfo,
+                             ValueBuffer,
                              sizeof(ValueBuffer),
                              &ResultLength);
     if (!NT_SUCCESS(Status) ||
@@ -1817,7 +1865,8 @@ SmpCreateDynamicEnvironmentVariables(VOID)
         NtClose(KeyHandle2);
         NtClose(KeyHandle);
         DPRINT1("SMSS: Unable to read %wZ\\%wZ (Type %lu, Status 0x%x)\n",
-                &DestinationString, &ValueName, PartialInfo->Type, Status);
+                &DestinationString, &ValueName,
+                (NT_SUCCESS(Status) ? PartialInfo->Type : REG_NONE), Status);
         return Status;
     }
 
@@ -1837,7 +1886,7 @@ SmpCreateDynamicEnvironmentVariables(VOID)
     Status = NtQueryValueKey(KeyHandle2,
                              &ValueName,
                              KeyValuePartialInformation,
-                             PartialInfo2,
+                             ValueBuffer2,
                              sizeof(ValueBuffer2),
                              &ResultLength);
     NtClose(KeyHandle2);
@@ -1879,7 +1928,7 @@ SmpCreateDynamicEnvironmentVariables(VOID)
             if ((ProcessorInfo.ProcessorRevision >> 8) == 0xFF)
             {
                 /* These guys used a revision + stepping, so get the rev only */
-                swprintf(ValueBuffer, L"%02x", ProcessorInfo.ProcessorRevision & 0xFF);
+                _swprintf(ValueBuffer, L"%02x", ProcessorInfo.ProcessorRevision & 0xFF);
                 _wcsupr(ValueBuffer);
                 break;
             }
@@ -1887,12 +1936,12 @@ SmpCreateDynamicEnvironmentVariables(VOID)
         /* Modern Intel, as well as 64-bit CPUs use a revision without stepping */
         case PROCESSOR_ARCHITECTURE_IA64:
         case PROCESSOR_ARCHITECTURE_AMD64:
-            swprintf(ValueBuffer, L"%04x", ProcessorInfo.ProcessorRevision);
+            _swprintf(ValueBuffer, L"%04x", ProcessorInfo.ProcessorRevision);
             break;
 
         /* And anything else we'll just read the whole revision identifier */
         default:
-            swprintf(ValueBuffer, L"%u", ProcessorInfo.ProcessorRevision);
+            _swprintf(ValueBuffer, L"%u", ProcessorInfo.ProcessorRevision);
             break;
     }
 
@@ -1903,7 +1952,7 @@ SmpCreateDynamicEnvironmentVariables(VOID)
                            0,
                            REG_SZ,
                            ValueBuffer,
-                           (wcslen(ValueBuffer) + 1) * sizeof(WCHAR));
+                           (ULONG)(wcslen(ValueBuffer) + 1) * sizeof(WCHAR));
     if (!NT_SUCCESS(Status))
     {
         DPRINT1("SMSS: Failed writing %wZ environment variable - %x\n",
@@ -1914,14 +1963,14 @@ SmpCreateDynamicEnvironmentVariables(VOID)
 
     /* And finally, write the number of CPUs */
     RtlInitUnicodeString(&ValueName, L"NUMBER_OF_PROCESSORS");
-    swprintf(ValueBuffer, L"%d", BasicInfo.NumberOfProcessors);
+    _swprintf(ValueBuffer, L"%d", BasicInfo.NumberOfProcessors);
     DPRINT("Setting %wZ to %S\n", &ValueName, ValueBuffer);
     Status = NtSetValueKey(KeyHandle,
                            &ValueName,
                            0,
                            REG_SZ,
                            ValueBuffer,
-                           (wcslen(ValueBuffer) + 1) * sizeof(WCHAR));
+                           (ULONG)(wcslen(ValueBuffer) + 1) * sizeof(WCHAR));
     if (!NT_SUCCESS(Status))
     {
         DPRINT1("SMSS: Failed writing %wZ environment variable - %x\n",
@@ -1947,7 +1996,7 @@ SmpCreateDynamicEnvironmentVariables(VOID)
         Status = NtQueryValueKey(KeyHandle2,
                                  &ValueName,
                                  KeyValuePartialInformation,
-                                 PartialInfo,
+                                 ValueBuffer,
                                  sizeof(ValueBuffer),
                                  &ResultLength);
         NtClose(KeyHandle2);
@@ -1977,7 +2026,7 @@ SmpCreateDynamicEnvironmentVariables(VOID)
                                    0,
                                    REG_SZ,
                                    ValueBuffer,
-                                   (wcslen(ValueBuffer) + 1) * sizeof(WCHAR));
+                                   (ULONG)(wcslen(ValueBuffer) + 1) * sizeof(WCHAR));
             if (!NT_SUCCESS(Status))
             {
                 DPRINT1("SMSS: Failed writing %wZ environment variable - %x\n",
@@ -1989,7 +2038,7 @@ SmpCreateDynamicEnvironmentVariables(VOID)
         else
         {
             DPRINT1("SMSS: Failed to query SAFEBOOT option (Type %lu, Status 0x%x)\n",
-                    PartialInfo->Type, Status);
+                    (NT_SUCCESS(Status) ? PartialInfo->Type : REG_NONE), Status);
         }
     }
 
@@ -2243,6 +2292,7 @@ SmpLoadDataFromRegistry(OUT PUNICODE_STRING InitialCommand)
     InitializeListHead(&SmpSubSystemsToLoad);
     InitializeListHead(&SmpSubSystemsToDefer);
     InitializeListHead(&SmpExecuteList);
+
     SmpPagingFileInitialize();
 
     /* Initialize the SMSS environment */
@@ -2454,7 +2504,7 @@ SmpInit(IN PUNICODE_STRING InitialCommand,
 
     /* Initialize session parameters */
     SmpNextSessionId = 1;
-    SmpNextSessionIdScanMode = 0;
+    SmpNextSessionIdScanMode = FALSE;
     SmpDbgSsLoaded = FALSE;
 
     /* Create the initial security descriptors */
@@ -2532,7 +2582,7 @@ SmpInit(IN PUNICODE_STRING InitialCommand,
     {
         /* Autochk should've run now. Set the event and save the CSRSS handle */
         *ProcessHandle = SmpWindowsSubSysProcess;
-        NtSetEvent(EventHandle, 0);
+        NtSetEvent(EventHandle, NULL);
         NtClose(EventHandle);
     }
 

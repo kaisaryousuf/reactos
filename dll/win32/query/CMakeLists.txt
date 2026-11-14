@@ -1,9 +1,7 @@
 
 add_definitions(
-    -D__WINESRC__
     -DCOM_NO_WINDOWS_H)
 
-include_directories(${REACTOS_SOURCE_DIR}/sdk/include/reactos/wine)
 spec2def(query.dll query.spec)
 
 list(APPEND SOURCE
@@ -13,6 +11,7 @@ list(APPEND SOURCE
 
 add_library(query MODULE ${SOURCE})
 set_module_type(query win32dll)
-target_link_libraries(query wine)
+target_link_libraries(query wine wine_dll_register wine_dll_canunload)
 add_importlibs(query msvcrt kernel32 ntdll)
 add_cd_file(TARGET query DESTINATION reactos/system32 FOR all)
+set_wine_module(query)

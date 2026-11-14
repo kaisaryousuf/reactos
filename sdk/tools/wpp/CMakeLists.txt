@@ -1,4 +1,9 @@
 
+add_definitions(
+    -D_CRT_DECLARE_NONSTDC_NAMES=1
+    -D_CRT_NONSTDC_NO_DEPRECATE
+)
+
 if(MSVC)
     if(MSVC_VERSION LESS 1900)
         add_definitions(
@@ -15,7 +20,8 @@ if(MSVC)
     # Disable warnings
     add_compile_options(
         /wd4146  # "unary minus operator applied to unsigned type, result still unsigned"
-        /wd4244) # "'=': conversion from 'a' to 'b', possible loss of data"
+        /wd4244  # "'=': conversion from 'a' to 'b', possible loss of data"
+        /wd4090) # 'function': different 'const' qualifiers
 
 endif()
 
@@ -27,15 +33,16 @@ if(CMAKE_CROSSCOMPILING)
         -Dstrtoll=_strtoi64
         -Dopen=_open
         -Dclose=_close)
-    include_directories(${REACTOS_SOURCE_DIR}/sdk/include/reactos/wine)
+    include_directories(${REACTOS_SOURCE_DIR}/sdk/include/wine)
 endif()
 
+include_directories(${REACTOS_SOURCE_DIR}/sdk/tools/widl)
+
 FLEX_TARGET(pp_scanner ppl.l ${CMAKE_CURRENT_BINARY_DIR}/ppl.yy.c)
-BISON_TARGET(pp_parser ppy.y ${CMAKE_CURRENT_BINARY_DIR}/ppy.tab.c COMPILE_FLAGS "-p ppy_")
+BISON_TARGET(pp_parser ppy.y ${CMAKE_CURRENT_BINARY_DIR}/ppy.tab.c)
 ADD_FLEX_BISON_DEPENDENCY(pp_scanner pp_parser)
 
 list(APPEND SOURCE
-    preproc.c
     wpp.c)
 
 if(CMAKE_CROSSCOMPILING)

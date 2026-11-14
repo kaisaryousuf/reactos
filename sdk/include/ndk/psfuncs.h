@@ -56,6 +56,28 @@ PsGetProcessWin32Process(
 );
 
 NTKERNELAPI
+PEJOB
+NTAPI
+PsGetProcessJob(
+    _In_ PEPROCESS Process
+);
+
+NTKERNELAPI
+ULONG
+NTAPI
+PsGetJobUIRestrictionsClass(
+    _In_ PEJOB Job
+);
+
+NTKERNELAPI
+VOID
+NTAPI
+PsSetJobUIRestrictionsClass(
+    _In_ PEJOB Job,
+    _In_ ULONG UIRestrictionsClass
+);
+
+NTKERNELAPI
 NTSTATUS
 NTAPI
 PsSetProcessWin32Process(
@@ -416,19 +438,50 @@ NtCreateThread(
     _In_ BOOLEAN CreateSuspended
 );
 
+#define PROCESS_GET_NEXT_FLAGS_PREVIOUS_PROCESS 0x00000001
+
+NTSYSCALLAPI
+NTSTATUS
+NTAPI
+NtGetNextProcess(
+    _In_opt_ HANDLE ProcessHandle,
+    _In_ ACCESS_MASK DesiredAccess,
+    _In_ ULONG HandleAttributes,
+    _In_ ULONG Flags,
+    _Out_ PHANDLE NewProcessHandle);
+
+NTSYSCALLAPI
+NTSTATUS
+NTAPI
+NtGetNextThread(
+    _In_ HANDLE ProcessHandle,
+    _In_opt_ HANDLE ThreadHandle,
+    _In_ ACCESS_MASK DesiredAccess,
+    _In_ ULONG HandleAttributes,
+    _In_opt_ _Reserved_ ULONG Flags,
+    _Out_ PHANDLE NewThreadHandle);
+
 #ifndef NTOS_MODE_USER
 FORCEINLINE struct _TEB * NtCurrentTeb(VOID)
 {
 #if defined(_M_IX86)
-    return (PTEB)__readfsdword(0x18);
+    return (struct _TEB *)__readfsdword(0x18);
 #elif defined (_M_AMD64)
     return (struct _TEB *)__readgsqword(FIELD_OFFSET(NT_TIB, Self));
 #elif defined (_M_ARM)
-    return (struct _TEB *)KeGetPcr()->Used_Self;
+    // return (struct _TEB *)KeGetPcr()->Used_Self;
+    return (struct _TEB *)(ULONG_PTR)_MoveFromCoprocessor(CP15_TPIDRURW);
+#elif defined (_M_ARM64)
+    /* x18 is the PCR here, the context switch keeps its NtTib.Self on the TEB */
+    return (struct _TEB *)__readx18qword(FIELD_OFFSET(NT_TIB, Self));
+// #elif defined(_M_PPC)
+//     return (struct _TEB *)_read_teb_dword(0x18);
+#else
+#error Unsupported architecture
 #endif
 }
 #else
-struct _TEB * NtCurrentTeb(void);
+struct _TEB * NtCurrentTeb(VOID);
 #endif
 
 NTSYSCALLAPI
@@ -520,7 +573,8 @@ NTAPI
 NtQueryInformationProcess(
     _In_ HANDLE ProcessHandle,
     _In_ PROCESSINFOCLASS ProcessInformationClass,
-    _Out_ PVOID ProcessInformation,
+    _Out_writes_bytes_to_opt_(ProcessInformationLength, *ReturnLength)
+        PVOID ProcessInformation,
     _In_ ULONG ProcessInformationLength,
     _Out_opt_ PULONG ReturnLength
 );
@@ -532,7 +586,8 @@ NTAPI
 NtQueryInformationThread(
     _In_ HANDLE ThreadHandle,
     _In_ THREADINFOCLASS ThreadInformationClass,
-    _Out_ PVOID ThreadInformation,
+    _Out_writes_bytes_to_opt_(ThreadInformationLength, *ReturnLength)
+        PVOID ThreadInformation,
     _In_ ULONG ThreadInformationLength,
     _Out_opt_ PULONG ReturnLength
 );
@@ -575,7 +630,7 @@ NTAPI
 NtSetInformationProcess(
     _In_ HANDLE ProcessHandle,
     _In_ PROCESSINFOCLASS ProcessInformationClass,
-    _In_ PVOID ProcessInformation,
+    _In_reads_bytes_(ProcessInformationLength) PVOID ProcessInformation,
     _In_ ULONG ProcessInformationLength
 );
 

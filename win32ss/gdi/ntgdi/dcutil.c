@@ -328,7 +328,7 @@ DCU_SetDcUndeletable(HDC  hDC)
         return;
     }
 
-    dc->fs |= DC_FLAG_PERMANENT;
+    dc->fs |= DC_PERMANANT;
     DC_UnlockDc(dc);
     return;
 }
@@ -430,7 +430,7 @@ IntGdiSetHookFlags(HDC hDC, WORD Flags)
         return 0;
     }
 
-    wRet = dc->fs & DC_FLAG_DIRTY_RAO; // FIXME: Wrong flag!
+    wRet = dc->fs & DC_DIRTY_RAO; // FIXME: Wrong flag!
 
     /* Info in "Undocumented Windows" is slightly confusing. */
     DPRINT("DC %p, Flags %04x\n", hDC, Flags);
@@ -438,11 +438,11 @@ IntGdiSetHookFlags(HDC hDC, WORD Flags)
     if (Flags & DCHF_INVALIDATEVISRGN)
     {
         /* hVisRgn has to be updated */
-        dc->fs |= DC_FLAG_DIRTY_RAO;
+        dc->fs |= DC_DIRTY_RAO;
     }
     else if (Flags & DCHF_VALIDATEVISRGN || 0 == Flags)
     {
-        //dc->fs &= ~DC_FLAG_DIRTY_RAO;
+        //dc->fs &= ~DC_DIRTY_RAO;
     }
 
     DC_UnlockDc(dc);
@@ -492,7 +492,7 @@ NtGdiGetDCDword(
             SafeResult = pdcattr->lBreakExtra;
             break;
 
-        case GdiGerCharBreak:
+        case GdiGetCharBreak:
             SafeResult = pdcattr->cBreak;
             break;
 
@@ -729,7 +729,7 @@ NtGdiGetBoundsRect(
        else
        {
           RECTL rcRgn;
-          if (pdc->fs & DC_FLAG_DIRTY_RAO) CLIPPING_UpdateGCRegion(pdc);
+          if (pdc->fs & DC_DIRTY_RAO) CLIPPING_UpdateGCRegion(pdc);
           if(!REGION_GetRgnBox(pdc->prgnRao, &rcRgn))
           {
              REGION_GetRgnBox(pdc->prgnVis, &rcRgn);
@@ -870,7 +870,7 @@ TranslateCOLORREF(PDC pdc, COLORREF crColor)
 {
     PSURFACE psurfDC;
     PPALETTE ppalDC;
-    ULONG index, ulColor, iBitmapFormat;
+    ULONG index, ulColor;
     EXLATEOBJ exlo;
 
     /* Get the DC surface */
@@ -881,55 +881,63 @@ TranslateCOLORREF(PDC pdc, COLORREF crColor)
         psurfDC = psurfDefaultBitmap;
 
     /* Check what color type this is */
-    switch (crColor >> 24)
+    if ((crColor & 0xFF000000) == 0)
     {
-        case 0x00: /* RGB color */
-            break;
-
-        case 0x01: /* PALETTEINDEX */
-            index = crColor & 0xFFFFFF;
+        /* This is an RGB color, use it as is for target translation below */
+    }
+    else if (crColor & 0x01000000)
+    {
+        /* This is a PALETTEINDEX, translate it to RGB using the DC palette */
+        index = crColor & 0xFFFF;
+        ppalDC = pdc->dclevel.ppal;
+        if (index >= ppalDC->NumColors) index = 0;
+        crColor = PALETTE_ulGetRGBColorFromIndex(ppalDC, index);
+    }
+    else if (crColor & 0x02000000)
+    {
+        /* This is a PALETTERGB, get the nearest color from the DC palette */
+        if (pdc->dclevel.hpal != StockObjects[DEFAULT_PALETTE])
+        {
+            /* First find the nearest index in the dc palette */
             ppalDC = pdc->dclevel.ppal;
-            if (index >= ppalDC->NumColors) index = 0;
+            index = PALETTE_ulGetNearestIndex(ppalDC, crColor & 0xFFFFFF);
 
             /* Get the RGB value */
             crColor = PALETTE_ulGetRGBColorFromIndex(ppalDC, index);
-            break;
-
-        case 0x02: /* PALETTERGB */
-
-            if (pdc->dclevel.hpal != StockObjects[DEFAULT_PALETTE])
+        }
+        else
+        {
+            /* Use the raw RGB color */
+            crColor = crColor & 0x00FFFFFF;
+        }
+    }
+    else if ((crColor & 0x10FF0000) == 0x10FF0000) // DIBINDEX flag
+    {
+        /* This is a DIBINDEX, check if the surface has an indexed palette */
+        if (psurfDC->ppal->flFlags & PAL_INDEXED)
+        {
+            /* Use the low 8 bits as the index */
+            index = crColor & 0xFF;
+            if (index >= psurfDC->ppal->NumColors)
             {
-                /* First find the nearest index in the dc palette */
-                ppalDC = pdc->dclevel.ppal;
-                index = PALETTE_ulGetNearestIndex(ppalDC, crColor & 0xFFFFFF);
-
-                /* Get the RGB value */
-                crColor = PALETTE_ulGetRGBColorFromIndex(ppalDC, index);
+                index = 0;
             }
-            else
-            {
-                /* Use the pure color */
-                crColor = crColor & 0x00FFFFFF;
-            }
-            break;
-
-        case 0x10: /* DIBINDEX */
-            /* Mask the value to match the target bpp */
-            iBitmapFormat = psurfDC->SurfObj.iBitmapFormat;
-            if (iBitmapFormat == BMF_1BPP) index = crColor & 0x1;
-            else if (iBitmapFormat == BMF_4BPP) index = crColor & 0xf;
-            else if (iBitmapFormat == BMF_8BPP) index = crColor & 0xFF;
-            else if (iBitmapFormat == BMF_16BPP) index = crColor & 0xFFFF;
-            else index = crColor & 0xFFFFFF;
             return index;
-
-        default:
-            DPRINT("Unsupported color type %u passed\n", crColor >> 24);
-            crColor &= 0xFFFFFF;
+        }
+        else
+        {
+            /* Can't handle DIBINDEX, treat it as an RGB color */
+            crColor = crColor & 0x00FFFFFF;
+        }
+    }
+    else
+    {
+        DPRINT("Invalid COLORREF 0x08X\n", crColor);
+        crColor = 0;
     }
 
-    /* Initialize an XLATEOBJ from RGB to the target surface */
-    EXLATEOBJ_vInitialize(&exlo, &gpalRGB, psurfDC->ppal, 0xFFFFFF, 0, 0);
+    /* Initialize an XLATEOBJ from RGB to the target surface (no bg/fg colors) */
+    EXLATEOBJ_vInitialize(&exlo, &gpalRGB, psurfDC->ppal, CLR_INVALID, CLR_INVALID, CLR_INVALID);
 
     /* Translate the color to the target format */
     ulColor = XLATEOBJ_iXlate(&exlo.xlo, crColor);

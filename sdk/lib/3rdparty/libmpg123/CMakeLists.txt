@@ -5,14 +5,10 @@ add_definitions(
     -DNOXFERMEM
     -DHAVE_CONFIG_H
     -DEOVERFLOW=75
-    -Dlseek=_lseek
-    -Dread=_read
-    -Dstrdup=_strdup
-    -D_CRT_NONSTDC_NO_DEPRECATE
+    -Dstrcasecmp=_stricmp
+    -Dstrncasecmp=_strnicmp
     -D_DLL -D__USE_CRTIMP
     -D_CRT_NO_POSIX_ERROR_CODES)
-
-include_directories(BEFORE ${REACTOS_SOURCE_DIR}/sdk/include/reactos/libs/libmpg123)
 
 list(APPEND SOURCE
     compat/compat.c
@@ -44,9 +40,11 @@ list(APPEND SOURCE
 list(APPEND PCH_SKIP_SOURCE
     optimize.c)
 
-add_library(libmpg123
+add_library(libmpg123 STATIC
     ${SOURCE}
     ${PCH_SKIP_SOURCE})
-
-add_dependencies(libmpg123 psdk)
 add_pch(libmpg123 precomp.h "${PCH_SKIP_SOURCE}")
+
+target_link_libraries(libmpg123 oldnames)
+add_dependencies(libmpg123 psdk)
+target_include_directories(libmpg123 BEFORE PUBLIC ${REACTOS_SOURCE_DIR}/sdk/include/reactos/libs/libmpg123)

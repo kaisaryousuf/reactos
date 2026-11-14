@@ -2,7 +2,7 @@
  * PROJECT:     Dr. Watson crash reporter
  * LICENSE:     GPL-2.0+ (https://spdx.org/licenses/GPL-2.0+)
  * PURPOSE:     Debug loop
- * COPYRIGHT:   Copyright 2017 Mark Jansen (mark.jansen@reactos.org)
+ * COPYRIGHT:   Copyright 2017 Mark Jansen <mark.jansen@reactos.org>
  */
 
 #include "precomp.h"
@@ -117,7 +117,7 @@ bool UpdateFromEvent(DEBUG_EVENT& evt, DumpData& data)
     case EXCEPTION_DEBUG_EVENT:
         if (evt.u.Exception.dwFirstChance)
         {
-            switch(evt.u.Exception.ExceptionRecord.ExceptionCode)
+            switch((NTSTATUS)evt.u.Exception.ExceptionRecord.ExceptionCode)
             {
             case EXCEPTION_BREAKPOINT:
                 if (!data.FirstBPHit)

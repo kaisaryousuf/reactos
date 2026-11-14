@@ -81,9 +81,27 @@ ObCreateObjectType(
 NTKERNELAPI
 VOID
 NTAPI
+ObDereferenceObjectDeferDelete(
+    _In_ PVOID Object
+);
+
+NTKERNELAPI
+VOID
+NTAPI
 ObDereferenceSecurityDescriptor(
     _Inout_ PSECURITY_DESCRIPTOR SecurityDescriptor,
     _In_ ULONG Count
+);
+
+NTKERNELAPI
+BOOLEAN
+NTAPI
+ObFindHandleForObject(
+    _In_ PEPROCESS Process,
+    _In_ PVOID Object,
+    _In_ POBJECT_TYPE ObjectType,
+    _In_opt_ POBJECT_HANDLE_INFORMATION HandleInformation,
+    _Out_opt_ PHANDLE Handle
 );
 
 NTKERNELAPI
@@ -140,29 +158,29 @@ ObReferenceSecurityDescriptor(
 NTKERNELAPI
 NTSTATUS
 NTAPI
+ObSetHandleAttributes(
+    _In_ HANDLE Handle,
+    _In_ POBJECT_HANDLE_FLAG_INFORMATION HandleFlags,
+    _In_ KPROCESSOR_MODE PreviousMode
+);
+
+NTKERNELAPI
+NTSTATUS
+NTAPI
 ObSetSecurityObjectByPointer(
     _In_ PVOID Object,
     _In_ SECURITY_INFORMATION SecurityInformation,
     _In_ PSECURITY_DESCRIPTOR SecurityDescriptor
 );
 
+#if (NTDDI_VERSION >= NTDDI_WIN7) || defined(__REACTOS__)
 NTKERNELAPI
-BOOLEAN
-NTAPI
-ObFindHandleForObject(
-    _In_ PEPROCESS Process,
-    _In_ PVOID Object,
-    _In_ POBJECT_TYPE ObjectType,
-    _In_opt_ POBJECT_HANDLE_INFORMATION HandleInformation,
-    _Out_opt_ PHANDLE Handle
-);
-
-NTKERNELAPI
-VOID
-NTAPI
-ObDereferenceObjectDeferDelete(
+POBJECT_TYPE
+FASTCALL
+ObGetObjectType(
     _In_ PVOID Object
 );
+#endif
 
 #endif
 
@@ -323,7 +341,7 @@ NTAPI
 NtSetInformationObject(
     _In_ HANDLE ObjectHandle,
     _In_ OBJECT_INFORMATION_CLASS ObjectInformationClass,
-    _In_ PVOID ObjectInformation,
+    _In_reads_bytes_(Length) PVOID ObjectInformation,
     _In_ ULONG Length
 );
 

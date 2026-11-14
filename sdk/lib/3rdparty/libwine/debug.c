@@ -32,21 +32,10 @@
 #include "wine/debug.h"
 #include "wine/library.h"
 
-#include <rtlfuncs.h>
-#include <cmfuncs.h>
+#include "winternl.h"
 
 WINE_DECLARE_DEBUG_CHANNEL(pid);
 WINE_DECLARE_DEBUG_CHANNEL(tid);
-
-ULONG
-NTAPI
-vDbgPrintExWithPrefix(
-  IN LPCSTR Prefix,
-  IN ULONG ComponentId,
-  IN ULONG Level,
-  IN LPCSTR Format,
-  IN va_list ap);
-
 
 static const char * const debug_classes[] = { "fixme", "err", "warn", "trace" };
 
@@ -169,7 +158,7 @@ static void parse_options( const char *str )
         {
             for (i = 0; i < sizeof(debug_classes)/sizeof(debug_classes[0]); i++)
             {
-                int len = strlen(debug_classes[i]);
+                size_t len = strlen(debug_classes[i]);
                 if (len != (p - opt)) continue;
                 if (!memcmp( opt, debug_classes[i], len ))  /* found it */
                 {
@@ -281,6 +270,11 @@ int wine_dbg_printf( const char *format, ... )
     return ret;
 }
 
+int __wine_dbg_output( const char *str )
+{
+    return wine_dbg_printf( "%s", str );
+}
+
 /* printf with temp buffer allocation */
 const char *wine_dbg_sprintf( const char *format, ... )
 {
@@ -336,9 +330,9 @@ int ros_dbg_log( enum __wine_debug_class cls, struct __wine_debug_channel *chann
 static char *get_temp_buffer( size_t size )
 {
     static char *list[32];
-    static int pos;
+    static long pos = 0;
     char *ret;
-    int idx;
+    long idx;
 
     idx = interlocked_xchg_add( &pos, 1 ) % (sizeof(list)/sizeof(list[0]));
     if ((ret = realloc( list[idx], size ))) list[idx] = ret;
@@ -367,7 +361,7 @@ static const char *default_dbgstr_an( const char *str, int n )
         sprintf( res, "#%04x", LOWORD(str) );
         return res;
     }
-    if (n == -1) n = strlen(str);
+    if (n == -1) n = (int)strlen(str);
     if (n < 0) n = 0;
     size = 10 + min( 300, n * 4 );
     dst = res = funcs.get_temp_buffer( size );
@@ -477,63 +471,70 @@ static int default_dbg_vprintf( const char *format, va_list args )
 static int winefmt_default_dbg_vlog( enum __wine_debug_class cls, struct __wine_debug_channel *channel,
                                      const char *file, const char *func, const int line, const char *format, va_list args )
 {
-    int ret = 0;
+    char prefix[256];
+    static const int max_len = sizeof(prefix);
+    int len = 0;
 
     if (TRACE_ON(pid))
-        ret += wine_dbg_printf( "%04x:", HandleToULong(NtCurrentTeb()->ClientId.UniqueProcess) );
-    ret += wine_dbg_printf( "%04x:", HandleToULong(NtCurrentTeb()->ClientId.UniqueThread) );
+        len += _snprintf(prefix + len, max_len - len, "%04x:", HandleToULong(NtCurrentTeb()->ClientId.UniqueProcess));
+    len += wine_dbg_printf( "%04x:", HandleToULong(NtCurrentTeb()->ClientId.UniqueThread));
 
     if (cls < sizeof(debug_classes)/sizeof(debug_classes[0]))
-        ret += wine_dbg_printf( "%s:%s:%s ", debug_classes[cls], channel->name, func );
-    if (format)
-        ret += funcs.dbg_vprintf( format, args );
-    return ret;
+        len += _snprintf(prefix + len, max_len - len, "%s:%s:%s ", debug_classes[cls], channel->name, func);
+
+    prefix[max_len - 1] = 0;
+    return vDbgPrintExWithPrefix(prefix, -1, 0, format, args);
 }
+
 /* ReactOS format (default) */
 static int rosfmt_default_dbg_vlog( enum __wine_debug_class cls, struct __wine_debug_channel *channel,
                                     const char *file, const char *func, const int line, const char *format, va_list args )
 {
-    int ret = 0;
+    char prefix[256];
+    static const int max_len = sizeof(prefix);
+    int len = 0;
 
     if (TRACE_ON(tid))
-        ret += wine_dbg_printf( "%04x:", HandleToULong(NtCurrentTeb()->ClientId.UniqueThread) );
+        len += _snprintf(prefix + len, max_len - len, "%04x:", HandleToULong(NtCurrentTeb()->ClientId.UniqueThread));
 
     if (cls < sizeof(debug_classes)/sizeof(debug_classes[0]))
-        ret += wine_dbg_printf( "%s:", debug_classes[cls] );
+        len += _snprintf(prefix + len, max_len - len, "%s:", debug_classes[cls]);
 
     if (file && line)
-        ret += wine_dbg_printf( "(%s:%d) ", file, line );
+        len += _snprintf(prefix + len, max_len - len, "(%s:%d) ", file, line);
     else
-        ret += wine_dbg_printf( "%s:%s: ", channel->name, func );
+        len += _snprintf(prefix + len, max_len - len, "%s:%s: ", channel->name, func);
 
-    if (format)
-        ret += funcs.dbg_vprintf( format, args );
-    return ret;
+    prefix[max_len - 1] = 0;
+    return vDbgPrintExWithPrefix(prefix, -1, 0, format, args);
 }
+
 /* Extended format */
 static int extfmt_default_dbg_vlog( enum __wine_debug_class cls, struct __wine_debug_channel *channel,
                                     const char *file, const char *func, const int line, const char *format, va_list args )
 {
-    int ret = 0;
+    char prefix[256];
+    static const int max_len = sizeof(prefix);
+    int len = 0;
 
     if (TRACE_ON(pid) || TRACE_ON(tid))
     {
-        ret += wine_dbg_printf( "[%04x:%04x]:",
+        len += _snprintf(prefix + len, max_len - len, "[%04x:%04x]:",
                                 (TRACE_ON(pid) ? HandleToULong(NtCurrentTeb()->ClientId.UniqueProcess) : 0),
                                 (TRACE_ON(tid) ? HandleToULong(NtCurrentTeb()->ClientId.UniqueThread)  : 0) );
     }
 
     if (cls < sizeof(debug_classes)/sizeof(debug_classes[0]))
-        ret += wine_dbg_printf( "%s:", debug_classes[cls] );
+        len += _snprintf(prefix + len, max_len - len, "%s:", debug_classes[cls]);
 
     if (file && line)
-        ret += wine_dbg_printf( "(%s:%d):", file, line );
+        len += _snprintf(prefix + len, max_len - len, "(%s:%d):", file, line);
 
-    ret += wine_dbg_printf( "%s:%s ", channel->name, func );
+    if (len < max_len)
+        len += _snprintf(prefix + len, max_len - len, "%s:%s ", channel->name, func);
 
-    if (format)
-        ret += funcs.dbg_vprintf( format, args );
-    return ret;
+    prefix[max_len - 1] = 0;
+    return vDbgPrintExWithPrefix(prefix, -1, 0, format, args);
 }
 
 /* wrappers to use the function pointers */

@@ -56,7 +56,7 @@
 @ stdcall SdbGetBinaryTagData(ptr long)
 @ stdcall SdbGetDatabaseID(ptr ptr)
 @ stdcall SdbGetDatabaseInformation(ptr ptr)
-@ stub SdbGetDatabaseInformationByName
+@ stdcall SdbGetDatabaseInformationByName(wstr ptr)
 @ stub SdbGetDatabaseMatch
 @ stdcall SdbGetDatabaseVersion(wstr ptr ptr)
 @ stub SdbGetDllPath
@@ -160,7 +160,7 @@
 @ stdcall SdbWriteWORDTag(ptr long long)
 @ stdcall SE_DllLoaded(ptr)
 @ stdcall SE_DllUnloaded(ptr)
-@ stub SE_DynamicShim
+@ stdcall SE_DynamicShim(wstr ptr ptr str ptr)
 @ stub SE_DynamicUnshim
 @ stdcall SE_InstallAfterInit(ptr ptr)
 @ stdcall SE_InstallBeforeInit(ptr ptr)

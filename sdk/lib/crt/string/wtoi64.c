@@ -1,12 +1,11 @@
 #include <precomp.h>
-#include <internal/wine/msvcrt.h>
 
 /*********************************************************************
  *              _wtoi64_l (MSVCRT.@)
  */
 __int64 CDECL _wtoi64_l(const wchar_t *str, _locale_t locale)
 {
-    ULONGLONG RunningTotal = 0;
+    LONGLONG RunningTotal = 0;
     BOOL bMinus = FALSE;
 
     while (iswctype((int)*str, _SPACE)) {
@@ -104,7 +103,7 @@ __int64 CDECL _wcstoi64_l(const wchar_t *nptr,
             ret = _I64_MIN;
 #ifndef _LIBCNT_
             *_errno() = ERANGE;
-#endif            
+#endif
         } else
             ret = ret*base + v;
     }
@@ -191,7 +190,7 @@ unsigned __int64 CDECL _wcstoui64_l(const wchar_t *nptr,
     if(endptr)
         *endptr = (wchar_t*)nptr;
 
-    return negative ? -ret : ret;
+    return negative ? -(__int64)ret : ret;
 }
 
 /*********************************************************************

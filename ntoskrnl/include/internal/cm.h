@@ -5,9 +5,12 @@
  * PURPOSE:         Internal header for the Configuration Manager
  * PROGRAMMERS:     Alex Ionescu (alex.ionescu@reactos.org)
  */
-#define _CM_
-#include "cmlib.h"
+
+#pragma once
+
+#include <cmlib.h>
 #include <cmreslist.h>
+#include "cmboot.h"
 
 //
 // Define this if you want debugging support
@@ -38,12 +41,6 @@
 #endif
 
 //
-// Hack since bigkeys are not yet supported
-//
-#define ASSERT_VALUE_BIG(h, s)                          \
-    ASSERTMSG("Big keys not supported!\n", !CmpIsKeyValueBig(h, s));
-
-//
 // CM_KEY_CONTROL_BLOCK Signatures
 //
 #define CM_KCB_SIGNATURE                                'bKmC'
@@ -64,19 +61,14 @@
 //
 // CM_KEY_BODY Types
 //
-#define CM_KEY_BODY_TYPE                                0x6B793032
-
-//
-// CM_KEY_VALUE Types
-//
-#define CM_KEY_VALUE_SMALL                              0x4
-#define CM_KEY_VALUE_BIG                                0x3FD8
-#define CM_KEY_VALUE_SPECIAL_SIZE                       0x80000000
+#define CM_KEY_BODY_TYPE                                0x6B793032  // 'ky02'
 
 //
 // Number of various lists and hashes
 //
+#if 0 // See sdk/lib/cmlib/cmlib.h
 #define CMP_SECURITY_HASH_LISTS                         64
+#endif
 #define CMP_MAX_CALLBACKS                               100
 
 //
@@ -104,6 +96,12 @@
 #define CMP_ENLIST_KCB_LOCKED_EXCLUSIVE                 0x2
 
 //
+// CmpBuildAndLockKcbArray & CmpLockKcbArray Flags
+//
+#define CMP_LOCK_KCB_ARRAY_EXCLUSIVE                    0x1
+#define CMP_LOCK_KCB_ARRAY_SHARED                       0x2
+
+//
 // Unload Flags
 //
 #define CMP_UNLOCK_KCB_LOCKED                    0x1
@@ -112,7 +110,7 @@
 //
 // Maximum size of Value Cache
 //
-#define MAXIMUM_CACHED_DATA                             2 * PAGE_SIZE
+#define MAXIMUM_CACHED_DATA                             (2 * PAGE_SIZE)
 
 //
 // Hives to load on startup
@@ -126,6 +124,12 @@
     ((PAGE_SIZE - FIELD_OFFSET(CM_ALLOC_PAGE, AllocPage)) / sizeof(CM_KEY_CONTROL_BLOCK))
 #define CM_DELAYS_PER_PAGE                              \
     ((PAGE_SIZE - FIELD_OFFSET(CM_ALLOC_PAGE, AllocPage)) / sizeof(CM_DELAY_ALLOC))
+
+//
+// Cache Lookup & KCB Array constructs
+//
+#define CMP_SUBKEY_LEVELS_DEPTH_LIMIT   32
+#define CMP_KCBS_IN_ARRAY_LIMIT         (CMP_SUBKEY_LEVELS_DEPTH_LIMIT + 2)
 
 //
 // Value Search Results
@@ -156,6 +160,9 @@ typedef struct _CM_KEY_HASH_TABLE_ENTRY
     EX_PUSH_LOCK Lock;
     PKTHREAD Owner;
     PCM_KEY_HASH Entry;
+#if DBG
+    PVOID LockBackTrace[5];
+#endif
 } CM_KEY_HASH_TABLE_ENTRY, *PCM_KEY_HASH_TABLE_ENTRY;
 
 //
@@ -231,6 +238,9 @@ typedef struct _CM_KEY_BODY
     struct _CM_NOTIFY_BLOCK *NotifyBlock;
     HANDLE ProcessID;
     LIST_ENTRY KeyBodyList;
+
+    /* ReactOS specific -- boolean flag to avoid recursive locking of the KCB */
+    BOOLEAN KcbLocked;
 } CM_KEY_BODY, *PCM_KEY_BODY;
 
 //
@@ -371,71 +381,6 @@ typedef struct _CM_DELAY_DEREF_KCB_ITEM
 } CM_DELAY_DEREF_KCB_ITEM, *PCM_DELAY_DEREF_KCB_ITEM;
 
 //
-// Use Count Log and Entry
-//
-typedef struct _CM_USE_COUNT_LOG_ENTRY
-{
-    HCELL_INDEX Cell;
-    PVOID Stack[7];
-} CM_USE_COUNT_LOG_ENTRY, *PCM_USE_COUNT_LOG_ENTRY;
-
-typedef struct _CM_USE_COUNT_LOG
-{
-    USHORT Next;
-    USHORT Size;
-    CM_USE_COUNT_LOG_ENTRY Log[32];
-} CM_USE_COUNT_LOG, *PCM_USE_COUNT_LOG;
-
-//
-// Configuration Manager Hive Structure
-//
-typedef struct _CMHIVE
-{
-    HHIVE Hive;
-    HANDLE FileHandles[HFILE_TYPE_MAX];
-    LIST_ENTRY NotifyList;
-    LIST_ENTRY HiveList;
-    EX_PUSH_LOCK HiveLock;
-    PKTHREAD HiveLockOwner;
-    PKGUARDED_MUTEX ViewLock;
-    PKTHREAD ViewLockOwner;
-    EX_PUSH_LOCK WriterLock;
-    PKTHREAD WriterLockOwner;
-    PERESOURCE FlusherLock;
-    EX_PUSH_LOCK SecurityLock;
-    PKTHREAD HiveSecurityLockOwner;
-    LIST_ENTRY LRUViewListHead;
-    LIST_ENTRY PinViewListHead;
-    PFILE_OBJECT FileObject;
-    UNICODE_STRING FileFullPath;
-    UNICODE_STRING FileUserName;
-    USHORT MappedViews;
-    USHORT PinnedViews;
-    ULONG UseCount;
-    ULONG SecurityCount;
-    ULONG SecurityCacheSize;
-    LONG SecurityHitHint;
-    PCM_KEY_SECURITY_CACHE_ENTRY SecurityCache;
-    LIST_ENTRY SecurityHash[CMP_SECURITY_HASH_LISTS];
-    PKEVENT UnloadEvent;
-    PCM_KEY_CONTROL_BLOCK RootKcb;
-    BOOLEAN Frozen;
-    PWORK_QUEUE_ITEM UnloadWorkItem;
-    BOOLEAN GrowOnlyMode;
-    ULONG GrowOffset;
-    LIST_ENTRY KcbConvertListHead;
-    LIST_ENTRY KnodeConvertListHead;
-    PCM_CELL_REMAP_BLOCK CellRemapArray;
-    CM_USE_COUNT_LOG UseCountLog;
-    CM_USE_COUNT_LOG LockHiveLog;
-    ULONG Flags;
-    LIST_ENTRY TrustClassEntry;
-    ULONG FlushCount;
-    BOOLEAN HiveIsLoading;
-    PKTHREAD CreatorOwner;
-} CMHIVE, *PCMHIVE;
-
-//
 // Cached Value Index
 //
 typedef struct _CM_CACHED_VALUE_INDEX
@@ -474,6 +419,15 @@ typedef struct _HIVE_LIST_ENTRY
     BOOLEAN ThreadStarted;
     BOOLEAN Allocate;
 } HIVE_LIST_ENTRY, *PHIVE_LIST_ENTRY;
+
+//
+// Hash Cache Stack
+//
+typedef struct _CM_HASH_CACHE_STACK
+{
+    UNICODE_STRING NameOfKey;
+    ULONG ConvKey;
+} CM_HASH_CACHE_STACK, *PCM_HASH_CACHE_STACK;
 
 //
 // Parse context for Key Object
@@ -560,6 +514,15 @@ CmpDestroyHiveViewList(
 );
 
 //
+// Security Management Functions
+//
+NTSTATUS
+CmpAssignSecurityDescriptor(
+    IN PCM_KEY_CONTROL_BLOCK Kcb,
+    IN PSECURITY_DESCRIPTOR SecurityDescriptor
+);
+
+//
 // Security Cache Functions
 //
 VOID
@@ -636,36 +599,17 @@ CmpCompareNewValueDataAgainstKCBCache(
 );
 
 //
-// Registry Validation Functions
-//
-ULONG
-NTAPI
-CmCheckRegistry(
-    IN PCMHIVE Hive,
-    IN ULONG Flags
-);
-
-//
 // Hive List Routines
 //
-BOOLEAN
-NTAPI
-CmpGetHiveName(
-    IN  PCMHIVE Hive,
-    OUT PUNICODE_STRING HiveName
-);
-
 NTSTATUS
 NTAPI
 CmpAddToHiveFileList(
-    IN PCMHIVE Hive
-);
+    _Inout_ PCMHIVE Hive);
 
 VOID
 NTAPI
 CmpRemoveFromHiveFileList(
-    IN PCMHIVE Hive
-);
+    _Inout_ PCMHIVE Hive);
 
 //
 // Quota Routines
@@ -695,6 +639,7 @@ CmpFlushNotify(
     IN BOOLEAN LockHeld
 );
 
+CODE_SEG("INIT")
 VOID
 NTAPI
 CmpInitCallback(
@@ -704,24 +649,28 @@ CmpInitCallback(
 //
 // KCB Cache/Delay Routines
 //
+CODE_SEG("INIT")
 VOID
 NTAPI
 CmpInitializeCache(
     VOID
 );
 
+CODE_SEG("INIT")
 VOID
 NTAPI
 CmpInitCmPrivateDelayAlloc(
     VOID
 );
 
+CODE_SEG("INIT")
 VOID
 NTAPI
 CmpInitCmPrivateAlloc(
     VOID
 );
 
+CODE_SEG("INIT")
 VOID
 NTAPI
 CmpInitDelayDerefKCBEngine(
@@ -737,8 +686,8 @@ CmpCloseKeyObject(
     IN PEPROCESS Process OPTIONAL,
     IN PVOID Object,
     IN ACCESS_MASK GrantedAccess,
-    IN ULONG ProcessHandleCount,
-    IN ULONG SystemHandleCount
+    IN ULONG_PTR ProcessHandleCount,
+    IN ULONG_PTR SystemHandleCount
 );
 
 VOID
@@ -772,7 +721,8 @@ CmpSecurityMethod(
     IN OUT PULONG CapturedLength,
     IN OUT PSECURITY_DESCRIPTOR *ObjectSecurityDescriptor,
     IN POOL_TYPE PoolType,
-    IN PGENERIC_MAPPING GenericMapping
+    IN PGENERIC_MAPPING GenericMapping,
+    IN KPROCESSOR_MODE AccessMode
 );
 
 NTSTATUS
@@ -792,16 +742,17 @@ CmpQueryKeyName(
 NTSTATUS
 NTAPI
 CmpInitializeHive(
-    OUT PCMHIVE *CmHive,
-    IN ULONG OperationType,
-    IN ULONG HiveFlags,
-    IN ULONG FileType,
-    IN PVOID HiveData OPTIONAL,
-    IN HANDLE Primary,
-    IN HANDLE Log,
-    IN HANDLE External,
-    IN PCUNICODE_STRING FileName OPTIONAL,
-    IN ULONG CheckFlags
+    _Out_ PCMHIVE *CmHive,
+    _In_ ULONG OperationType,
+    _In_ ULONG HiveFlags,
+    _In_ ULONG FileType,
+    _In_opt_ PVOID HiveData,
+    _In_ HANDLE Primary,
+    _In_ HANDLE Log,
+    _In_ HANDLE External,
+    _In_ HANDLE Alternate,
+    _In_opt_ PCUNICODE_STRING FileName,
+    _In_ ULONG CheckFlags
 );
 
 NTSTATUS
@@ -964,6 +915,7 @@ VOID
 NTAPI
 CmpRemoveFromDelayedClose(IN PCM_KEY_CONTROL_BLOCK Kcb);
 
+CODE_SEG("INIT")
 VOID
 NTAPI
 CmpInitializeDelayedCloseTable(
@@ -1061,6 +1013,22 @@ DelistKeyBodyFromKCB(
 );
 
 VOID
+CmpUnLockKcbArray(
+    _In_ PULONG LockedKcbs
+);
+
+PULONG
+NTAPI
+CmpBuildAndLockKcbArray(
+    _In_ PCM_HASH_CACHE_STACK HashCacheStack,
+    _In_ ULONG KcbLockFlags,
+    _In_ PCM_KEY_CONTROL_BLOCK Kcb,
+    _Inout_ PULONG OuterStackArray,
+    _In_ ULONG TotalRemainingSubkeys,
+    _In_ ULONG MatchRemainSubkeyLevel
+);
+
+VOID
 NTAPI
 CmpAcquireTwoKcbLocksExclusiveByKey(
     IN ULONG ConvKey1,
@@ -1093,7 +1061,7 @@ CmpGetNextName(
 );
 
 //
-// Command Routines (Flush, Open, Close, Init);
+// Command Routines (Flush, Open, Close, Init)
 //
 BOOLEAN
 NTAPI
@@ -1156,21 +1124,14 @@ CmpCreateLinkNode(
     IN ULONG CreateOptions,
     IN PCM_PARSE_CONTEXT Context,
     IN PCM_KEY_CONTROL_BLOCK ParentKcb,
+    IN PULONG KcbsLocked,
     OUT PVOID *Object
 );
 
 //
 // Boot Routines
 //
-HCELL_INDEX
-NTAPI
-CmpFindControlSet(
-    IN PHHIVE SystemHive,
-    IN HCELL_INDEX RootCell,
-    IN PUNICODE_STRING SelectKeyName,
-    OUT PBOOLEAN AutoSelect
-);
-
+CODE_SEG("INIT")
 VOID
 NTAPI
 CmGetSystemControlValues(
@@ -1187,6 +1148,7 @@ CmpSaveBootControlSet(
 //
 // Hardware Configuration Routines
 //
+CODE_SEG("INIT")
 NTSTATUS
 NTAPI
 CmpInitializeRegistryNode(
@@ -1204,6 +1166,7 @@ CmpInitializeMachineDependentConfiguration(
     IN PLOADER_PARAMETER_BLOCK LoaderBlock
 );
 
+CODE_SEG("INIT")
 NTSTATUS
 NTAPI
 CmpInitializeHardwareConfiguration(
@@ -1259,10 +1222,10 @@ CmpFileWrite(
 BOOLEAN
 NTAPI
 CmpFileSetSize(
-    IN PHHIVE RegistryHive,
-    IN ULONG FileType,
-    IN ULONG FileSize,
-    IN ULONG OldFileSize
+    _In_ PHHIVE RegistryHive,
+    _In_ ULONG FileType,
+    _In_ ULONG FileSize,
+    _In_ ULONG OldFileSize
 );
 
 BOOLEAN
@@ -1358,16 +1321,16 @@ CmLoadKey(
 NTSTATUS
 NTAPI
 CmUnloadKey(
-    IN PCM_KEY_CONTROL_BLOCK Kcb,
-    IN ULONG Flags
+    _In_ PCM_KEY_CONTROL_BLOCK Kcb,
+    _In_ ULONG Flags
 );
 
 ULONG
 NTAPI
 CmpEnumerateOpenSubKeys(
-    IN PCM_KEY_CONTROL_BLOCK RootKcb,
-    IN BOOLEAN RemoveEmptyCacheEntries,
-    IN BOOLEAN DereferenceOpenedEntries
+    _In_ PCM_KEY_CONTROL_BLOCK RootKcb,
+    _In_ BOOLEAN RemoveEmptyCacheEntries,
+    _In_ BOOLEAN DereferenceOpenedEntries
 );
 
 HCELL_INDEX
@@ -1408,6 +1371,7 @@ CmSaveMergedKeys(
 //
 // Startup and Shutdown
 //
+CODE_SEG("INIT")
 BOOLEAN
 NTAPI
 CmInitSystem1(
@@ -1435,42 +1399,12 @@ CmpSetVersionData(
 //
 // Driver List Routines
 //
+CODE_SEG("INIT")
 PUNICODE_STRING*
 NTAPI
 CmGetSystemDriverList(
     VOID
 );
-
-BOOLEAN
-NTAPI
-CmpFindDrivers(
-    IN PHHIVE Hive,
-    IN HCELL_INDEX ControlSet,
-    IN SERVICE_LOAD_TYPE LoadType,
-    IN PWSTR BootFileSystem OPTIONAL,
-    IN PLIST_ENTRY DriverListHead
-);
-
-BOOLEAN
-NTAPI
-CmpSortDriverList(
-    IN PHHIVE Hive,
-    IN HCELL_INDEX ControlSet,
-    IN PLIST_ENTRY DriverListHead
-);
-
-BOOLEAN
-NTAPI
-CmpResolveDriverDependencies(
-    IN PLIST_ENTRY DriverListHead
-);
-
-BOOLEAN
-NTAPI
-CmpIsSafe(
-    IN PHHIVE Hive,
-    IN HCELL_INDEX SafeBootCell,
-    IN HCELL_INDEX DriverCell);
 
 //
 // Global variables accessible from all of Cm
@@ -1478,6 +1412,7 @@ CmpIsSafe(
 extern ULONG CmpTraceLevel;
 extern BOOLEAN CmpSpecialBootCondition;
 extern BOOLEAN CmpFlushOnLockRelease;
+extern ULONG CmpVolatileBoot;
 extern BOOLEAN CmpShareSystemHives;
 extern BOOLEAN CmpMiniNTBoot;
 extern BOOLEAN CmpNoVolatileCreates;
@@ -1510,14 +1445,14 @@ extern HIVE_LIST_ENTRY CmpMachineHiveList[];
 extern UNICODE_STRING CmSymbolicLinkValueName;
 extern UNICODE_STRING CmpSystemStartOptions;
 extern UNICODE_STRING CmpLoadOptions;
-extern BOOLEAN CmSelfHeal;
-extern BOOLEAN CmpSelfHeal;
 extern ULONG CmpBootType;
+extern ULONG CmSelfHeal;
+extern BOOLEAN CmpSelfHeal;
 extern HANDLE CmpRegistryRootHandle;
 extern BOOLEAN ExpInTextModeSetup;
 extern BOOLEAN InitIsWinPEMode;
 extern ULONG CmpHashTableSize;
-extern ULONG CmpDelayedCloseSize, CmpDelayedCloseIndex;
+extern ULONG CmpDelayedCloseSize;
 extern BOOLEAN CmpNoWrite;
 extern BOOLEAN CmpForceForceFlush;
 extern BOOLEAN CmpWasSetupBoot;
@@ -1525,6 +1460,9 @@ extern BOOLEAN CmpProfileLoaded;
 extern PCMHIVE CmiVolatileHive;
 extern LIST_ENTRY CmiKeyObjectListHead;
 extern BOOLEAN CmpHoldLazyFlush;
+extern ULONG CmpLazyFlushIntervalInSeconds;
+extern ULONG CmpLazyFlushHiveCount;
+extern BOOLEAN HvShutdownComplete;
 
 //
 // Inlined functions

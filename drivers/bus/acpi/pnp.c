@@ -78,7 +78,7 @@ Bus_FDO_PnP (
 {
     NTSTATUS            status;
     ULONG               length, prevcount, numPdosPresent;
-    PLIST_ENTRY         entry; 
+    PLIST_ENTRY         entry;
     PPDO_DEVICE_DATA    pdoData;
     PDEVICE_RELATIONS   relations, oldRelations;
 
@@ -105,7 +105,7 @@ Bus_FDO_PnP (
 
         //
         // The PnP manager is trying to stop the device
-        // for resource rebalancing. 
+        // for resource rebalancing.
         //
         SET_NEW_PNP_STATE(DeviceData->Common, StopPending);
         Irp->IoStatus.Status = STATUS_SUCCESS;
@@ -282,19 +282,25 @@ Bus_StartFdo (
 
     AcpiStatus = AcpiInitializeSubsystem();
     if(ACPI_FAILURE(AcpiStatus)){
-        DPRINT1("Unable to AcpiInitializeSubsystem\n");
+        DPRINT1("Unable to AcpiInitializeSubsystem: %s (0x%08X)\n",
+                AcpiFormatException(AcpiStatus),
+                AcpiStatus);
         return STATUS_UNSUCCESSFUL;
     }
 
     AcpiStatus = AcpiInitializeTables(NULL, 16, 0);
     if (ACPI_FAILURE(AcpiStatus)){
-        DPRINT1("Unable to AcpiInitializeTables\n");
-		return STATUS_UNSUCCESSFUL;
+        DPRINT1("Unable to AcpiInitializeTables: %s (0x%08X)\n",
+                AcpiFormatException(AcpiStatus),
+                AcpiStatus);
+        return STATUS_UNSUCCESSFUL;
     }
 
     AcpiStatus = AcpiLoadTables();
     if(ACPI_FAILURE(AcpiStatus)){
-        DPRINT1("Unable to AcpiLoadTables\n");
+        DPRINT1("Unable to AcpiLoadTables: %s (0x%08X)\n",
+                AcpiFormatException(AcpiStatus),
+                AcpiStatus);
         AcpiTerminate();
         return STATUS_UNSUCCESSFUL;
     }
@@ -309,7 +315,9 @@ Bus_StartFdo (
     /* Initialize ACPI bus manager */
     AcpiStatus = acpi_init();
     if (!ACPI_SUCCESS(AcpiStatus)) {
-        DPRINT1("acpi_init() failed with status 0x%X\n", AcpiStatus);
+        DPRINT1("acpi_init() failed: %s (0x%08X)\n",
+                AcpiFormatException(AcpiStatus),
+                AcpiStatus);
         AcpiTerminate();
         return STATUS_UNSUCCESSFUL;
     }
@@ -422,6 +430,8 @@ Bus_InitializePdo (
     PPDO_DEVICE_DATA pdoData;
     int acpistate;
     DEVICE_POWER_STATE ntState;
+    ACPI_HANDLE handle = 0;
+    ACPI_STATUS status = 0;
 
     PAGED_CODE ();
 
@@ -467,6 +477,17 @@ Bus_InitializePdo (
 
     pdoData->Common.DevicePowerState = ntState;
     pdoData->Common.SystemPowerState = FdoData->Common.SystemPowerState;
+
+    /* Identify the dock device */
+    if (pdoData->AcpiHandle)
+    {
+        status = AcpiGetHandle(pdoData->AcpiHandle, "_DCK", &handle);
+        if (ACPI_SUCCESS(status))
+        {
+            DPRINT("Found _DCK method!");
+            pdoData->DockDevice = TRUE;
+        }
+    }
 
     ExAcquireFastMutex (&FdoData->Mutex);
     InsertTailList(&FdoData->ListOfPDOs, &pdoData->Link);

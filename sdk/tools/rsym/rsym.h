@@ -26,7 +26,7 @@ typedef struct {
   USHORT s_nlnno;    /* number of line number entries    */
   ULONG  s_flags;    /* flags                            */
 } SCNHDR;
-#pragma pack(4)
+#pragma pack(push, 4)
 
 typedef struct _SYMBOLFILE_HEADER {
   ULONG SymbolsOffset;
@@ -135,7 +135,7 @@ typedef struct _STAB_ENTRY {
 #define C_ALIAS	 	105	/* duplicate tag		*/
 #define C_HIDDEN	106	/* ext symbol in dmert public lib */
 
-#pragma pack(1)
+#pragma pack(push, 1)
 typedef struct _COFF_SYMENT
 {
   union
@@ -155,20 +155,16 @@ typedef struct _COFF_SYMENT
   UCHAR e_sclass;
   UCHAR e_numaux;
 } COFF_SYMENT, *PCOFF_SYMENT;
-#pragma pack(4)
-
-#ifdef TARGET_i386
-typedef ULONG TARGET_ULONG_PTR;
-#else
-typedef ULONGLONG TARGET_ULONG_PTR;
-#endif
+#pragma pack(pop)
 
 typedef struct _ROSSYM_ENTRY {
-  TARGET_ULONG_PTR Address;
+  ULONG Address; /* RVA */
   ULONG FunctionOffset;
   ULONG FileOffset;
   ULONG SourceLine;
 } ROSSYM_ENTRY, *PROSSYM_ENTRY;
+
+#pragma pack(pop)
 
 #define ROUND_UP(N, S) (((N) + (S) - 1) & ~((S) - 1))
 

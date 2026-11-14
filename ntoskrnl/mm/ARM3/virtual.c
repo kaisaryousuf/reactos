@@ -46,157 +46,135 @@ MiCalculatePageCommitment(IN ULONG_PTR StartingAddress,
 {
     PMMPTE PointerPte, LastPte;
     PMMPDE PointerPde;
-    ULONG CommittedPages;
+    BOOLEAN OnPdeBoundary = TRUE;
+#if _MI_PAGING_LEVELS >= 3
+    PMMPPE PointerPpe;
+    BOOLEAN OnPpeBoundary = TRUE;
+#if _MI_PAGING_LEVELS == 4
+    PMMPXE PointerPxe;
+    BOOLEAN OnPxeBoundary = TRUE;
+#endif
+#endif
 
-    /* Compute starting and ending PTE and PDE addresses */
-    PointerPde = MiAddressToPde(StartingAddress);
+    /* Make sure this all makes sense */
+    ASSERT(PsGetCurrentThread()->OwnsProcessWorkingSetExclusive || PsGetCurrentThread()->OwnsProcessWorkingSetShared);
+    ASSERT(EndingAddress >= StartingAddress);
     PointerPte = MiAddressToPte(StartingAddress);
     LastPte = MiAddressToPte(EndingAddress);
 
-    /* Handle commited pages first */
-    if (Vad->u.VadFlags.MemCommit == 1)
-    {
-        /* This is a committed VAD, so Assume the whole range is committed */
-        CommittedPages = (ULONG)BYTES_TO_PAGES(EndingAddress - StartingAddress);
+    /*
+     * In case this is a committed VAD, assume the whole range is committed
+     * and count the individually decommitted pages.
+     * In case it is not, assume the range is not committed and count the individually committed pages.
+     */
+    ULONG_PTR CommittedPages = Vad->u.VadFlags.MemCommit ? BYTES_TO_PAGES(EndingAddress - StartingAddress) : 0;
 
-        /* Is the PDE demand-zero? */
-        PointerPde = MiPteToPde(PointerPte);
-        if (PointerPde->u.Long != 0)
-        {
-            /* It is not. Is it valid? */
-            if (PointerPde->u.Hard.Valid == 0)
-            {
-                /* Fault it in */
-                PointerPte = MiPteToAddress(PointerPde);
-                MiMakeSystemAddressValid(PointerPte, Process);
-            }
-        }
-        else
-        {
-            /* It is, skip it and move to the next PDE, unless we're done */
-            PointerPde++;
-            PointerPte = MiPteToAddress(PointerPde);
-            if (PointerPte > LastPte) return CommittedPages;
-        }
-
-        /* Now loop all the PTEs in the range */
-        while (PointerPte <= LastPte)
-        {
-            /* Have we crossed a PDE boundary? */
-            if (MiIsPteOnPdeBoundary(PointerPte))
-            {
-                /* Is this PDE demand zero? */
-                PointerPde = MiPteToPde(PointerPte);
-                if (PointerPde->u.Long != 0)
-                {
-                    /* It isn't -- is it valid? */
-                    if (PointerPde->u.Hard.Valid == 0)
-                    {
-                        /* Nope, fault it in */
-                        PointerPte = MiPteToAddress(PointerPde);
-                        MiMakeSystemAddressValid(PointerPte, Process);
-                    }
-                }
-                else
-                {
-                    /* It is, skip it and move to the next PDE */
-                    PointerPde++;
-                    PointerPte = MiPteToAddress(PointerPde);
-                    continue;
-                }
-            }
-
-            /* Is this PTE demand zero? */
-            if (PointerPte->u.Long != 0)
-            {
-                /* It isn't -- is it a decommited, invalid, or faulted PTE? */
-                if ((PointerPte->u.Soft.Protection == MM_DECOMMIT) &&
-                    (PointerPte->u.Hard.Valid == 0) &&
-                    ((PointerPte->u.Soft.Prototype == 0) ||
-                     (PointerPte->u.Soft.PageFileHigh == MI_PTE_LOOKUP_NEEDED)))
-                {
-                    /* It is, so remove it from the count of commited pages */
-                    CommittedPages--;
-                }
-            }
-
-            /* Move to the next PTE */
-            PointerPte++;
-        }
-
-        /* Return how many committed pages there still are */
-        return CommittedPages;
-    }
-
-    /* This is a non-commited VAD, so assume none of it is committed */
-    CommittedPages = 0;
-
-    /* Is the PDE demand-zero? */
-    PointerPde = MiPteToPde(PointerPte);
-    if (PointerPde->u.Long != 0)
-    {
-        /* It isn't -- is it invalid? */
-        if (PointerPde->u.Hard.Valid == 0)
-        {
-            /* It is, so page it in */
-            PointerPte = MiPteToAddress(PointerPde);
-            MiMakeSystemAddressValid(PointerPte, Process);
-        }
-    }
-    else
-    {
-        /* It is, so skip it and move to the next PDE */
-        PointerPde++;
-        PointerPte = MiPteToAddress(PointerPde);
-        if (PointerPte > LastPte) return CommittedPages;
-    }
-
-    /* Loop all the PTEs in this PDE */
     while (PointerPte <= LastPte)
     {
-        /* Have we crossed a PDE boundary? */
-        if (MiIsPteOnPdeBoundary(PointerPte))
+#if _MI_PAGING_LEVELS == 4
+        /* Check if PXE was ever paged in. */
+        if (OnPxeBoundary)
         {
-            /* Is this new PDE demand-zero? */
-            PointerPde = MiPteToPde(PointerPte);
-            if (PointerPde->u.Long != 0)
+            PointerPxe = MiPteToPxe(PointerPte);
+
+            /* Check that this loop is sane */
+            ASSERT(OnPpeBoundary);
+            ASSERT(OnPdeBoundary);
+
+            if (PointerPxe->u.Long == 0)
             {
-                /* It isn't. Is it valid? */
-                if (PointerPde->u.Hard.Valid == 0)
-                {
-                    /* It isn't, so make it valid */
-                    PointerPte = MiPteToAddress(PointerPde);
-                    MiMakeSystemAddressValid(PointerPte, Process);
-                }
-            }
-            else
-            {
-                /* It is, so skip it and move to the next one */
-                PointerPde++;
-                PointerPte = MiPteToAddress(PointerPde);
+                PointerPxe++;
+                PointerPte = MiPxeToPte(PointerPde);
                 continue;
             }
-        }
 
-        /* Is this PTE demand-zero? */
+            if (PointerPxe->u.Hard.Valid == 0)
+                MiMakeSystemAddressValid(MiPteToPpe(PointerPte), Process);
+        }
+        ASSERT(PointerPxe->u.Hard.Valid == 1);
+#endif
+
+#if _MI_PAGING_LEVELS >= 3
+        /* Now PPE */
+        if (OnPpeBoundary)
+        {
+            PointerPpe = MiPteToPpe(PointerPte);
+
+            /* Sanity again */
+            ASSERT(OnPdeBoundary);
+
+            if (PointerPpe->u.Long == 0)
+            {
+                PointerPpe++;
+                PointerPte = MiPpeToPte(PointerPpe);
+#if _MI_PAGING_LEVELS == 4
+                OnPxeBoundary = MiIsPteOnPxeBoundary(PointerPte);
+#endif
+                continue;
+            }
+
+            if (PointerPpe->u.Hard.Valid == 0)
+                MiMakeSystemAddressValid(MiPteToPde(PointerPte), Process);
+        }
+        ASSERT(PointerPpe->u.Hard.Valid == 1);
+#endif
+
+        /* Last level is the PDE */
+        if (OnPdeBoundary)
+        {
+            PointerPde = MiPteToPde(PointerPte);
+            if (PointerPde->u.Long == 0)
+            {
+                PointerPde++;
+                PointerPte = MiPdeToPte(PointerPde);
+#if _MI_PAGING_LEVELS >= 3
+                OnPpeBoundary = MiIsPteOnPpeBoundary(PointerPte);
+#if _MI_PAGING_LEVELS == 4
+                OnPxeBoundary = MiIsPteOnPxeBoundary(PointerPte);
+#endif
+#endif
+                continue;
+            }
+
+            if (PointerPde->u.Hard.Valid == 0)
+                MiMakeSystemAddressValid(PointerPte, Process);
+        }
+        ASSERT(PointerPde->u.Hard.Valid == 1);
+
+        /* Is this PTE demand zero? */
         if (PointerPte->u.Long != 0)
         {
-            /* Nope. Is it a valid, non-decommited, non-paged out PTE? */
-            if ((PointerPte->u.Soft.Protection != MM_DECOMMIT) ||
-                (PointerPte->u.Hard.Valid == 1) ||
-                ((PointerPte->u.Soft.Prototype == 1) &&
-                 (PointerPte->u.Soft.PageFileHigh != MI_PTE_LOOKUP_NEEDED)))
+            /* It isn't -- is it a decommited, invalid, or faulted PTE? */
+            if ((PointerPte->u.Hard.Valid == 0) &&
+                (PointerPte->u.Soft.Protection == MM_DECOMMIT) &&
+                ((PointerPte->u.Soft.Prototype == 0) ||
+                    (PointerPte->u.Soft.PageFileHigh == MI_PTE_LOOKUP_NEEDED)))
             {
-                /* It is! So we'll treat this as a committed page */
+                /* It is, so remove it from the count of committed pages if we have to */
+                if (Vad->u.VadFlags.MemCommit)
+                    CommittedPages--;
+            }
+            else if (!Vad->u.VadFlags.MemCommit)
+            {
+                /* It is a valid, non-decommited, non-paged out PTE. Count it in. */
                 CommittedPages++;
             }
         }
 
         /* Move to the next PTE */
         PointerPte++;
+        /* Manage page tables */
+        OnPdeBoundary = MiIsPteOnPdeBoundary(PointerPte);
+#if _MI_PAGING_LEVELS >= 3
+        OnPpeBoundary = MiIsPteOnPpeBoundary(PointerPte);
+#if _MI_PAGING_LEVELS == 4
+        OnPxeBoundary = MiIsPteOnPxeBoundary(PointerPte);
+#endif
+#endif
     }
 
-    /* Return how many committed pages we found in this VAD */
+    /* Make sure we didn't mess this up */
+    ASSERT(CommittedPages <= BYTES_TO_PAGES(EndingAddress - StartingAddress));
     return CommittedPages;
 }
 
@@ -315,10 +293,6 @@ MiDeleteSystemPageableVm(IN PMMPTE PointerPte,
         /* Make sure there's some data about the page */
         if (PointerPte->u.Long)
         {
-            /* As always, only handle current ARM3 scenarios */
-            ASSERT(PointerPte->u.Soft.Prototype == 0);
-            ASSERT(PointerPte->u.Soft.Transition == 0);
-
             /* Normally this is one possibility -- freeing a valid page */
             if (PointerPte->u.Hard.Valid)
             {
@@ -354,6 +328,10 @@ MiDeleteSystemPageableVm(IN PMMPTE PointerPte,
             }
             else
             {
+                /* As always, only handle current ARM3 scenarios */
+                ASSERT(PointerPte->u.Soft.Prototype == 0);
+                ASSERT(PointerPte->u.Soft.Transition == 0);
+
                 /*
                  * The only other ARM3 possibility is a demand zero page, which would
                  * mean freeing some of the paged pool pages that haven't even been
@@ -401,6 +379,12 @@ MiDeletePte(IN PMMPTE PointerPte,
     /* PFN lock must be held */
     MI_ASSERT_PFN_LOCK_HELD();
 
+    /* WorkingSet must be exclusively locked */
+    ASSERT(MM_ANY_WS_LOCK_HELD_EXCLUSIVE(PsGetCurrentThread()));
+
+    /* This must be current process. */
+    ASSERT(CurrentProcess == PsGetCurrentProcess());
+
     /* Capture the PTE */
     TempPte = *PointerPte;
 
@@ -428,9 +412,16 @@ MiDeletePte(IN PMMPTE PointerPte,
             /* Drop the reference on the page table. */
             MiDecrementShareCount(MiGetPfnEntry(Pfn1->u4.PteFrame), Pfn1->u4.PteFrame);
 
+            /* In case of shared page, the prototype PTE must be in transition, not the process one */
             ASSERT(Pfn1->u3.e1.PrototypePte == 0);
 
-            /* Make the page free. For prototypes, it will be made free when deleting the section object */
+            /* Delete the PFN */
+            MI_SET_PFN_DELETED(Pfn1);
+
+            /* It must be either free (refcount == 0) or being written (refcount == 1) */
+            ASSERT(Pfn1->u3.e2.ReferenceCount == Pfn1->u3.e1.WriteInProgress);
+
+            /* See if we must free it ourselves, or if it will be freed once I/O is over */
             if (Pfn1->u3.e2.ReferenceCount == 0)
             {
                 /* And it should be in standby or modified list */
@@ -441,7 +432,6 @@ MiDeletePte(IN PMMPTE PointerPte,
                 Pfn1->u3.e2.ReferenceCount++;
 
                 /* This will put it back in free list and clean properly up */
-                MI_SET_PFN_DELETED(Pfn1);
                 MiDecrementReferenceCount(Pfn1, PageFrameIndex);
             }
             return;
@@ -537,9 +527,10 @@ MiDeletePte(IN PMMPTE PointerPte,
 
 VOID
 NTAPI
-MiDeleteVirtualAddresses(IN ULONG_PTR Va,
-                         IN ULONG_PTR EndingAddress,
-                         IN PMMVAD Vad)
+MiDeleteVirtualAddresses(
+    _In_ ULONG_PTR Va,
+    _In_ ULONG_PTR EndingAddress,
+    _In_opt_ PMMVAD Vad)
 {
     PMMPTE PointerPte, PrototypePte, LastPrototypePte;
     PMMPDE PointerPde;
@@ -555,8 +546,8 @@ MiDeleteVirtualAddresses(IN ULONG_PTR Va,
     BOOLEAN AddressGap = FALSE;
     PSUBSECTION Subsection;
 
-    /* Get out if this is a fake VAD, RosMm will free the marea pages */
-    if ((Vad) && (Vad->u.VadFlags.Spare == 1)) return;
+    /* We should never get RosMm memory areas here */
+    ASSERT((Vad == NULL) || !MI_IS_MEMORY_AREA_VAD(Vad));
 
     /* Get the current process */
     CurrentProcess = PsGetCurrentProcess();
@@ -669,12 +660,13 @@ MiDeleteVirtualAddresses(IN ULONG_PTR Va,
         PointerPte = MiAddressToPte(Va);
         do
         {
+            /* Making sure the PDE is still valid */
+            ASSERT(PointerPde->u.Hard.Valid == 1);
+
             /* Capture the PDE and make sure it exists */
             TempPte = *PointerPte;
             if (TempPte.u.Long)
             {
-                MiDecrementPageTableReferences((PVOID)Va);
-
                 /* Check if the PTE is actually mapped in */
                 if (MI_IS_MAPPED_PTE(&TempPte))
                 {
@@ -719,41 +711,38 @@ MiDeleteVirtualAddresses(IN ULONG_PTR Va,
                     /* The PTE was never mapped, just nuke it here */
                     MI_ERASE_PTE(PointerPte);
                 }
+
+                if (MiDecrementPageTableReferences((PVOID)Va) == 0)
+                {
+                    ASSERT(PointerPde->u.Long != 0);
+
+                    /* Delete the PDE proper */
+                    MiDeletePde(PointerPde, CurrentProcess);
+
+                    /* Continue with the next PDE */
+                    Va = (ULONG_PTR)MiPdeToAddress(PointerPde + 1);
+
+                    /* Use this to detect address gaps */
+                    PointerPte++;
+
+                    PrototypePte++;
+                    break;
+                }
             }
 
             /* Update the address and PTE for it */
             Va += PAGE_SIZE;
             PointerPte++;
             PrototypePte++;
+        } while ((Va & (PDE_MAPPED_VA - 1)) && (Va <= EndingAddress));
 
-            /* Making sure the PDE is still valid */
-            ASSERT(PointerPde->u.Hard.Valid == 1);
-        }
-        while ((Va & (PDE_MAPPED_VA - 1)) && (Va <= EndingAddress));
-
-        /* The PDE should still be valid at this point */
-        ASSERT(PointerPde->u.Hard.Valid == 1);
-
-        /* Check remaining PTE count (go back 1 page due to above loop) */
-        if (MiQueryPageTableReferences((PVOID)(Va - PAGE_SIZE)) == 0)
-        {
-            if (PointerPde->u.Long != 0)
-            {
-                /* Delete the PTE proper */
-                MiDeletePte(PointerPde,
-                            MiPteToAddress(PointerPde),
-                            CurrentProcess,
-                            NULL);
-            }
-        }
-
-        /* Release the lock and get out if we're done */
+        /* Release the lock */
         MiReleasePfnLock(OldIrql);
+
         if (Va > EndingAddress) return;
 
-        /* Otherwise, we exited because we hit a new PDE boundary, so start over */
-        PointerPde = MiAddressToPde(Va);
-        AddressGap = FALSE;
+        /* Check if we exited the loop regularly */
+        AddressGap = (PointerPte != MiAddressToPte(Va));
     }
 }
 
@@ -1359,7 +1348,12 @@ MmFlushVirtualMemory(IN PEPROCESS Process,
 
     UNIMPLEMENTED;
 
-    return STATUS_NOT_IMPLEMENTED;
+    // Report actual state.
+    IoStatusBlock->Status = STATUS_NOT_IMPLEMENTED;
+    IoStatusBlock->Information = 0;
+
+    // Pretend success.
+    return STATUS_SUCCESS; // STATUS_NOT_IMPLEMENTED
 }
 
 ULONG
@@ -1686,7 +1680,6 @@ MiQueryMemoryBasicInformation(IN HANDLE ProcessHandle,
     MEMORY_BASIC_INFORMATION MemoryInfo;
     KAPC_STATE ApcState;
     KPROCESSOR_MODE PreviousMode = ExGetPreviousMode();
-    PMEMORY_AREA MemoryArea;
     SIZE_T ResultLength;
 
     /* Check for illegal addresses in user-space, or the shared memory area */
@@ -1861,7 +1854,7 @@ MiQueryMemoryBasicInformation(IN HANDLE ProcessHandle,
         /* Check if we were attached */
         if (ProcessHandle != NtCurrentProcess())
         {
-            /* Detach and derefernece the process */
+            /* Detach and dereference the process */
             KeUnstackDetachProcess(&ApcState);
             ObDereferenceObject(TargetProcess);
         }
@@ -1912,18 +1905,15 @@ MiQueryMemoryBasicInformation(IN HANDLE ProcessHandle,
         MemoryInfo.Type = MEM_MAPPED;
     }
 
-    /* Find the memory area the specified address belongs to */
-    MemoryArea = MmLocateMemoryAreaByAddress(&TargetProcess->Vm, BaseAddress);
-    ASSERT(MemoryArea != NULL);
-
-    /* Determine information dependent on the memory area type */
-    if (MemoryArea->Type == MEMORY_AREA_SECTION_VIEW)
+    /* Check if this is a RosMM VAD */
+    if (MI_IS_ROSMM_VAD(Vad))
     {
-        Status = MmQuerySectionView(MemoryArea, BaseAddress, &MemoryInfo, &ResultLength);
+        ASSERT(((PMEMORY_AREA)Vad)->Type == MEMORY_AREA_SECTION_VIEW);
+        Status = MmQuerySectionView((PMEMORY_AREA)Vad, BaseAddress, &MemoryInfo, &ResultLength);
         if (!NT_SUCCESS(Status))
         {
             DPRINT1("MmQuerySectionView failed. MemoryArea=%p (%p-%p), BaseAddress=%p\n",
-                    MemoryArea, MA_GetStartingAddress(MemoryArea), MA_GetEndingAddress(MemoryArea), BaseAddress);
+                    Vad, Vad->StartingVpn, Vad->EndingVpn, BaseAddress);
             ASSERT(NT_SUCCESS(Status));
         }
     }
@@ -1974,7 +1964,7 @@ MiQueryMemoryBasicInformation(IN HANDLE ProcessHandle,
     /* Check if we were attached */
     if (ProcessHandle != NtCurrentProcess())
     {
-        /* Detach and derefernece the process */
+        /* Detach and dereference the process */
         KeUnstackDetachProcess(&ApcState);
         ObDereferenceObject(TargetProcess);
     }
@@ -2018,19 +2008,87 @@ MiIsEntireRangeCommitted(IN ULONG_PTR StartingAddress,
 {
     PMMPTE PointerPte, LastPte;
     PMMPDE PointerPde;
-    BOOLEAN OnBoundary = TRUE;
+    BOOLEAN OnPdeBoundary = TRUE;
+#if _MI_PAGING_LEVELS >= 3
+    PMMPPE PointerPpe;
+    BOOLEAN OnPpeBoundary = TRUE;
+#if _MI_PAGING_LEVELS == 4
+    PMMPXE PointerPxe;
+    BOOLEAN OnPxeBoundary = TRUE;
+#endif
+#endif
+
     PAGED_CODE();
 
-    /* Get the PDE and PTE addresses */
-    PointerPde = MiAddressToPde(StartingAddress);
+    /* Check that we hols the right locks */
+    ASSERT(PsGetCurrentThread()->OwnsProcessWorkingSetExclusive || PsGetCurrentThread()->OwnsProcessWorkingSetShared);
+
+    /* Get the PTE addresses */
     PointerPte = MiAddressToPte(StartingAddress);
     LastPte = MiAddressToPte(EndingAddress);
 
     /* Loop all the PTEs */
     while (PointerPte <= LastPte)
     {
-        /* Check if we've hit an new PDE boundary */
-        if (OnBoundary)
+#if _MI_PAGING_LEVELS == 4
+        /* Check for new PXE boundary */
+        if (OnPxeBoundary)
+        {
+            PointerPxe = MiPteToPxe(PointerPte);
+
+            /* Check that this loop is sane */
+            ASSERT(OnPpeBoundary);
+            ASSERT(OnPdeBoundary);
+
+            if (PointerPxe->u.Long != 0)
+            {
+                /* Make it valid if needed */
+                if (PointerPxe->u.Hard.Valid == 0)
+                    MiMakeSystemAddressValid(MiPteToPpe(PointerPte), Process);
+            }
+            else
+            {
+                /* Is the entire VAD committed? If not, fail */
+                if (!Vad->u.VadFlags.MemCommit) return FALSE;
+
+                PointerPxe++;
+                PointerPte = MiPxeToPte(PointerPte);
+                continue;
+            }
+        }
+#endif
+
+#if _MI_PAGING_LEVELS >= 3
+        /* Check for new PPE boundary */
+        if (OnPpeBoundary)
+        {
+            PointerPpe = MiPteToPpe(PointerPte);
+
+            /* Check that this loop is sane */
+            ASSERT(OnPdeBoundary);
+
+            if (PointerPpe->u.Long != 0)
+            {
+                /* Make it valid if needed */
+                if (PointerPpe->u.Hard.Valid == 0)
+                    MiMakeSystemAddressValid(MiPteToPde(PointerPte), Process);
+            }
+            else
+            {
+                /* Is the entire VAD committed? If not, fail */
+                if (!Vad->u.VadFlags.MemCommit) return FALSE;
+
+                PointerPpe++;
+                PointerPte = MiPpeToPte(PointerPpe);
+#if _MI_PAGING_LEVELS == 4
+                OnPxeBoundary = MiIsPteOnPxeBoundary(PointerPte);
+#endif
+                continue;
+            }
+        }
+#endif
+        /* Check if we've hit a new PDE boundary */
+        if (OnPdeBoundary)
         {
             /* Is this PDE demand zero? */
             PointerPde = MiPteToPde(PointerPte);
@@ -2045,12 +2103,18 @@ MiIsEntireRangeCommitted(IN ULONG_PTR StartingAddress,
             }
             else
             {
+                /* Is the entire VAD committed? If not, fail */
+                if (!Vad->u.VadFlags.MemCommit) return FALSE;
+
                 /* The PTE was already valid, so move to the next one */
                 PointerPde++;
                 PointerPte = MiPdeToPte(PointerPde);
-
-                /* Is the entire VAD committed? If not, fail */
-                if (!Vad->u.VadFlags.MemCommit) return FALSE;
+#if _MI_PAGING_LEVELS >= 3
+                OnPpeBoundary = MiIsPteOnPpeBoundary(PointerPte);
+#if _MI_PAGING_LEVELS == 4
+                OnPxeBoundary = MiIsPteOnPxeBoundary(PointerPte);
+#endif
+#endif
 
                 /* New loop iteration with our new, on-boundary PTE. */
                 continue;
@@ -2078,51 +2142,17 @@ MiIsEntireRangeCommitted(IN ULONG_PTR StartingAddress,
 
         /* Move to the next PTE */
         PointerPte++;
-        OnBoundary = MiIsPteOnPdeBoundary(PointerPte);
+        OnPdeBoundary = MiIsPteOnPdeBoundary(PointerPte);
+#if _MI_PAGING_LEVELS >= 3
+        OnPpeBoundary = MiIsPteOnPpeBoundary(PointerPte);
+#if _MI_PAGING_LEVELS == 4
+        OnPxeBoundary = MiIsPteOnPxeBoundary(PointerPte);
+#endif
+#endif
     }
 
     /* All PTEs seem valid, and no VAD checks failed, the range is okay */
     return TRUE;
-}
-
-NTSTATUS
-NTAPI
-MiRosProtectVirtualMemory(IN PEPROCESS Process,
-                          IN OUT PVOID *BaseAddress,
-                          IN OUT PSIZE_T NumberOfBytesToProtect,
-                          IN ULONG NewAccessProtection,
-                          OUT PULONG OldAccessProtection OPTIONAL)
-{
-    PMEMORY_AREA MemoryArea;
-    PMMSUPPORT AddressSpace;
-    ULONG OldAccessProtection_;
-    NTSTATUS Status;
-
-    *NumberOfBytesToProtect = PAGE_ROUND_UP((ULONG_PTR)(*BaseAddress) + (*NumberOfBytesToProtect)) - PAGE_ROUND_DOWN(*BaseAddress);
-    *BaseAddress = (PVOID)PAGE_ROUND_DOWN(*BaseAddress);
-
-    AddressSpace = &Process->Vm;
-    MmLockAddressSpace(AddressSpace);
-    MemoryArea = MmLocateMemoryAreaByAddress(AddressSpace, *BaseAddress);
-    if (MemoryArea == NULL || MemoryArea->DeleteInProgress)
-    {
-        MmUnlockAddressSpace(AddressSpace);
-        return STATUS_UNSUCCESSFUL;
-    }
-
-    if (OldAccessProtection == NULL) OldAccessProtection = &OldAccessProtection_;
-
-    ASSERT(MemoryArea->Type == MEMORY_AREA_SECTION_VIEW);
-    Status = MmProtectSectionView(AddressSpace,
-                                  MemoryArea,
-                                  *BaseAddress,
-                                  *NumberOfBytesToProtect,
-                                  NewAccessProtection,
-                                  OldAccessProtection);
-
-    MmUnlockAddressSpace(AddressSpace);
-
-    return Status;
 }
 
 NTSTATUS
@@ -2133,7 +2163,6 @@ MiProtectVirtualMemory(IN PEPROCESS Process,
                        IN ULONG NewAccessProtection,
                        OUT PULONG OldAccessProtection OPTIONAL)
 {
-    PMEMORY_AREA MemoryArea;
     PMMVAD Vad;
     PMMSUPPORT AddressSpace;
     ULONG_PTR StartingAddress, EndingAddress;
@@ -2147,6 +2176,9 @@ MiProtectVirtualMemory(IN PEPROCESS Process,
     PETHREAD Thread = PsGetCurrentThread();
     TABLE_SEARCH_RESULT Result;
 
+    /* We must be attached */
+    ASSERT(Process == PsGetCurrentProcess());
+
     /* Calculate base address for the VAD */
     StartingAddress = (ULONG_PTR)PAGE_ALIGN((*BaseAddress));
     EndingAddress = (((ULONG_PTR)*BaseAddress + *NumberOfBytesToProtect - 1) | (PAGE_SIZE - 1));
@@ -2157,18 +2189,6 @@ MiProtectVirtualMemory(IN PEPROCESS Process,
     {
         DPRINT1("Invalid protection mask\n");
         return STATUS_INVALID_PAGE_PROTECTION;
-    }
-
-    /* Check for ROS specific memory area */
-    MemoryArea = MmLocateMemoryAreaByAddress(&Process->Vm, *BaseAddress);
-    if ((MemoryArea) && (MemoryArea->Type != MEMORY_AREA_OWNED_BY_ARM3))
-    {
-        /* Evil hack */
-        return MiRosProtectVirtualMemory(Process,
-                                         BaseAddress,
-                                         NumberOfBytesToProtect,
-                                         NewAccessProtection,
-                                         OldAccessProtection);
     }
 
     /* Lock the address space and make sure the process isn't already dead */
@@ -2191,6 +2211,23 @@ MiProtectVirtualMemory(IN PEPROCESS Process,
         DPRINT("Could not find a VAD for this allocation\n");
         Status = STATUS_CONFLICTING_ADDRESSES;
         goto FailPath;
+    }
+
+    /* Check if this is a ROSMM VAD */
+    if (MI_IS_ROSMM_VAD(Vad))
+    {
+        /* Not too shabby hack */
+        ASSERT(((PMEMORY_AREA)Vad)->Type == MEMORY_AREA_SECTION_VIEW);
+        *NumberOfBytesToProtect = PAGE_ROUND_UP((ULONG_PTR)(*BaseAddress) + (*NumberOfBytesToProtect)) - PAGE_ROUND_DOWN(*BaseAddress);
+        *BaseAddress = (PVOID)PAGE_ROUND_DOWN(*BaseAddress);
+        Status = MmProtectSectionView(AddressSpace,
+                                      (PMEMORY_AREA)Vad,
+                                      *BaseAddress,
+                                      *NumberOfBytesToProtect,
+                                      NewAccessProtection,
+                                      OldAccessProtection);
+        MmUnlockAddressSpace(AddressSpace);
+        return Status;
     }
 
     /* Make sure the address is within this VAD's boundaries */
@@ -2351,7 +2388,7 @@ MiProtectVirtualMemory(IN PEPROCESS Process,
                     MI_WRITE_INVALID_PTE(PointerPte, PteContents);
 #ifdef CONFIG_SMP
                     // FIXME: Should invalidate entry in every CPU TLB
-                    ASSERT(FALSE);
+                    ASSERT(KeNumberProcessors == 1);
 #endif
                     KeInvalidateTlbEntry(MiPteToAddress(PointerPte));
 
@@ -2410,7 +2447,13 @@ MiMakePdeExistAndMakeValid(IN PMMPDE PointerPde,
                            IN PEPROCESS TargetProcess,
                            IN KIRQL OldIrql)
 {
-   PMMPTE PointerPte, PointerPpe, PointerPxe;
+   PMMPTE PointerPte;
+#if _MI_PAGING_LEVELS >= 3
+   PMMPPE PointerPpe = MiPdeToPpe(PointerPde);
+#if _MI_PAGING_LEVELS == 4
+   PMMPXE PointerPxe = MiPdeToPxe(PointerPde);
+#endif
+#endif
 
    //
    // Sanity checks. The latter is because we only use this function with the
@@ -2420,15 +2463,15 @@ MiMakePdeExistAndMakeValid(IN PMMPDE PointerPde,
    ASSERT(OldIrql == MM_NOIRQL);
 
    //
-   // Also get the PPE and PXE. This is okay not to #ifdef because they will
-   // return the same address as the PDE on 2-level page table systems.
-   //
    // If everything is already valid, there is nothing to do.
    //
-   PointerPpe = MiAddressToPte(PointerPde);
-   PointerPxe = MiAddressToPde(PointerPde);
-   if ((PointerPxe->u.Hard.Valid) &&
+   if (
+#if _MI_PAGING_LEVELS == 4
+       (PointerPxe->u.Hard.Valid) &&
+#endif
+#if _MI_PAGING_LEVELS >= 3
        (PointerPpe->u.Hard.Valid) &&
+#endif
        (PointerPde->u.Hard.Valid))
    {
        return;
@@ -2448,6 +2491,7 @@ MiMakePdeExistAndMakeValid(IN PMMPDE PointerPde,
        //
        ASSERT(KeAreAllApcsDisabled() == TRUE);
 
+#if _MI_PAGING_LEVELS == 4
        //
        // First, make the PXE valid if needed
        //
@@ -2456,7 +2500,9 @@ MiMakePdeExistAndMakeValid(IN PMMPDE PointerPde,
            MiMakeSystemAddressValid(PointerPpe, TargetProcess);
            ASSERT(PointerPxe->u.Hard.Valid == 1);
        }
+#endif
 
+#if _MI_PAGING_LEVELS >= 3
        //
        // Next, the PPE
        //
@@ -2465,22 +2511,28 @@ MiMakePdeExistAndMakeValid(IN PMMPDE PointerPde,
            MiMakeSystemAddressValid(PointerPde, TargetProcess);
            ASSERT(PointerPpe->u.Hard.Valid == 1);
        }
+#endif
 
        //
        // And finally, make the PDE itself valid.
        //
        MiMakeSystemAddressValid(PointerPte, TargetProcess);
 
+       /* Do not increment Page table refcount here for the PDE, this must be managed by caller */
+
        //
        // This should've worked the first time so the loop is really just for
        // show -- ASSERT that we're actually NOT going to be looping.
        //
-       ASSERT(PointerPxe->u.Hard.Valid == 1);
-       ASSERT(PointerPpe->u.Hard.Valid == 1);
        ASSERT(PointerPde->u.Hard.Valid == 1);
-   } while (!(PointerPxe->u.Hard.Valid) ||
-            !(PointerPpe->u.Hard.Valid) ||
-            !(PointerPde->u.Hard.Valid));
+   } while (
+#if _MI_PAGING_LEVELS == 4
+        !PointerPxe->u.Hard.Valid ||
+#endif
+#if _MI_PAGING_LEVELS >= 3
+        !PointerPpe->u.Hard.Valid ||
+#endif
+        !PointerPde->u.Hard.Valid);
 }
 
 VOID
@@ -4410,7 +4462,6 @@ NtAllocateVirtualMemory(IN HANDLE ProcessHandle,
                         IN ULONG Protect)
 {
     PEPROCESS Process;
-    PMEMORY_AREA MemoryArea;
     PMMVAD Vad = NULL, FoundVad;
     NTSTATUS Status;
     PMMSUPPORT AddressSpace;
@@ -4422,7 +4473,7 @@ NtAllocateVirtualMemory(IN HANDLE ProcessHandle,
     PETHREAD CurrentThread = PsGetCurrentThread();
     KAPC_STATE ApcState;
     ULONG ProtectionMask, QuotaCharge = 0, QuotaFree = 0;
-    BOOLEAN Attached = FALSE, ChangeProtection = FALSE;
+    BOOLEAN Attached = FALSE, ChangeProtection = FALSE, QuotaCharged = FALSE;
     MMPTE TempPte;
     PMMPTE PointerPte, LastPte;
     PMMPDE PointerPde;
@@ -4682,6 +4733,16 @@ NtAllocateVirtualMemory(IN HANDLE ProcessHandle,
             StartingAddress = (ULONG_PTR)PBaseAddress;
         }
 
+        // Charge quotas for the VAD
+        Status = PsChargeProcessNonPagedPoolQuota(Process, sizeof(MMVAD_LONG));
+        if (!NT_SUCCESS(Status))
+        {
+            DPRINT1("Quota exceeded.\n");
+            goto FailPathNoLock;
+        }
+
+        QuotaCharged = TRUE;
+
         //
         // Allocate and initialize the VAD
         //
@@ -4711,6 +4772,7 @@ NtAllocateVirtualMemory(IN HANDLE ProcessHandle,
         if (!NT_SUCCESS(Status))
         {
             DPRINT1("Failed to insert the VAD!\n");
+            ExFreePoolWithTag(Vad, 'SdaV');
             goto FailPathNoLock;
         }
 
@@ -4815,9 +4877,7 @@ NtAllocateVirtualMemory(IN HANDLE ProcessHandle,
     //
     // Make sure this is an ARM3 section
     //
-    MemoryArea = MmLocateMemoryAreaByAddress(AddressSpace, (PVOID)PAGE_ROUND_DOWN(PBaseAddress));
-    ASSERT(MemoryArea != NULL);
-    if (MemoryArea->Type != MEMORY_AREA_OWNED_BY_ARM3)
+    if (MI_IS_ROSMM_VAD(FoundVad))
     {
         DPRINT1("Illegal commit of non-ARM3 section!\n");
         Status = STATUS_ALREADY_COMMITTED;
@@ -5116,6 +5176,10 @@ FailPathNoLock:
         }
         _SEH2_END;
     }
+    else if (QuotaCharged)
+    {
+        PsReturnProcessNonPagedPoolQuota(Process, sizeof(MMVAD_LONG));
+    }
 
     return Status;
 }
@@ -5130,12 +5194,13 @@ NtFreeVirtualMemory(IN HANDLE ProcessHandle,
                     IN PSIZE_T URegionSize,
                     IN ULONG FreeType)
 {
-    PMEMORY_AREA MemoryArea;
     SIZE_T PRegionSize;
     PVOID PBaseAddress;
     LONG_PTR AlreadyDecommitted, CommitReduction = 0;
+    LONG_PTR FirstCommit;
     ULONG_PTR StartingAddress, EndingAddress;
     PMMVAD Vad;
+    PMMVAD NewVad;
     NTSTATUS Status;
     PEPROCESS Process;
     PMMSUPPORT AddressSpace;
@@ -5285,18 +5350,14 @@ NtFreeVirtualMemory(IN HANDLE ProcessHandle,
     }
 
     //
-    // ARM3 does not yet handle protected VM
+    // Don't allow freeing of protected VADs (PEB/TEB/shared user page)
     //
-    ASSERT(Vad->u.VadFlags.NoChange == 0);
-
-    //
-    // Finally, make sure there is a ReactOS Mm MEMORY_AREA for this allocation
-    // and that is is an ARM3 memory area, and not a section view, as we currently
-    // don't support freeing those though this interface.
-    //
-    MemoryArea = MmLocateMemoryAreaByAddress(AddressSpace, (PVOID)StartingAddress);
-    ASSERT(MemoryArea);
-    ASSERT(MemoryArea->Type == MEMORY_AREA_OWNED_BY_ARM3);
+    if (Vad->u.VadFlags.NoChange != 0)
+    {
+        DPRINT1("Attempt to free protected VAD\n");
+        Status = STATUS_INVALID_PAGE_PROTECTION;
+        goto FailPath;
+    }
 
     //
     //  Now we can try the operation. First check if this is a RELEASE or a DECOMMIT
@@ -5338,6 +5399,7 @@ NtFreeVirtualMemory(IN HANDLE ProcessHandle,
             MiLockProcessWorkingSetUnsafe(Process, CurrentThread);
             ASSERT(Process->VadRoot.NumberGenericTableElements >= 1);
             MiRemoveNode((PMMADDRESS_NODE)Vad, &Process->VadRoot);
+            PsReturnProcessNonPagedPoolQuota(Process, sizeof(MMVAD_LONG));
         }
         else
         {
@@ -5361,6 +5423,8 @@ NtFreeVirtualMemory(IN HANDLE ProcessHandle,
                 if ((EndingAddress >> PAGE_SHIFT) == Vad->EndingVpn)
                 {
                     //
+                    // Case D (freeing the entire region)
+                    //
                     // This is the easiest one to handle -- it is identical to
                     // the code path above when the caller sets a zero region size
                     // and the whole VAD is destroyed
@@ -5368,19 +5432,24 @@ NtFreeVirtualMemory(IN HANDLE ProcessHandle,
                     MiLockProcessWorkingSetUnsafe(Process, CurrentThread);
                     ASSERT(Process->VadRoot.NumberGenericTableElements >= 1);
                     MiRemoveNode((PMMADDRESS_NODE)Vad, &Process->VadRoot);
+                    PsReturnProcessNonPagedPoolQuota(Process, sizeof(MMVAD_LONG));
                 }
                 else
                 {
+                    //
+                    // Case A (freeing a part at the beginning)
                     //
                     // This case is pretty easy too -- we compute a bunch of
                     // pages to decommit, and then push the VAD's starting address
                     // a bit further down, then decrement the commit charge
                     //
-                    // NOT YET IMPLEMENTED IN ARM3.
-                    //
-                    DPRINT1("Case A not handled\n");
-                    Status = STATUS_FREE_VM_NOT_AT_BASE;
-                    goto FailPath;
+                    MiLockProcessWorkingSetUnsafe(Process, CurrentThread);
+                    CommitReduction = MiCalculatePageCommitment(StartingAddress,
+                                                                EndingAddress,
+                                                                Vad,
+                                                                Process);
+                    Vad->u.VadFlags.CommitCharge -= CommitReduction;
+                    Vad->StartingVpn = (EndingAddress + 1) >> PAGE_SHIFT;
 
                     //
                     // After analyzing the VAD, set it to NULL so that we don't
@@ -5396,8 +5465,8 @@ NtFreeVirtualMemory(IN HANDLE ProcessHandle,
                 //
                 if ((EndingAddress >> PAGE_SHIFT) == Vad->EndingVpn)
                 {
-                    PMEMORY_AREA MemoryArea;
-
+                    //
+                    // Case C (freeing a part at the end)
                     //
                     // This is pretty easy and similar to case A. We compute the
                     // amount of pages to decommit, update the VAD's commit charge
@@ -5410,26 +5479,81 @@ NtFreeVirtualMemory(IN HANDLE ProcessHandle,
                                                                 Vad,
                                                                 Process);
                     Vad->u.VadFlags.CommitCharge -= CommitReduction;
-                    // For ReactOS: shrink the corresponding memory area
-                    MemoryArea = MmLocateMemoryAreaByAddress(AddressSpace, (PVOID)StartingAddress);
-                    ASSERT(Vad->StartingVpn == MemoryArea->VadNode.StartingVpn);
-                    ASSERT(Vad->EndingVpn == MemoryArea->VadNode.EndingVpn);
                     Vad->EndingVpn = (StartingAddress - 1) >> PAGE_SHIFT;
-                    MemoryArea->VadNode.EndingVpn = Vad->EndingVpn;
                 }
                 else
                 {
                     //
-                    // This is case B and the hardest one. Because we are removing
-                    // a chunk of memory from the very middle of the VAD, we must
-                    // actually split the VAD into two new VADs and compute the
-                    // commit charges for each of them, and reinsert new charges.
+                    // Case B (freeing a part in the middle)
                     //
-                    // NOT YET IMPLEMENTED IN ARM3.
+                    // This is the hardest one. Because we are removing a chunk
+                    // of memory from the very middle of the VAD, we must actually
+                    // split the VAD into two new VADs and compute the commit
+                    // charges for each of them, and reinsert new charges.
                     //
-                    DPRINT1("Case B not handled\n");
-                    Status = STATUS_FREE_VM_NOT_AT_BASE;
-                    goto FailPath;
+                    NewVad = ExAllocatePoolZero(NonPagedPool, sizeof(MMVAD_LONG), 'SdaV');
+                    if (NewVad == NULL)
+                    {
+                        DPRINT1("Failed to allocate a VAD!\n");
+                        Status = STATUS_INSUFFICIENT_RESOURCES;
+                        goto FailPath;
+                    }
+
+                    // Charge quota for the new VAD
+                    Status = PsChargeProcessNonPagedPoolQuota(Process, sizeof(MMVAD_LONG));
+
+                    if (!NT_SUCCESS(Status))
+                    {
+                        DPRINT1("Ran out of process quota whilst creating new VAD!\n");
+                        ExFreePoolWithTag(NewVad, 'SdaV');
+                        Status = STATUS_QUOTA_EXCEEDED;
+                        goto FailPath;
+                    }
+
+                    //
+                    // This new VAD describes the second chunk, so we keep the end
+                    // address of the original and adjust the start to point past
+                    // the released region.
+                    // The commit charge will be calculated below.
+                    //
+                    NewVad->StartingVpn = (EndingAddress + 1) >> PAGE_SHIFT;
+                    NewVad->EndingVpn = Vad->EndingVpn;
+                    NewVad->u.LongFlags = Vad->u.LongFlags;
+                    NewVad->u.VadFlags.CommitCharge = 0;
+                    ASSERT(NewVad->EndingVpn >= NewVad->StartingVpn);
+
+                    //
+                    // Get the commit charge for the released region
+                    //
+                    MiLockProcessWorkingSetUnsafe(Process, CurrentThread);
+                    CommitReduction = MiCalculatePageCommitment(StartingAddress,
+                                                                EndingAddress,
+                                                                Vad,
+                                                                Process);
+
+                    //
+                    // Adjust the end of the original VAD (first chunk).
+                    //
+                    Vad->EndingVpn = (StartingAddress - 1) >> PAGE_SHIFT;
+
+                    //
+                    // Now the addresses for both VADs are consistent,
+                    // so insert the new one.
+                    // ReactOS: This will take care of creating a second MEMORY_AREA.
+                    //
+                    MiInsertVad(NewVad, &Process->VadRoot);
+
+                    //
+                    // Calculate the commit charge for the first split.
+                    // The second chunk's size is the original size, minus the
+                    // released region's size, minus this first chunk.
+                    //
+                    FirstCommit = MiCalculatePageCommitment(Vad->StartingVpn << PAGE_SHIFT,
+                                                            StartingAddress - 1,
+                                                            Vad,
+                                                            Process);
+                    NewVad->u.VadFlags.CommitCharge = Vad->u.VadFlags.CommitCharge - CommitReduction - FirstCommit;
+                    Vad->u.VadFlags.CommitCharge = FirstCommit;
                 }
 
                 //
@@ -5447,101 +5571,101 @@ NtFreeVirtualMemory(IN HANDLE ProcessHandle,
         //
         MiDeleteVirtualAddresses(StartingAddress, EndingAddress, NULL);
         MiUnlockProcessWorkingSetUnsafe(Process, CurrentThread);
-        Status = STATUS_SUCCESS;
-
-FinalPath:
-        //
-        // Update the process counters
-        //
-        PRegionSize = EndingAddress - StartingAddress + 1;
-        Process->CommitCharge -= CommitReduction;
-        if (FreeType & MEM_RELEASE) Process->VirtualSize -= PRegionSize;
-
-        //
-        // Unlock the address space and free the VAD in failure cases. Next,
-        // detach from the target process so we can write the region size and the
-        // base address to the correct source process, and dereference the target
-        // process.
-        //
-        MmUnlockAddressSpace(AddressSpace);
-        if (Vad) ExFreePool(Vad);
-        if (Attached) KeUnstackDetachProcess(&ApcState);
-        if (ProcessHandle != NtCurrentProcess()) ObDereferenceObject(Process);
-
-        //
-        // Use SEH to safely return the region size and the base address of the
-        // deallocation. If we get an access violation, don't return a failure code
-        // as the deallocation *has* happened. The caller will just have to figure
-        // out another way to find out where it is (such as VirtualQuery).
-        //
-        _SEH2_TRY
-        {
-            *URegionSize = PRegionSize;
-            *UBaseAddress = (PVOID)StartingAddress;
-        }
-        _SEH2_EXCEPT(EXCEPTION_EXECUTE_HANDLER)
-        {
-        }
-        _SEH2_END;
-        return Status;
     }
-
-    //
-    // This is the decommit path. You cannot decommit from the following VADs in
-    // Windows, so fail the vall
-    //
-    if ((Vad->u.VadFlags.VadType == VadAwe) ||
-        (Vad->u.VadFlags.VadType == VadLargePages) ||
-        (Vad->u.VadFlags.VadType == VadRotatePhysical))
+    else
     {
-        DPRINT1("Trying to decommit from invalid VAD\n");
-        Status = STATUS_MEMORY_NOT_ALLOCATED;
-        goto FailPath;
-    }
-
-    //
-    // If the caller did not specify a region size, first make sure that this
-    // region is actually committed. If it is, then compute the ending address
-    // based on the VAD.
-    //
-    if (!PRegionSize)
-    {
-        if (((ULONG_PTR)PBaseAddress >> PAGE_SHIFT) != Vad->StartingVpn)
+        //
+        // This is the decommit path. You cannot decommit from the following VADs in
+        // Windows, so fail the vall
+        //
+        if ((Vad->u.VadFlags.VadType == VadAwe) ||
+            (Vad->u.VadFlags.VadType == VadLargePages) ||
+            (Vad->u.VadFlags.VadType == VadRotatePhysical))
         {
-            DPRINT1("Decomitting non-committed memory\n");
-            Status = STATUS_FREE_VM_NOT_AT_BASE;
+            DPRINT1("Trying to decommit from invalid VAD\n");
+            Status = STATUS_MEMORY_NOT_ALLOCATED;
             goto FailPath;
         }
-        EndingAddress = (Vad->EndingVpn << PAGE_SHIFT) | (PAGE_SIZE - 1);
+
+        //
+        // If the caller did not specify a region size, first make sure that this
+        // region is actually committed. If it is, then compute the ending address
+        // based on the VAD.
+        //
+        if (!PRegionSize)
+        {
+            if (((ULONG_PTR)PBaseAddress >> PAGE_SHIFT) != Vad->StartingVpn)
+            {
+                DPRINT1("Decomitting non-committed memory\n");
+                Status = STATUS_FREE_VM_NOT_AT_BASE;
+                goto FailPath;
+            }
+            EndingAddress = (Vad->EndingVpn << PAGE_SHIFT) | (PAGE_SIZE - 1);
+        }
+
+        //
+        // Decommit the PTEs for the range plus the actual backing pages for the
+        // range, then reduce that amount from the commit charge in the VAD
+        //
+        AlreadyDecommitted = MiDecommitPages((PVOID)StartingAddress,
+                                             MiAddressToPte(EndingAddress),
+                                             Process,
+                                             Vad);
+        CommitReduction = MiAddressToPte(EndingAddress) -
+                          MiAddressToPte(StartingAddress) +
+                          1 -
+                          AlreadyDecommitted;
+
+        ASSERT(CommitReduction >= 0);
+        ASSERT(Vad->u.VadFlags.CommitCharge >= CommitReduction);
+        Vad->u.VadFlags.CommitCharge -= CommitReduction;
+
+        //
+        // We are done, go to the exit path without freeing the VAD as it remains
+        // valid since we have not released the allocation.
+        //
+        Vad = NULL;
     }
 
-    //
-    // Decommit the PTEs for the range plus the actual backing pages for the
-    // range, then reduce that amount from the commit charge in the VAD
-    //
-    AlreadyDecommitted = MiDecommitPages((PVOID)StartingAddress,
-                                         MiAddressToPte(EndingAddress),
-                                         Process,
-                                         Vad);
-    CommitReduction = MiAddressToPte(EndingAddress) -
-                      MiAddressToPte(StartingAddress) +
-                      1 -
-                      AlreadyDecommitted;
-
-    ASSERT(CommitReduction >= 0);
-    ASSERT(Vad->u.VadFlags.CommitCharge >= CommitReduction);
-    Vad->u.VadFlags.CommitCharge -= CommitReduction;
-
-    //
-    // We are done, go to the exit path without freeing the VAD as it remains
-    // valid since we have not released the allocation.
-    //
-    Vad = NULL;
     Status = STATUS_SUCCESS;
-    goto FinalPath;
 
     //
-    // In the failure path, we detach and derefernece the target process, and
+    // Update the process counters
+    //
+    PRegionSize = EndingAddress - StartingAddress + 1;
+    Process->CommitCharge -= CommitReduction;
+    if (FreeType & MEM_RELEASE) Process->VirtualSize -= PRegionSize;
+
+    //
+    // Unlock the address space and free the VAD in failure cases. Next,
+    // detach from the target process so we can write the region size and the
+    // base address to the correct source process, and dereference the target
+    // process.
+    //
+    MmUnlockAddressSpace(AddressSpace);
+    if (Vad) ExFreePool(Vad);
+    if (Attached) KeUnstackDetachProcess(&ApcState);
+    if (ProcessHandle != NtCurrentProcess()) ObDereferenceObject(Process);
+
+    //
+    // Use SEH to safely return the region size and the base address of the
+    // deallocation. If we get an access violation, don't return a failure code
+    // as the deallocation *has* happened. The caller will just have to figure
+    // out another way to find out where it is (such as VirtualQuery).
+    //
+    _SEH2_TRY
+    {
+        *URegionSize = PRegionSize;
+        *UBaseAddress = (PVOID)StartingAddress;
+    }
+    _SEH2_EXCEPT(EXCEPTION_EXECUTE_HANDLER)
+    {
+    }
+    _SEH2_END;
+    return Status;
+
+    //
+    // In the failure path, we detach and dereference the target process, and
     // return whatever failure code was sent.
     //
 FailPath:

@@ -26,45 +26,211 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(shell);
 
-/***************************************************************************
- *  GetNextElement (internal function)
- *
- * Gets a part of a string till the first backslash.
- *
- * PARAMETERS
- *  pszNext [IN] string to get the element from
- *  pszOut  [IN] pointer to buffer which receives string
- *  dwOut   [IN] length of pszOut
- *
- *  RETURNS
- *    LPSTR pointer to first, not yet parsed char
- */
-
-LPCWSTR GetNextElementW (LPCWSTR pszNext, LPWSTR pszOut, DWORD dwOut)
+SHCONTF SHELL_GetDefaultFolderEnumSHCONTF()
 {
-    LPCWSTR pszTail = pszNext;
-    DWORD dwCopy;
+    SHCONTF Flags = SHCONTF_FOLDERS | SHCONTF_NONFOLDERS;
+    SHELLSTATE ss;
+    SHGetSetSettings(&ss, SSF_SHOWALLOBJECTS | SSF_SHOWSUPERHIDDEN, FALSE);
+    if (ss.fShowAllObjects)
+        Flags |= SHCONTF_INCLUDEHIDDEN;
+    if (ss.fShowSuperHidden)
+        Flags |= SHCONTF_INCLUDESUPERHIDDEN;
+     return Flags;
+}
 
-    TRACE ("(%s %p 0x%08x)\n", debugstr_w (pszNext), pszOut, dwOut);
+BOOL SHELL_IncludeItemInFolderEnum(IShellFolder *pSF, PCUITEMID_CHILD pidl, SFGAOF Query, SHCONTF Flags)
+{
+    if (SUCCEEDED(pSF->GetAttributesOf(1, &pidl, &Query)))
+    {
+        if (Query & SFGAO_NONENUMERATED)
+            return FALSE;
+        if ((Query & SFGAO_HIDDEN) && !(Flags & SHCONTF_INCLUDEHIDDEN))
+            return FALSE;
+        if ((Query & (SFGAO_HIDDEN | SFGAO_SYSTEM)) == (SFGAO_HIDDEN | SFGAO_SYSTEM) && !(Flags & SHCONTF_INCLUDESUPERHIDDEN))
+            return FALSE;
+        if ((Flags & (SHCONTF_FOLDERS | SHCONTF_NONFOLDERS)) != (SHCONTF_FOLDERS | SHCONTF_NONFOLDERS))
+            return (Flags & SHCONTF_FOLDERS) ? (Query & SFGAO_FOLDER) : !(Query & SFGAO_FOLDER);
+    }
+    return TRUE;
+}
 
-    *pszOut = 0x0000;
+static HRESULT
+MapSCIDToShell32FsColumn(const SHCOLUMNID *pscid, VARTYPE &vt)
+{
+    if (pscid->fmtid == FMTID_Storage)
+    {
+        switch (pscid->pid)
+        {
+            case PID_STG_NAME:        vt = VT_BSTR; return SHFSF_COL_NAME;
+            case PID_STG_SIZE:        vt = VT_UI8; return SHFSF_COL_SIZE;
+            case PID_STG_STORAGETYPE: vt = VT_BSTR; return SHFSF_COL_TYPE;
+            case PID_STG_ATTRIBUTES:  vt = VT_BSTR; return SHFSF_COL_FATTS;
+            case PID_STG_WRITETIME:   vt = VT_DATE; return SHFSF_COL_MDATE;
+        }
+    }
+    if (pscid->fmtid == FMTID_SummaryInformation && pscid->pid == PIDSI_COMMENTS)
+    {
+        vt = VT_BSTR;
+        return SHFSF_COL_COMMENT;
+    }
+    return E_INVALIDARG;
+}
 
-    if (!pszNext || !*pszNext)
-        return NULL;
+HRESULT
+SHELL_MapSCIDToColumn(IShellFolder2 *pSF, const SHCOLUMNID *pscid)
+{
+    for (UINT i = 0; i <= SHCIDS_COLUMNMASK; ++i)
+    {
+        SHCOLUMNID scid;
+        HRESULT hr = pSF->MapColumnToSCID(i, &scid);
+        if (FAILED(hr))
+            break;
+        if (IsEqualPropertyKey(scid, *pscid))
+            return i;
+    }
+    return E_FAIL;
+}
 
-    while (*pszTail && (*pszTail != (WCHAR) '\\'))
-        pszTail++;
+template<class T> static inline HRESULT
+GetDetailsOfAsStringVariant(T &pSF, PCUITEMID_CHILD pidl, UINT Column, VARIANT *pVar)
+{
+    V_VT(pVar) = VT_EMPTY;
+    SHELLDETAILS sd;
+    sd.str.uType = STRRET_CSTR;
+    HRESULT hr = pSF->GetDetailsOf(pidl, Column, &sd);
+    if (FAILED(hr))
+        return hr;
+    if (FAILED(hr = StrRetToBSTR(&sd.str, pidl, &V_BSTR(pVar))))
+        return hr;
+    V_VT(pVar) = VT_BSTR;
+    return hr;
+}
 
-    dwCopy = pszTail - pszNext + 1;
-    lstrcpynW (pszOut, pszNext, (dwOut < dwCopy) ? dwOut : dwCopy);
+HRESULT
+SHELL_GetDetailsOfAsStringVariant(IShellFolder2 *pSF, PCUITEMID_CHILD pidl, UINT Column, VARIANT *pVar)
+{
+    return GetDetailsOfAsStringVariant(pSF, pidl, Column, pVar);
+}
 
-    if (*pszTail)
-        pszTail++;
-    else
-        pszTail = NULL;
+HRESULT
+SHELL_GetDetailsOfAsStringVariant(IShellFolder *pSF, PCUITEMID_CHILD pidl, UINT Column, VARIANT *pVar)
+{
+    HRESULT hr;
+    CComPtr<IShellFolder2> pSF2;
+    if (SUCCEEDED(hr = pSF->QueryInterface(IID_PPV_ARG(IShellFolder2, &pSF2))))
+        return SHELL_GetDetailsOfAsStringVariant(pSF2, pidl, Column, pVar);
+    CComPtr<IShellDetails> pSD;
+    if (SUCCEEDED(hr = pSF->CreateViewObject(NULL, IID_PPV_ARG(IShellDetails, &pSD))))
+        return GetDetailsOfAsStringVariant(pSD, pidl, Column, pVar);
+    return hr;
+}
 
-    TRACE ("--(%s %s 0x%08x %p)\n", debugstr_w (pszNext), debugstr_w (pszOut), dwOut, pszTail);
-    return pszTail;
+HRESULT
+SHELL_GetDetailsOfColumnAsVariant(IShellFolder2 *pSF, PCUITEMID_CHILD pidl, UINT Column, VARTYPE vt, VARIANT *pVar)
+{
+    HRESULT hr = SHELL_GetDetailsOfAsStringVariant(pSF, pidl, Column, pVar);
+    if (FAILED(hr))
+        return hr;
+    if (vt == VT_EMPTY)
+    {
+        SHCOLSTATEF state;
+        if (FAILED(pSF->GetDefaultColumnState(Column, &state)))
+            state = SHCOLSTATE_TYPE_STR;
+        if ((state & SHCOLSTATE_TYPEMASK) == SHCOLSTATE_TYPE_INT)
+            vt = VT_I8;
+        else if ((state & SHCOLSTATE_TYPEMASK) == SHCOLSTATE_TYPE_DATE)
+            vt = VT_DATE;
+        else
+            vt = VT_BSTR;
+    }
+    if (vt != VT_BSTR)
+        VariantChangeType(pVar, pVar, 0, vt);
+    return hr;
+}
+
+HRESULT
+SH32_GetDetailsOfPKeyAsVariant(IShellFolder2 *pSF, PCUITEMID_CHILD pidl, const SHCOLUMNID *pscid, VARIANT *pVar, BOOL UseFsColMap)
+{
+    // CFSFolder and CRegFolder uses the SHFSF_COL columns and can use the faster and better version,
+    // everyone else must ask the folder to map the SCID to a column.
+    VARTYPE vt = VT_EMPTY;
+    HRESULT hr = UseFsColMap ? MapSCIDToShell32FsColumn(pscid, vt) : SHELL_MapSCIDToColumn(pSF, pscid);
+    return SUCCEEDED(hr) ? SHELL_GetDetailsOfColumnAsVariant(pSF, pidl, hr, vt, pVar) : hr;
+}
+
+HRESULT
+SHELL_QueryInfoTipAlloc(_In_ IShellFolder* pSF, _In_ DWORD dwFlags, _In_ LPCITEMIDLIST pidl, _Out_ PWSTR *ppTip)
+{
+    if (!pidl)
+        return E_INVALIDARG;
+    CComPtr<IQueryInfo> pQI;
+    HRESULT hr = pSF->GetUIObjectOf(NULL, 1, &pidl, IID_NULL_PPV_ARG(IQueryInfo, &pQI));
+    if (FAILED(hr))
+        return hr;
+    hr = pQI->GetInfoTip(dwFlags, ppTip); // Note: *ppTip can be NULL if there is no tip
+    return SUCCEEDED(hr) && !*ppTip ? S_FALSE : hr;
+}
+
+HRESULT SHELL_CreateAbsolutePidl(IShellFolder *pSF, PCUIDLIST_RELATIVE pidlChild, PIDLIST_ABSOLUTE *ppPidl)
+{
+    PIDLIST_ABSOLUTE pidlFolder;
+    HRESULT hr = SHGetIDListFromObject(pSF, &pidlFolder);
+    if (SUCCEEDED(hr))
+    {
+        hr = SHILCombine(pidlFolder, pidlChild, ppPidl);
+        ILFree(pidlFolder);
+    }
+    return hr;
+}
+
+HRESULT
+Shell_NextElement(
+    _Inout_ LPWSTR *ppch,
+    _Out_ LPWSTR pszOut,
+    _In_ INT cchOut,
+    _In_ BOOL bValidate)
+{
+    *pszOut = UNICODE_NULL;
+
+    if (!*ppch)
+        return S_FALSE;
+
+    HRESULT hr;
+    LPWSTR pchNext = wcschr(*ppch, L'\\');
+    if (pchNext)
+    {
+        if (*ppch < pchNext)
+        {
+            /* Get an element */
+            StringCchCopyNW(pszOut, cchOut, *ppch, pchNext - *ppch);
+            ++pchNext;
+
+            if (!*pchNext)
+                pchNext = NULL; /* No next */
+
+            hr = S_OK;
+        }
+        else /* Double backslashes found? */
+        {
+            pchNext = NULL;
+            hr = E_INVALIDARG;
+        }
+    }
+    else /* No more next */
+    {
+        StringCchCopyW(pszOut, cchOut, *ppch);
+        hr = S_OK;
+    }
+
+    *ppch = pchNext; /* Go next */
+
+    if (hr == S_OK && bValidate && !PathIsValidElement(pszOut))
+    {
+        *pszOut = UNICODE_NULL;
+        hr = E_INVALIDARG;
+    }
+
+    return hr;
 }
 
 HRESULT SHELL32_ParseNextElement (IShellFolder2 * psf, HWND hwndOwner, LPBC pbc,
@@ -164,10 +330,10 @@ HRESULT SHELL32_BindToSF (LPCITEMIDLIST pidlRoot, PERSIST_FOLDER_TARGET_INFO* pp
         return E_FAIL;
 
     CComPtr<IShellFolder> psf;
-    HRESULT hr = SHELL32_CoCreateInitSF(pidlRoot, 
-                                        ppfti, 
-                                        pidlChild, 
-                                        clsid, 
+    HRESULT hr = SHELL32_CoCreateInitSF(pidlRoot,
+                                        ppfti,
+                                        pidlChild,
+                                        clsid,
                                         IID_PPV_ARG(IShellFolder, &psf));
     ILFree(pidlChild);
 
@@ -240,8 +406,9 @@ HRESULT SHELL32_CompareDetails(IShellFolder2* isf, LPARAM lParam, LPCITEMIDLIST 
     SHELLDETAILS sd;
     WCHAR wszItem1[MAX_PATH], wszItem2[MAX_PATH];
     HRESULT hres;
+    UINT col = LOWORD(lParam); // Column index without SHCIDS_* flags
 
-    hres = isf->GetDetailsOf(pidl1, lParam, &sd);
+    hres = isf->GetDetailsOf(pidl1, col, &sd);
     if (FAILED(hres))
         return MAKE_COMPARE_HRESULT(1);
 
@@ -249,7 +416,7 @@ HRESULT SHELL32_CompareDetails(IShellFolder2* isf, LPARAM lParam, LPCITEMIDLIST 
     if (FAILED(hres))
         return MAKE_COMPARE_HRESULT(1);
 
-    hres = isf->GetDetailsOf(pidl2, lParam, &sd);
+    hres = isf->GetDetailsOf(pidl2, col, &sd);
     if (FAILED(hres))
         return MAKE_COMPARE_HRESULT(1);
 
@@ -257,65 +424,107 @@ HRESULT SHELL32_CompareDetails(IShellFolder2* isf, LPARAM lParam, LPCITEMIDLIST 
     if (FAILED(hres))
         return MAKE_COMPARE_HRESULT(1);
 
-    int ret = wcsicmp(wszItem1, wszItem2);
+    int ret = CFSFolder::CompareUiStrings(wszItem1, wszItem2, lParam);
     if (ret == 0)
         return SHELL32_CompareChildren(isf, lParam, pidl1, pidl2);
 
     return MAKE_COMPARE_HRESULT(ret);
 }
 
-void AddClassKeyToArray(const WCHAR * szClass, HKEY* array, UINT* cKeys)
+void CloseRegKeyArray(HKEY* array, UINT cKeys)
+{
+    for (UINT i = 0; i < cKeys; ++i)
+        RegCloseKey(array[i]);
+}
+
+LSTATUS AddClassKeyToArray(const WCHAR* szClass, HKEY* array, UINT* cKeys)
 {
     if (*cKeys >= 16)
-        return;
+        return ERROR_MORE_DATA;
 
     HKEY hkey;
     LSTATUS result = RegOpenKeyExW(HKEY_CLASSES_ROOT, szClass, 0, KEY_READ | KEY_QUERY_VALUE, &hkey);
-    if (result != ERROR_SUCCESS)
-        return;
-
-    array[*cKeys] = hkey;
-    *cKeys += 1;
+    if (result == ERROR_SUCCESS)
+    {
+        array[*cKeys] = hkey;
+        *cKeys += 1;
+    }
+    return result;
 }
 
-void AddFSClassKeysToArray(PCUITEMID_CHILD pidl, HKEY* array, UINT* cKeys)
+LSTATUS AddClsidKeyToArray(REFCLSID clsid, HKEY* array, UINT* cKeys)
 {
+    WCHAR path[6 + 38 + 1] = L"CLSID\\";
+    StringFromGUID2(clsid, path + 6, 38 + 1);
+    return AddClassKeyToArray(path, array, cKeys);
+}
+
+void AddFSClassKeysToArray(UINT cidl, PCUITEMID_CHILD_ARRAY apidl, HKEY* array, UINT* cKeys)
+{
+    // This function opens the association array keys in canonical order for filesystem items.
+    // The order is documented: learn.microsoft.com/en-us/windows/win32/shell/fa-associationarray
+
+    ASSERT(cidl >= 1 && apidl);
+    PCUITEMID_CHILD pidl = apidl[0];
     if (_ILIsValue(pidl))
     {
+        WCHAR buf[MAX_PATH];
+        PWSTR name;
         FileStructW* pFileData = _ILGetFileStructW(pidl);
-        LPWSTR extension = PathFindExtension(pFileData->wszName);
+        if (pFileData)
+        {
+            name = pFileData->wszName;
+        }
+        else
+        {
+            _ILSimpleGetTextW(pidl, buf, _countof(buf));
+            name = buf;
+        }
+        LPCWSTR extension = PathFindExtension(name);
 
         if (extension)
         {
-            AddClassKeyToArray(extension, array, cKeys);
-
-            WCHAR wszClass[MAX_PATH], wszClass2[MAX_PATH];
+            WCHAR wszClass[MAX_PATH], wszSFA[23 + _countof(wszClass)];
             DWORD dwSize = sizeof(wszClass);
-            if (RegGetValueW(HKEY_CLASSES_ROOT, extension, NULL, RRF_RT_REG_SZ, NULL, wszClass, &dwSize) == ERROR_SUCCESS)
+            if (RegGetValueW(HKEY_CLASSES_ROOT, extension, NULL, RRF_RT_REG_SZ, NULL, wszClass, &dwSize) != ERROR_SUCCESS ||
+                !*wszClass || AddClassKeyToArray(wszClass, array, cKeys) != ERROR_SUCCESS)
             {
-                swprintf(wszClass2, L"%s//%s", extension, wszClass);
+                // Only add the extension key if the ProgId is not valid
+                AddClassKeyToArray(extension, array, cKeys);
 
-                AddClassKeyToArray(wszClass, array, cKeys);
-                AddClassKeyToArray(wszClass2, array, cKeys);
+                // "Open With" becomes the default when there are no verbs in the above keys
+                if (cidl == 1)
+                    AddClassKeyToArray(L"Unknown", array, cKeys);
             }
 
-            swprintf(wszClass2, L"SystemFileAssociations//%s", extension);
-            AddClassKeyToArray(wszClass2, array, cKeys);
+            _swprintf(wszSFA, L"SystemFileAssociations\\%s", extension);
+            AddClassKeyToArray(wszSFA, array, cKeys);
 
-            if (RegGetValueW(HKEY_CLASSES_ROOT, extension, L"PerceivedType ", RRF_RT_REG_SZ, NULL, wszClass, &dwSize) == ERROR_SUCCESS)
+            dwSize = sizeof(wszClass);
+            if (RegGetValueW(HKEY_CLASSES_ROOT, extension, L"PerceivedType", RRF_RT_REG_SZ, NULL, wszClass, &dwSize) == ERROR_SUCCESS)
             {
-                swprintf(wszClass2, L"SystemFileAssociations//%s", wszClass);
-                AddClassKeyToArray(wszClass2, array, cKeys);
+                _swprintf(wszSFA, L"SystemFileAssociations\\%s", wszClass);
+                AddClassKeyToArray(wszSFA, array, cKeys);
             }
         }
 
-        AddClassKeyToArray(L"AllFilesystemObjects", array, cKeys);
         AddClassKeyToArray(L"*", array, cKeys);
+        AddClassKeyToArray(L"AllFilesystemObjects", array, cKeys);
     }
     else if (_ILIsFolder(pidl))
     {
+        // FIXME: Directory > Folder > AFO is the correct order and it's
+        // the order Windows reports in its undocumented association array
+        // but it is somehow not the order Windows adds the items to its menu!
+        // Until the correct algorithm in CDefaultContextMenu can be determined,
+        // we add the folder keys in "menu order".
+        AddClassKeyToArray(L"Folder", array, cKeys);
         AddClassKeyToArray(L"AllFilesystemObjects", array, cKeys);
         AddClassKeyToArray(L"Directory", array, cKeys);
+    }
+    else if (_ILIsDrive(pidl))
+    {
+        AddClassKeyToArray(L"Drive", array, cKeys);
         AddClassKeyToArray(L"Folder", array, cKeys);
     }
     else
@@ -324,46 +533,31 @@ void AddFSClassKeysToArray(PCUITEMID_CHILD pidl, HKEY* array, UINT* cKeys)
     }
 }
 
+void AddPidlClassKeysToArray(LPCITEMIDLIST pidl, HKEY* array, UINT* cKeys)
+{
+    if ((pidl = ILFindLastID(pidl)) != NULL)
+        AddFSClassKeysToArray(1, &pidl, array, cKeys);
+}
+
 HRESULT SH_GetApidlFromDataObject(IDataObject *pDataObject, PIDLIST_ABSOLUTE* ppidlfolder, PUITEMID_CHILD **apidlItems, UINT *pcidl)
 {
-    UINT cfShellIDList = RegisterClipboardFormatW(CFSTR_SHELLIDLIST);
-    if (!cfShellIDList)
-        return E_FAIL;
+    CDataObjectHIDA cida(pDataObject);
 
-    FORMATETC fmt;
-    InitFormatEtc (fmt, cfShellIDList, TYMED_HGLOBAL);
-
-    HRESULT hr = pDataObject->QueryGetData(&fmt);
-    if (FAILED_UNEXPECTEDLY(hr))
-        return hr;
-
-    STGMEDIUM medium;
-    hr = pDataObject->GetData(&fmt, &medium);
-    if (FAILED_UNEXPECTEDLY(hr))
-        return hr;
-
-    /* lock the handle */
-    LPIDA lpcida = (LPIDA)GlobalLock(medium.hGlobal);
-    if (!lpcida)
-    {
-        ReleaseStgMedium(&medium);
-        return E_FAIL;
-    }
+    if (FAILED_UNEXPECTEDLY(cida.hr()))
+        return cida.hr();
 
     /* convert the data into pidl */
     LPITEMIDLIST pidl;
-    LPITEMIDLIST *apidl = _ILCopyCidaToaPidl(&pidl, lpcida);
+    LPITEMIDLIST *apidl = _ILCopyCidaToaPidl(&pidl, cida);
     if (!apidl)
     {
-        ReleaseStgMedium(&medium);
         return E_OUTOFMEMORY;
     }
 
     *ppidlfolder = pidl;
     *apidlItems = apidl;
-    *pcidl = lpcida->cidl;
+    *pcidl = cida->cidl;
 
-    ReleaseStgMedium(&medium);
     return S_OK;
 }
 
@@ -392,17 +586,21 @@ SHOpenFolderAndSelectItems(PCIDLIST_ABSOLUTE pidlFolder,
                            DWORD dwFlags)
 {
     ERR("SHOpenFolderAndSelectItems() is hackplemented\n");
+    CComHeapPtr<ITEMIDLIST> freeItem;
     PCIDLIST_ABSOLUTE pidlItem;
     if (cidl)
     {
         /* Firefox sends a full pidl here dispite the fact it is a PCUITEMID_CHILD_ARRAY -_- */
-        if (ILGetNext(apidl[0]) != NULL)
+        if (!ILIsSingle(apidl[0]))
         {
             pidlItem = apidl[0];
         }
         else
         {
-            pidlItem = ILCombine(pidlFolder, apidl[0]);
+            HRESULT hr = SHILCombine(pidlFolder, apidl[0], const_cast<LPITEMIDLIST*>(&pidlItem));
+            if (FAILED_UNEXPECTEDLY(hr))
+                return hr;
+            freeItem.Attach(const_cast<PIDLIST_ABSOLUTE>(pidlItem));
         }
     }
     else
@@ -446,39 +644,25 @@ SHOpenFolderAndSelectItems(PCIDLIST_ABSOLUTE pidlFolder,
 /*
  * for internal use
  */
-HRESULT WINAPI
-Shell_DefaultContextMenuCallBack(IShellFolder *psf, IDataObject *pdtobj)
+HRESULT
+SHELL32_ShowPropertiesDialog(IDataObject *pdtobj)
 {
-    PIDLIST_ABSOLUTE pidlFolder;
-    PUITEMID_CHILD *apidl;
-    UINT cidl;
-    HRESULT hr = SH_GetApidlFromDataObject(pdtobj, &pidlFolder, &apidl, &cidl);
-    if (FAILED_UNEXPECTEDLY(hr))
-        return hr;
+    if (!pdtobj)
+        return E_INVALIDARG;
+    return SHELL32_ShowFilesystemItemsPropertiesDialogAsync(NULL, pdtobj);
+}
 
-    if (cidl > 1)
+HRESULT
+SHELL32_DefaultContextMenuCallBack(IShellFolder *psf, IDataObject *pdo, UINT msg)
+{
+    switch (msg)
     {
-        ERR("SHMultiFileProperties is not yet implemented\n");
-        SHFree(pidlFolder);
-        _ILFreeaPidl(apidl, cidl);
-        return E_FAIL;
+        case DFM_MERGECONTEXTMENU:
+            return S_OK; // Yes, I want verbs
+        case DFM_INVOKECOMMAND:
+            return S_FALSE; // Do it for me please
+        case DFM_GETDEFSTATICID:
+            return S_FALSE; // Supposedly "required for Windows 7 to pick a default"
     }
-
-    STRRET strFile;
-    hr = psf->GetDisplayNameOf(apidl[0], SHGDN_FORPARSING, &strFile);
-    if (SUCCEEDED(hr))
-    {
-        hr = SH_ShowPropertiesDialog(strFile.pOleStr, pidlFolder, apidl);
-        if (FAILED(hr))
-            ERR("SH_ShowPropertiesDialog failed\n");
-    }
-    else
-    {
-        ERR("Failed to get display name\n");
-    }
-
-    SHFree(pidlFolder);
-    _ILFreeaPidl(apidl, cidl);
-
-    return hr;
+    return E_NOTIMPL;
 }

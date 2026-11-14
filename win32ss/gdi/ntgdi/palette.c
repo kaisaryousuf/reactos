@@ -149,6 +149,9 @@ PALETTE_AllocPalette(
         /* Check color count */
         if ((cColors == 0) || (cColors > 1024)) return NULL;
 
+        /* Mark 2 color indexed palettes as monochrome */
+        if (cColors == 2) iMode |= PAL_MONOCHROME;
+
         /* Allocate enough space for the palete entries */
         cjSize += cColors * sizeof(PALETTEENTRY);
     }
@@ -263,6 +266,7 @@ PALETTE_ulGetNearestPaletteIndex(PALETTE* ppal, ULONG iColor)
     ULONG ulDiff, ulColorDiff, ulMinimalDiff = 0xFFFFFF;
     ULONG i, ulBestIndex = 0;
     PALETTEENTRY peColor = *(PPALETTEENTRY)&iColor;
+    ASSERT(ppal->flFlags & PAL_INDEXED);
 
     /* Loop all palette entries */
     for (i = 0; i < ppal->NumColors; i++)
@@ -294,6 +298,7 @@ NTAPI
 PALETTE_ulGetNearestBitFieldsIndex(PALETTE* ppal, ULONG ulColor)
 {
     ULONG ulNewColor;
+    ASSERT(ppal->flFlags & PAL_BITFIELDS);
 
     // FIXME: HACK, should be stored already
     ppal->ulRedShift = CalculateShift(RGB(0xff,0,0), ppal->RedMask);
@@ -311,6 +316,10 @@ ULONG
 NTAPI
 PALETTE_ulGetNearestIndex(PALETTE* ppal, ULONG ulColor)
 {
+    if (ppal->flFlags & PAL_RGB)
+        return ulColor;
+    if (ppal->flFlags & PAL_BGR)
+        return RGB(GetBValue(ulColor), GetGValue(ulColor), GetRValue(ulColor));
     if (ppal->flFlags & PAL_INDEXED) // Use fl & PALINDEXED
         return PALETTE_ulGetNearestPaletteIndex(ppal, ulColor);
     else
@@ -522,13 +531,7 @@ NtGdiCreateHalftonePalette(HDC  hDC)
     PPALETTE ppal;
     PDC pdc;
     HPALETTE hpal = NULL;
-
-    pdc = DC_LockDc(hDC);
-    if (!pdc)
-    {
-        EngSetLastError(ERROR_INVALID_HANDLE);
-        return NULL;
-    }
+    BOOL UseDefaultPalette = TRUE;
 
     RtlZeroMemory(PalEntries, sizeof(PalEntries));
 
@@ -544,13 +547,33 @@ NtGdiCreateHalftonePalette(HDC  hDC)
         PalEntries[246 + i].peBlue = g_sysPalTemplate[10 + i].peBlue;
     }
 
-    ppal = PALETTE_ShareLockPalette(pdc->dclevel.hpal);
-    if (ppal && (ppal->flFlags & PAL_INDEXED))
+    if (hDC)
     {
-        /* FIXME: optimize the palette for the current palette */
-        UNIMPLEMENTED;
+        pdc = DC_LockDc(hDC);
+        if (!pdc)
+        {
+            EngSetLastError(ERROR_INVALID_HANDLE);
+            return NULL;
+        }
+
+        ppal = PALETTE_ShareLockPalette(pdc->dclevel.hpal);
+        if (ppal)
+        {
+            if (ppal->flFlags & PAL_INDEXED)
+            {
+                UseDefaultPalette = FALSE;
+
+                /* FIXME: optimize the palette for the current palette */
+                UNIMPLEMENTED;
+            }
+
+            PALETTE_ShareUnlockPalette(ppal);
+        }
+
+        DC_UnlockDc(pdc);
     }
-    else
+
+    if (UseDefaultPalette)
     {
         for (r = 0; r < 6; r++)
         {
@@ -574,11 +597,6 @@ NtGdiCreateHalftonePalette(HDC  hDC)
             PalEntries[i].peBlue = v;
         }
     }
-
-    if (ppal)
-        PALETTE_ShareUnlockPalette(ppal);
-
-    DC_UnlockDc(pdc);
 
     ppal = PALETTE_AllocPalWithHandle(PAL_INDEXED, 256, PalEntries, 0, 0, 0);
     if (ppal)
@@ -615,7 +633,7 @@ NtGdiResizePalette(
     XLATEOBJ *NewXlateObj = (int*) HeapReAlloc(GetProcessHeap(), 0, XlateObj, cEntries * sizeof(int));
     if(NewXlateObj == NULL)
     {
-      ERR("Can not resize logicalToSystem -- out of memory!");
+      ERR("Can not resize logicalToSystem -- out of memory!\n");
       GDI_ReleaseObj( hPal );
       return FALSE;
     }
@@ -730,7 +748,7 @@ UINT
 FASTCALL
 IntGdiRealizePalette(HDC hDC)
 {
-    UINT i, realize = 0;
+    UINT realize = 0;
     PDC pdc;
     PALETTE *ppalSurf, *ppalDC;
 
@@ -769,13 +787,8 @@ IntGdiRealizePalette(HDC hDC)
 
     ASSERT(ppalDC->flFlags & PAL_INDEXED);
 
-    // FIXME: Should we resize ppalSurf if it's too small?
-    realize = (ppalDC->NumColors < ppalSurf->NumColors) ? ppalDC->NumColors : ppalSurf->NumColors;
-
-    for (i=0; i<realize; i++)
-    {
-        InterlockedExchange((LONG*)&ppalSurf->IndexedColors[i], *(LONG*)&ppalDC->IndexedColors[i]);
-    }
+    DPRINT1("RealizePalette unimplemented for %s\n",
+            (pdc->dctype == DCTYPE_MEMORY ? "memory managed DCs" : "device DCs"));
 
 cleanup:
     DC_UnlockDc(pdc);
@@ -966,7 +979,7 @@ IntSetPaletteEntries(
     PPALETTE palGDI;
     ULONG numEntries;
 
-    if ((UINT_PTR)hpal & GDI_HANDLE_STOCK_MASK)
+    if (GDI_HANDLE_IS_STOCKOBJ(hpal))
     {
     	return 0;
     }
@@ -1250,7 +1263,7 @@ NtGdiUnrealizeObject(HGDIOBJ hgdiobj)
    PPALETTE palGDI;
 
    if ( !hgdiobj ||
-        ((UINT_PTR)hgdiobj & GDI_HANDLE_STOCK_MASK) ||
+        GDI_HANDLE_IS_STOCKOBJ(hgdiobj) ||
         !GDI_HANDLE_IS_TYPE(hgdiobj, GDI_OBJECT_TYPE_PALETTE) )
       return Ret;
 

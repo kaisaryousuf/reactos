@@ -16,6 +16,7 @@
 
 /* PRIVATE FUNCTIONS **********************************************************/
 
+#ifndef _MINIHAL_
 CODE_SEG("INIT")
 VOID
 NTAPI
@@ -26,7 +27,6 @@ HalpRegisterKdSupportFunctions(VOID)
     KdReleasePciDeviceforDebugging = HalpReleasePciDeviceForDebugging;
 
     /* Register memory functions */
-#ifndef _MINIHAL_
 #if (NTDDI_VERSION >= NTDDI_VISTA)
     KdMapPhysicalMemory64 = HalpMapPhysicalMemory64Vista;
     KdUnmapVirtualAddress = HalpUnmapVirtualAddressVista;
@@ -34,11 +34,11 @@ HalpRegisterKdSupportFunctions(VOID)
     KdMapPhysicalMemory64 = HalpMapPhysicalMemory64;
     KdUnmapVirtualAddress = HalpUnmapVirtualAddress;
 #endif
-#endif
 
     /* Register ACPI stub */
     KdCheckPowerButton = HalpCheckPowerButton;
 }
+#endif // !_MINIHAL_
 
 NTSTATUS
 NTAPI
@@ -85,20 +85,6 @@ HalpTranslateBusAddress(IN INTERFACE_TYPE InterfaceType,
     return TRUE;
 }
 
-ULONG
-NTAPI
-HalpGetSystemInterruptVector_Acpi(IN ULONG BusNumber,
-                                 IN ULONG BusInterruptLevel,
-                                 IN ULONG BusInterruptVector,
-                                 OUT PKIRQL Irql,
-                                 OUT PKAFFINITY Affinity)
-{
-    UCHAR Vector = IRQ2VECTOR((UCHAR)BusInterruptLevel);
-    *Irql = VECTOR2IRQL(Vector);
-    *Affinity = 0xFFFFFFFF;
-    return Vector;
-}
-
 BOOLEAN
 NTAPI
 HalpFindBusAddressTranslation(IN PHYSICAL_ADDRESS BusAddress,
@@ -123,6 +109,7 @@ HalpFindBusAddressTranslation(IN PHYSICAL_ADDRESS BusAddress,
 
 /* PUBLIC FUNCTIONS **********************************************************/
 
+#ifndef _MINIHAL_
 /*
  * @implemented
  */
@@ -133,6 +120,7 @@ HalAdjustResourceList(IN OUT PIO_RESOURCE_REQUIREMENTS_LIST* pRequirementsList)
     /* Deprecated, return success */
     return STATUS_SUCCESS;
 }
+#endif // !_MINIHAL_
 
 /*
  * @implemented
@@ -241,6 +229,7 @@ HalGetBusDataByOffset(IN BUS_DATA_TYPE BusDataType,
     return 0;
 }
 
+#ifndef _MINIHAL_
 /*
  * @implemented
  */
@@ -254,12 +243,12 @@ HalGetInterruptVector(IN INTERFACE_TYPE InterfaceType,
                       OUT PKAFFINITY Affinity)
 {
     /* Call the system bus translator */
-    return HalpGetSystemInterruptVector_Acpi(BusNumber,
-                                             BusInterruptLevel,
-                                             BusInterruptVector,
-                                             Irql,
-                                             Affinity);
+    return HalpGetRootInterruptVector(BusInterruptLevel,
+                                      BusInterruptVector,
+                                      Irql,
+                                      Affinity);
 }
+#endif // !_MINIHAL_
 
 /*
  * @implemented

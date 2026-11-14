@@ -17,3 +17,13 @@ BEGIN
         MENUITEM "退出(&E)", ID_EXIT
     END
 END
+
+STRINGTABLE
+BEGIN
+    IDS_IME_ON "输入法 - 已开启"
+    IDS_IME_OFF "输入法 - 已关闭"
+    IDS_SOFTKBD_ON "软键盘 - 已开启"
+    IDS_SOFTKBD_OFF "软键盘 - 已关闭"
+    IDS_SHOWTOOLBAR "显示工具栏"
+    IDS_INPUTSYSTEM "输入法（IME）设置..."
+END

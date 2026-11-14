@@ -18,9 +18,6 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-/* UTF-8 */
-#pragma code_page(65001)
-
 LANGUAGE LANG_JAPANESE, SUBLANG_DEFAULT
 
 STRINGTABLE
@@ -36,6 +33,11 @@ STRINGTABLE
     IDS_TB_FORMAT "%s TB"
     IDS_PB_FORMAT "%s PB"
     IDS_EB_FORMAT "%s EB"
+    IDS_RESTRICTED "このコンピューターの制限により、この操作は取り消されました。システム管理者にお問い合わせください。"
+    IDS_RESTRICTIONS "システムの制限"
+    IDS_ANY_FILE "%s ファイル"
+    IDS_FILE "ファイル"
+    IDS_FOLDER "フォルダ"
 #endif
 }
 

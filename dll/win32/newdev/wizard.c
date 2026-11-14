@@ -1,7 +1,7 @@
 /*
  * New device installer (newdev.dll)
  *
- * Copyright 2006 Hervé Poussineau (hpoussin@reactos.org)
+ * Copyright 2006 HervÃ© Poussineau (hpoussin@reactos.org)
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -41,6 +41,13 @@ CenterWindow(
 
     GetWindowRect(hWndParent, &rcParent);
     GetWindowRect(hWnd, &rcWindow);
+
+    /* Check if the child window fits inside the parent window */
+    if (rcWindow.left < rcParent.left || rcWindow.top < rcParent.top ||
+        rcWindow.right > rcParent.right || rcWindow.bottom > rcParent.bottom)
+    {
+        return;
+    }
 
     SetWindowPos(
         hWnd,
@@ -104,7 +111,10 @@ SetFailedInstall(
                                           (PBYTE)pszUnknownGuid,
                                           (wcslen(pszUnknownGuid) + 1) * sizeof(WCHAR));
 
-        /* FIXME: Set device problem code 28 (CM_PROB_FAILED_INSTALL) */
+        /* Set device problem code CM_PROB_FAILED_INSTALL */
+        CM_Set_DevNode_Problem(DevInfoData->DevInst,
+                               CM_PROB_FAILED_INSTALL,
+                               CM_SET_DEVNODE_PROBLEM_OVERRIDE);
     }
 
     return TRUE;
@@ -245,11 +255,13 @@ FindDriverProc(
     }
     else
     {
-        /* Update device configuration */
-        SetFailedInstall(DevInstData->hDevInfo,
-                         &DevInstData->devInfoData,
-                         TRUE);
-
+        if (!DevInstData->bUpdate)
+        {
+            /* Update device configuration */
+            SetFailedInstall(DevInstData->hDevInfo,
+                             &DevInstData->devInfoData,
+                             TRUE);
+        }
         PostMessage(DevInstData->hDialog, WM_SEARCH_FINISHED, 0, 0);
     }
     return 0;
@@ -508,9 +520,12 @@ WelcomeDlgProc(
                 (WPARAM)TRUE,
                 (LPARAM)0);
 
-            SetFailedInstall(DevInstData->hDevInfo,
-                             &DevInstData->devInfoData,
-                             TRUE);
+            if (!DevInstData->bUpdate)
+            {
+                SetFailedInstall(DevInstData->hDevInfo,
+                                 &DevInstData->devInfoData,
+                                 TRUE);
+            }
             break;
         }
 
@@ -530,9 +545,9 @@ WelcomeDlgProc(
                     if (SendDlgItemMessage(hwndDlg, IDC_RADIO_AUTO, BM_GETCHECK, (WPARAM)0, (LPARAM)0) == BST_CHECKED)
                     {
                         if (PrepareFoldersToScan(DevInstData, TRUE, FALSE, NULL))
-                            PropSheet_SetCurSelByID(GetParent(hwndDlg), IDD_SEARCHDRV);
+                            SetWindowLongPtr(hwndDlg, DWLP_MSGRESULT, IDD_SEARCHDRV);
                         else
-                            PropSheet_SetCurSelByID(GetParent(hwndDlg), IDD_INSTALLFAILED);
+                            SetWindowLongPtr(hwndDlg, DWLP_MSGRESULT, IDD_INSTALLFAILED);
                     }
                     return TRUE;
 
@@ -562,6 +577,38 @@ AutoDriver(HWND Dlg, BOOL Enabled)
     EnableWindow(GetDlgItem(Dlg, IDC_CHECK_MEDIA), Enabled);
     EnableWindow(GetDlgItem(Dlg, IDC_CHECK_PATH), Enabled);
     IncludePath(Dlg, Enabled & IsDlgButtonChecked(Dlg, IDC_CHECK_PATH));
+}
+
+static INT CALLBACK
+BrowseCallbackProc(HWND hwnd, UINT uMsg, LPARAM lParam, LPARAM lpData)
+{
+    BOOL bValid = FALSE;
+
+    switch (uMsg)
+    {
+        case BFFM_INITIALIZED:
+        {
+            PCWSTR pszPath = ((PDEVINSTDATA)lpData)->CustomSearchPath;
+
+            bValid = CheckBestDriver((PDEVINSTDATA)lpData, pszPath);
+            SendMessageW(hwnd, BFFM_SETSELECTION, TRUE, (LPARAM)pszPath);
+            SendMessageW(hwnd, BFFM_ENABLEOK, 0, bValid);
+            break;
+        }
+
+        case BFFM_SELCHANGED:
+        {
+            WCHAR szDir[MAX_PATH];
+
+            if (SHGetPathFromIDListW((LPITEMIDLIST)lParam, szDir))
+            {
+                bValid = CheckBestDriver((PDEVINSTDATA)lpData, szDir);
+            }
+            PostMessageW(hwnd, BFFM_ENABLEOK, 0, bValid);
+            break;
+        }
+    }
+    return 0;
 }
 
 static INT_PTR CALLBACK
@@ -636,12 +683,24 @@ CHSourceDlgProc(
 
                 case IDC_BROWSE:
                 {
-                    BROWSEINFO bi = { 0 };
-                    LPITEMIDLIST pidl;
+                    BROWSEINFOW bi = { 0 };
+                    LPITEMIDLIST pidl = NULL;
+                    WCHAR Title[MAX_PATH];
+                    LoadStringW(hDllInstance, IDS_BROWSE_FOR_FOLDER_TITLE, Title, _countof(Title));
 
-                    bi.hwndOwner = hwndDlg;
-                    bi.ulFlags = BIF_USENEWUI | BIF_RETURNONLYFSDIRS;
-                    pidl = SHBrowseForFolder(&bi);
+                    if (PrepareFoldersToScan(DevInstData,
+                        FALSE,
+                        TRUE,
+                        GetDlgItem(hwndDlg, IDC_COMBO_PATH)))
+                    {
+                        bi.hwndOwner = hwndDlg;
+                        bi.ulFlags = BIF_USENEWUI | BIF_RETURNONLYFSDIRS | BIF_STATUSTEXT | BIF_NONEWFOLDERBUTTON;
+                        bi.lpszTitle = Title;
+                        bi.lpfn = BrowseCallbackProc;
+                        bi.lParam = (LPARAM)DevInstData;
+                        pidl = SHBrowseForFolderW(&bi);
+                    }
+
                     if (pidl)
                     {
                         WCHAR Directory[MAX_PATH];
@@ -649,6 +708,9 @@ CHSourceDlgProc(
 
                         if (SHGetPathFromIDListW(pidl, Directory))
                         {
+                            /* Remove previous item selection */
+                            SendDlgItemMessageW(hwndDlg, IDC_COMBO_PATH, CB_SETCURSEL, -1, 0);
+
                             /* Set the IDC_COMBO_PATH text */
                             SetWindowTextW(GetDlgItem(hwndDlg, IDC_COMBO_PATH), Directory);
                         }
@@ -691,11 +753,11 @@ CHSourceDlgProc(
                             IsDlgButtonChecked(hwndDlg, IDC_CHECK_PATH),
                             GetDlgItem(hwndDlg, IDC_COMBO_PATH)))
                         {
-                            PropSheet_SetCurSelByID(GetParent(hwndDlg), IDD_SEARCHDRV);
+                            SetWindowLongPtr(hwndDlg, DWLP_MSGRESULT, IDD_SEARCHDRV);
                         }
                         else
                         {
-                            PropSheet_SetCurSelByID(GetParent(hwndDlg), IDD_INSTALLFAILED);
+                            SetWindowLongPtr(hwndDlg, DWLP_MSGRESULT, IDD_INSTALLFAILED);
                         }
                     }
                     else
@@ -991,7 +1053,7 @@ NoDriverDlgProc(
                     hwndControl = GetDlgItem(GetParent(hwndDlg), IDCANCEL);
                     ShowWindow(hwndControl, SW_SHOW);
                     EnableWindow(hwndControl, TRUE);
-                    PropSheet_SetCurSelByID(GetParent(hwndDlg), IDD_CHSOURCE);
+                    SetWindowLongPtr(hwndDlg, DWLP_MSGRESULT, IDD_CHSOURCE);
                     return TRUE;
 
                 case PSN_WIZFINISH:

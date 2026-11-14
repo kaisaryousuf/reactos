@@ -1,31 +1,26 @@
 /*
  * PROJECT:     ReactOS trace route utility
- * LICENSE:     GPL - See COPYING in the top level directory
- * FILE:        base/applications/network/tracert/tracert.cpp
+ * LICENSE:     GPL-2.0-or-later (https://spdx.org/licenses/GPL-2.0-or-later)
  * PURPOSE:     Trace network paths through networks
  * COPYRIGHT:   Copyright 2018 Ged Murphy <gedmurphy@reactos.org>
- *
+ *              Copyright 2025 Curtis Wilson <LiquidFox1776@gmail.com>
  */
 
-#ifdef __REACTOS__
-#define USE_CONUTILS
-#define WIN32_NO_STATUS
 #include <stdarg.h>
+#include <stdlib.h>
+
 #include <windef.h>
 #include <winbase.h>
 #include <winuser.h>
-#define _INC_WINDOWS
-#include <stdlib.h>
-#include <winsock2.h>
-#include <conutils.h>
-#else
-#include <winsock2.h>
-#include <Windows.h>
-#endif
+
 #include <ws2tcpip.h>
 #include <iphlpapi.h>
 #include <icmpapi.h>
+#include <winsock2.h>
+#include <conutils.h>
+
 #include <strsafe.h>
+
 #include "resource.h"
 
 #define SIZEOF_ICMP_ERROR       8
@@ -33,6 +28,10 @@
 #define PACKET_SIZE             32
 #define MAX_IPADDRESS           32
 #define NUM_OF_PINGS            3
+#define MIN_HOP_COUNT           1
+#define MAX_HOP_COUNT           255
+#define MIN_MILLISECONDS        1
+#define MAX_MILLISECONDS        ULONG_MAX
 
 struct TraceInfo
 {
@@ -49,104 +48,25 @@ struct TraceInfo
 } Info = { 0 };
 
 
-
-#ifndef USE_CONUTILS
-static
-INT
-LengthOfStrResource(
-    _In_ HINSTANCE hInst,
-    _In_ UINT uID
-)
-{
-    HRSRC hrSrc;
-    HGLOBAL hRes;
-    LPWSTR lpName, lpStr;
-
-    if (hInst == NULL) return -1;
-
-    lpName = (LPWSTR)MAKEINTRESOURCE((uID >> 4) + 1);
-
-    if ((hrSrc = FindResourceW(hInst, lpName, (LPWSTR)RT_STRING)) &&
-        (hRes = LoadResource(hInst, hrSrc)) &&
-        (lpStr = (WCHAR*)LockResource(hRes)))
-    {
-        UINT x;
-        uID &= 0xF;
-        for (x = 0; x < uID; x++)
-        {
-            lpStr += (*lpStr) + 1;
-        }
-        return (int)(*lpStr);
-    }
-    return -1;
-}
-
-static
-INT
-AllocAndLoadString(
-    _In_ UINT uID,
-    _Out_ LPWSTR *lpTarget
-)
-{
-    HMODULE hInst;
-    INT Length;
-
-    hInst = GetModuleHandleW(NULL);
-    Length = LengthOfStrResource(hInst, uID);
-    if (Length++ > 0)
-    {
-        (*lpTarget) = (LPWSTR)LocalAlloc(LMEM_FIXED,
-                                         Length * sizeof(WCHAR));
-        if ((*lpTarget) != NULL)
-        {
-            INT Ret;
-            if (!(Ret = LoadStringW(hInst, uID, *lpTarget, Length)))
-            {
-                LocalFree((HLOCAL)(*lpTarget));
-            }
-            return Ret;
-        }
-    }
-    return 0;
-}
-
+#if 0
 static
 INT
 OutputText(
     _In_ UINT uID,
     ...)
 {
-    LPWSTR Format;
-    DWORD Ret = 0;
-    va_list lArgs;
+    INT Len;
+    va_list args;
 
-    if (AllocAndLoadString(uID, &Format) > 0)
-    {
-        va_start(lArgs, uID);
+    va_start(args, uID);
+    Len = ConResMsgPrintfV(StdOut, 0, uID, &args);
+    va_end(args);
 
-        LPWSTR Buffer;
-        Ret = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_STRING,
-                             Format,
-                             0,
-                             0,
-                             (LPWSTR)&Buffer,
-                             0,
-                             &lArgs);
-        va_end(lArgs);
-
-        if (Ret)
-        {
-            wprintf(Buffer);
-            LocalFree(Buffer);
-        }
-        LocalFree((HLOCAL)Format);
-    }
-
-    return Ret;
+    return Len;
 }
 #else
-#define OutputText(Id, ...) ConResMsgPrintfEx(StdOut, NULL, 0, Id, MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL), ##__VA_ARGS__)
-#endif //USE_CONUTILS
+#define OutputText(uID, ...) ConResMsgPrintf(StdOut, 0, (uID), ##__VA_ARGS__)
+#endif
 
 static
 VOID
@@ -155,23 +75,27 @@ Usage()
     OutputText(IDS_USAGE);
 }
 
-static ULONG
+static bool
 GetULONG(
-    _In_z_ LPWSTR String
-)
+    _In_ PCWSTR String,
+    _Out_ PULONG Value)
 {
-    ULONG Length;
-    Length = wcslen(String);
+    PWSTR StopString;
 
-    ULONG i = 0;
-    while ((i < Length) && ((String[i] < L'0') || (String[i] > L'9'))) i++;
-    if ((i >= Length) || ((String[i] < L'0') || (String[i] > L'9')))
-    {
-        return (ULONG)-1;
-    }
+    // Check input arguments
+    if (*String == UNICODE_NULL)
+        return false;
 
-    LPWSTR StopString;
-    return wcstoul(&String[i], &StopString, 10);
+    // Clear errno so we can use its value after
+    // the call to wcstoul to check for errors.
+    errno = 0;
+
+    // Try to convert String to ULONG
+    *Value = wcstoul(String, &StopString, 10);
+    if ((errno != ERANGE) && (errno != 0 || *StopString != UNICODE_NULL))
+        return false;
+    // The conversion was successful
+    return true;
 }
 
 static bool
@@ -188,23 +112,16 @@ ResolveTarget()
                           &Hints,
                           &Info.Target);
     if (Status != 0)
-    {
         return false;
-    }
 
     Status = GetNameInfoW(Info.Target->ai_addr,
-                          Info.Target->ai_addrlen,
+                          (socklen_t)Info.Target->ai_addrlen,
                           Info.TargetIP,
                           MAX_IPADDRESS,
                           NULL,
                           0,
                           NI_NUMERICHOST);
-    if (Status != 0)
-    {
-        return false;
-    }
-
-    return true;
+    return (Status == 0);
 }
 
 static bool
@@ -222,7 +139,7 @@ PrintHopInfo(_In_ PVOID Buffer)
         CopyMemory(SockAddrIn6.sin6_addr.u.Word, Ipv6Addr->sin6_addr, sizeof(SockAddrIn6.sin6_addr));
         //SockAddrIn6.sin6_addr = Ipv6Addr->sin6_addr;
         SockAddr = (PSOCKADDR)&SockAddrIn6;
-        Size = sizeof(SOCKADDR_IN6);
+        Size = sizeof(SockAddrIn6);
 
     }
     else
@@ -231,7 +148,7 @@ PrintHopInfo(_In_ PVOID Buffer)
         SockAddrIn.sin_family = AF_INET;
         SockAddrIn.sin_addr.S_un.S_addr = *Address;
         SockAddr = (PSOCKADDR)&SockAddrIn;
-        Size = sizeof(SOCKADDR_IN);
+        Size = sizeof(SockAddrIn);
     }
 
     INT Status;
@@ -275,15 +192,13 @@ PrintHopInfo(_In_ PVOID Buffer)
     return (Status == 0);
 }
 
-static bool
-DecodeResponse(
+static ULONG
+GetResponseStats(
     _In_ PVOID ReplyBuffer,
-    _In_ bool OutputHopAddress,
-    _Out_ bool& FoundTarget
+    _Out_ ULONG& RoundTripTime,
+    _Out_ PVOID& AddressInfo
 )
 {
-    ULONG RoundTripTime;
-    PVOID AddressInfo;
     ULONG Status;
 
     if (Info.Family == AF_INET6)
@@ -308,6 +223,22 @@ DecodeResponse(
         AddressInfo = &EchoReplyV4->Address;
     }
 
+    return Status;
+}
+
+static bool
+DecodeResponse(
+    _In_ PVOID ReplyBuffer,
+    _In_ PVOID LastGoodResponse,
+    _In_ bool OutputHopAddress,
+    _Out_ bool& GoodResponse,
+    _Out_ bool& FoundTarget
+)
+{
+    ULONG RoundTripTime;
+    PVOID AddressInfo;
+    ULONG Status = GetResponseStats(ReplyBuffer, RoundTripTime, AddressInfo);
+
     switch (Status)
     {
     case IP_SUCCESS:
@@ -320,6 +251,7 @@ DecodeResponse(
         {
             OutputText(IDS_HOP_ZERO);
         }
+        GoodResponse = true;
         break;
 
     case IP_DEST_HOST_UNREACHABLE:
@@ -352,6 +284,10 @@ DecodeResponse(
 
     if (OutputHopAddress)
     {
+        if (Status == IP_REQ_TIMED_OUT && LastGoodResponse)
+        {
+            Status = GetResponseStats(LastGoodResponse, RoundTripTime, AddressInfo);
+        }
         if (Status == IP_SUCCESS)
         {
             FoundTarget = true;
@@ -374,18 +310,22 @@ static bool
 RunTraceRoute()
 {
     bool Success = false;
+    PVOID ReplyBuffer = NULL, LastGoodResponse = NULL;
+    DWORD ReplySize;
+
+    HANDLE heap = GetProcessHeap();
+    bool Quit = false;
+    ULONG HopCount = 1;
+    bool FoundTarget = false;
+
     Success = ResolveTarget();
     if (!Success)
     {
         OutputText(IDS_UNABLE_RESOLVE, Info.HostName);
-        return false;
+        goto Cleanup;
     }
 
-    BYTE SendBuffer[PACKET_SIZE];
-
-    PVOID ReplyBuffer;
-
-    DWORD ReplySize = PACKET_SIZE + SIZEOF_ICMP_ERROR + SIZEOF_IO_STATUS_BLOCK;
+    ReplySize = PACKET_SIZE + SIZEOF_ICMP_ERROR + SIZEOF_IO_STATUS_BLOCK;
     if (Info.Family == AF_INET6)
     {
         ReplySize += sizeof(ICMPV6_ECHO_REPLY);
@@ -399,12 +339,11 @@ RunTraceRoute()
 #endif
     }
 
-    HANDLE heap = GetProcessHeap();
     ReplyBuffer = HeapAlloc(heap, HEAP_ZERO_MEMORY, ReplySize);
     if (ReplyBuffer == NULL)
     {
-        FreeAddrInfoW(Info.Target);
-        return false;
+        Success = false;
+        goto Cleanup;
     }
 
     if (Info.Family == AF_INET6)
@@ -417,9 +356,8 @@ RunTraceRoute()
     }
     if (Info.hIcmpFile == INVALID_HANDLE_VALUE)
     {
-        HeapFree(heap, 0, ReplyBuffer);
-        FreeAddrInfoW(Info.Target);
-        return false;
+        Success = false;
+        goto Cleanup;
     }
 
     OutputText(IDS_TRACE_INFO, Info.HostName, Info.TargetIP, Info.MaxHops);
@@ -427,15 +365,21 @@ RunTraceRoute()
     IP_OPTION_INFORMATION IpOptionInfo;
     ZeroMemory(&IpOptionInfo, sizeof(IpOptionInfo));
 
-    bool Quit = false;
-    ULONG HopCount = 1;
-    bool FoundTarget = false;
     while ((HopCount <= Info.MaxHops) && (FoundTarget == false) && (Quit == false))
     {
         OutputText(IDS_HOP_COUNT, HopCount);
 
+        if (LastGoodResponse)
+        {
+            HeapFree(heap, 0, LastGoodResponse);
+            LastGoodResponse = NULL;
+        }
+
         for (int Ping = 1; Ping <= NUM_OF_PINGS; Ping++)
         {
+            BYTE SendBuffer[PACKET_SIZE];
+            bool GoodResponse = false;
+
             IpOptionInfo.Ttl = static_cast<UCHAR>(HopCount);
 
             if (Info.Family == AF_INET6)
@@ -473,7 +417,11 @@ RunTraceRoute()
                                      Info.Timeout);
             }
 
-            if (DecodeResponse(ReplyBuffer, (Ping == NUM_OF_PINGS), FoundTarget) == false)
+            if (DecodeResponse(ReplyBuffer,
+                               LastGoodResponse,
+                               (Ping == NUM_OF_PINGS),
+                               GoodResponse,
+                               FoundTarget) == false)
             {
                 Quit = true;
                 break;
@@ -484,6 +432,21 @@ RunTraceRoute()
                 Success = true;
                 break;
             }
+
+            if (GoodResponse)
+            {
+                if (LastGoodResponse)
+                {
+                    HeapFree(heap, 0, LastGoodResponse);
+                }
+                LastGoodResponse = HeapAlloc(heap, HEAP_ZERO_MEMORY, ReplySize);
+                if (LastGoodResponse == NULL)
+                {
+                    Success = false;
+                    goto Cleanup;
+                }
+                CopyMemory(LastGoodResponse, ReplyBuffer, ReplySize);
+            }
         }
 
         HopCount++;
@@ -492,14 +455,59 @@ RunTraceRoute()
 
     OutputText(IDS_TRACE_COMPLETE);
 
-    HeapFree(heap, 0, ReplyBuffer);
-    FreeAddrInfoW(Info.Target);
+Cleanup:
+    if (ReplyBuffer)
+    {
+        HeapFree(heap, 0, ReplyBuffer);
+    }
+    if (LastGoodResponse)
+    {
+        HeapFree(heap, 0, LastGoodResponse);
+    }
+    if (Info.Target)
+    {
+        FreeAddrInfoW(Info.Target);
+    }
     if (Info.hIcmpFile)
     {
         IcmpCloseHandle(Info.hIcmpFile);
     }
 
     return Success;
+}
+
+static bool
+GetUlongOptionInRange(
+    _In_ int argc,
+    _In_ wchar_t *argv[],
+    _Inout_ int *i,
+    _Out_ ULONG *Value,
+    _In_  ULONG MinimumValue,
+    _In_  ULONG MaximumValue)
+{
+    ULONG ParsedValue = 0;
+
+    // Check if we have enough values
+    if ((*i + 1) > (argc - 1))
+    {
+        OutputText(IDS_MISSING_OPTION_VALUE, argv[*i]);
+        return false;
+    }
+
+    (*i)++;
+
+    // Try to parse and convert the value as ULONG.
+    // Check if ParsedValue is within the specified range.
+    if (!GetULONG(argv[*i], &ParsedValue) ||
+        ((ParsedValue < MinimumValue) || (ParsedValue > MaximumValue)))
+    {
+        (*i)--;
+        OutputText(IDS_BAD_OPTION_VALUE, argv[*i]);
+        return false;
+    }
+
+    *Value = ParsedValue;
+    return true;
 }
 
 static bool
@@ -513,16 +521,24 @@ ParseCmdline(int argc, wchar_t *argv[])
 
     for (int i = 1; i < argc; i++)
     {
-        if (argv[i][0] == '-')
+        if (argv[i][0] == '-' || argv[i][0] == '/')
         {
             switch (argv[i][1])
             {
             case 'd':
-                Info.ResolveAddresses = FALSE;
+                Info.ResolveAddresses = false;
                 break;
 
             case 'h':
-                Info.MaxHops = GetULONG(argv[++i]);
+                if (!GetUlongOptionInRange(argc,
+                                           argv,
+                                           &i,
+                                           &Info.MaxHops,
+                                           MIN_HOP_COUNT,
+                                           MAX_HOP_COUNT))
+                {
+                    return false;
+                }
                 break;
 
             case 'j':
@@ -530,7 +546,15 @@ ParseCmdline(int argc, wchar_t *argv[])
                 return false;
 
             case 'w':
-                Info.Timeout = GetULONG(argv[++i]);
+                if (!GetUlongOptionInRange(argc,
+                                           argv,
+                                           &i,
+                                           &Info.Timeout,
+                                           MIN_MILLISECONDS,
+                                           MAX_MILLISECONDS))
+                {
+                    return false;
+                }
                 break;
 
             case '4':
@@ -551,21 +575,33 @@ ParseCmdline(int argc, wchar_t *argv[])
         }
         else
         {
+            // The host must be the last argument
+            if (i != (argc - 1))
+            {
+                Usage();
+                return false;
+            }
+            
             StringCchCopyW(Info.HostName, NI_MAXHOST, argv[i]);
             break;
         }
     }
 
+    // Check for missing host
+    if (Info.HostName[0] == UNICODE_NULL)
+    {
+        OutputText(IDS_MISSING_TARGET);
+        Usage();
+        return false;
+    }
     return true;
 }
 
 EXTERN_C
 int wmain(int argc, wchar_t *argv[])
 {
-#ifdef USE_CONUTILS
     /* Initialize the Console Standard Streams */
     ConInitStdStreams();
-#endif
 
     Info.ResolveAddresses = true;
     Info.MaxHops = 30;

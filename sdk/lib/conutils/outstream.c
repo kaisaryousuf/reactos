@@ -36,9 +36,8 @@
 
 #include <windef.h>
 #include <winbase.h>
+#include <wincon.h>     // Console APIs (only if kernel32 support included)
 #include <winnls.h>
-#include <winuser.h> // MAKEINTRESOURCEW, RT_STRING
-#include <wincon.h>  // Console APIs (only if kernel32 support included)
 #include <strsafe.h>
 
 /* PSEH for SEH Support */
@@ -103,7 +102,7 @@ ConWrite(
 
         /*
          * This code is inspired from _cputws, in particular from the fact that,
-         * according to MSDN: https://msdn.microsoft.com/en-us/library/ms687401(v=vs.85).aspx
+         * according to MSDN: https://learn.microsoft.com/en-us/windows/console/writeconsole
          * the buffer size must be less than 64 KB.
          *
          * A similar code can be used for implementing _cputs too.
@@ -176,7 +175,7 @@ ConWrite(
             }
 
             /* Write everything up to \n */
-            dwNumBytes = ((PCWCH)p - (PCWCH)szStr) * sizeof(WCHAR);
+            dwNumBytes = (DWORD)(((PCWCH)p - (PCWCH)szStr) * sizeof(WCHAR));
             WriteFile(Stream->hHandle, szStr, dwNumBytes, &dwNumBytes, NULL);
 
             /*
@@ -260,7 +259,7 @@ ConWrite(
             }
 
             /* Write everything up to \n */
-            dwNumBytes = ((PCCH)p - (PCCH)szStr) * sizeof(CHAR);
+            dwNumBytes = (DWORD)(((PCCH)p - (PCCH)szStr) * sizeof(CHAR));
             WriteFile(Stream->hHandle, szStr, dwNumBytes, &dwNumBytes, NULL);
 
             /*
@@ -430,8 +429,8 @@ ConPuts(
 {
     INT Len;
 
-    Len = wcslen(szStr);
-    CON_STREAM_WRITE2(Stream, szStr, Len, Len);
+    Len = (INT)wcslen(szStr);
+    CON_STREAM_WRITE2(Stream, szStr, (DWORD)Len, Len);
 
     /* Fixup returned length in case of errors */
     if (Len < 0)
@@ -611,8 +610,8 @@ ConResPuts(
     IN PCON_STREAM Stream,
     IN UINT uID)
 {
-    return ConResPutsEx(Stream, NULL /*GetModuleHandleW(NULL)*/,
-                        uID, MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL));
+    return ConResPutsEx(Stream, NULL, uID,
+                        MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL));
 }
 
 /**
@@ -697,9 +696,8 @@ ConResPrintfV(
     IN UINT    uID,
     IN va_list args)
 {
-    return ConResPrintfExV(Stream, NULL /*GetModuleHandleW(NULL)*/,
-                           uID, MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL),
-                           args);
+    return ConResPrintfExV(Stream, NULL, uID,
+                           MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL), args);
 }
 
 /**
@@ -831,7 +829,7 @@ ConResPrintf(
  *     Similarly to ConPuts(), no terminating new-line character is appended.
  *
  * @see ConPuts(), ConResPuts() and associated functions,
- *      <a href="https://msdn.microsoft.com/en-us/library/windows/desktop/ms679351(v=vs.85).aspx">FormatMessage() (on MSDN)</a>
+ *      <a href="https://docs.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-formatmessage">FormatMessage() (on MSDN)</a>
  **/
 INT
 ConMsgPuts(
@@ -846,7 +844,7 @@ ConMsgPuts(
     LPWSTR lpMsgBuf = NULL;
 
     /*
-     * Sanitize dwFlags. This version always ignore explicitely the inserts
+     * Sanitize dwFlags. This version always ignores explicitly the inserts
      * as we emulate the behaviour of the (f)puts function.
      */
     dwFlags |= FORMAT_MESSAGE_ALLOCATE_BUFFER; // Always allocate an internal buffer.
@@ -919,7 +917,7 @@ ConMsgPrintf2V(
     LPWSTR lpMsgBuf = NULL;
 
     /*
-     * Sanitize dwFlags. This version always ignore explicitely the inserts.
+     * Sanitize dwFlags. This version always ignores explicitly the inserts.
      * The string that we will return to the user will not be pre-formatted.
      */
     dwFlags |= FORMAT_MESSAGE_ALLOCATE_BUFFER; // Always allocate an internal buffer.
@@ -1024,7 +1022,7 @@ ConMsgPrintf2V(
  *     Numbers of characters successfully written to @p Stream.
  *
  * @see ConPrintf(), ConResPrintf() and associated functions, ConMsgPrintf(),
- *      <a href="https://msdn.microsoft.com/en-us/library/windows/desktop/ms679351(v=vs.85).aspx">FormatMessage() (on MSDN)</a>
+ *      <a href="https://docs.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-formatmessage">FormatMessage() (on MSDN)</a>
  **/
 INT
 ConMsgPrintfV(
@@ -1123,7 +1121,7 @@ ConMsgPrintfV(
  *     Numbers of characters successfully written to @p Stream.
  *
  * @see ConPrintf(), ConResPrintf() and associated functions, ConMsgPrintfV(),
- *      <a href="https://msdn.microsoft.com/en-us/library/windows/desktop/ms679351(v=vs.85).aspx">FormatMessage() (on MSDN)</a>
+ *      <a href="https://docs.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-formatmessage">FormatMessage() (on MSDN)</a>
  **/
 INT
 __cdecl
@@ -1212,7 +1210,7 @@ ConMsgPrintf(
  *     Numbers of characters successfully written to @p Stream.
  *
  * @see ConPrintf(), ConResPrintf() and associated functions, ConMsgPrintf(),
- *      <a href="https://msdn.microsoft.com/en-us/library/windows/desktop/ms679351(v=vs.85).aspx">FormatMessage() (on MSDN)</a>
+ *      <a href="https://docs.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-formatmessage">FormatMessage() (on MSDN)</a>
  **/
 INT
 ConResMsgPrintfExV(
@@ -1323,7 +1321,7 @@ ConResMsgPrintfExV(
  *     Numbers of characters successfully written to @p Stream.
  *
  * @see ConPrintf(), ConResPrintf() and associated functions, ConMsgPrintf(),
- *      <a href="https://msdn.microsoft.com/en-us/library/windows/desktop/ms679351(v=vs.85).aspx">FormatMessage() (on MSDN)</a>
+ *      <a href="https://docs.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-formatmessage">FormatMessage() (on MSDN)</a>
  **/
 INT
 ConResMsgPrintfV(
@@ -1332,8 +1330,7 @@ ConResMsgPrintfV(
     IN UINT    uID,
     IN va_list *Arguments OPTIONAL)
 {
-    return ConResMsgPrintfExV(Stream, NULL /*GetModuleHandleW(NULL)*/,
-                              dwFlags, uID,
+    return ConResMsgPrintfExV(Stream, NULL, dwFlags, uID,
                               MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL),
                               Arguments);
 }
@@ -1387,7 +1384,7 @@ ConResMsgPrintfV(
  *     Numbers of characters successfully written to @p Stream.
  *
  * @see ConPrintf(), ConResPrintf() and associated functions, ConMsgPrintf(),
- *      <a href="https://msdn.microsoft.com/en-us/library/windows/desktop/ms679351(v=vs.85).aspx">FormatMessage() (on MSDN)</a>
+ *      <a href="https://docs.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-formatmessage">FormatMessage() (on MSDN)</a>
  **/
 INT
 __cdecl
@@ -1454,7 +1451,7 @@ ConResMsgPrintfEx(
  *     Numbers of characters successfully written to @p Stream.
  *
  * @see ConPrintf(), ConResPrintf() and associated functions, ConMsgPrintf(),
- *      <a href="https://msdn.microsoft.com/en-us/library/windows/desktop/ms679351(v=vs.85).aspx">FormatMessage() (on MSDN)</a>
+ *      <a href="https://docs.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-formatmessage">FormatMessage() (on MSDN)</a>
  **/
 INT
 __cdecl

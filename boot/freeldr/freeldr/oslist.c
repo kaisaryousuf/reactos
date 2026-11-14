@@ -44,15 +44,12 @@ static PCSTR CopyString(PCSTR Source)
 
 OperatingSystemItem*
 InitOperatingSystemList(
-    IN ULONG_PTR FrLdrSectionId,
-    OUT PULONG OperatingSystemCount,
-    OUT PULONG DefaultOperatingSystem)
+    _Out_ PULONG OperatingSystemCount,
+    _Out_ PULONG DefaultOperatingSystem)
 {
-    ULONG DefaultOS = 0;
-    PCSTR DefaultOSName = NULL;
-    CHAR  DefaultOSText[80];
-
     OperatingSystemItem* Items;
+    PCSTR DefaultOSName;
+    ULONG DefaultOS = 0;
     ULONG Count;
     ULONG i;
     ULONG_PTR OsSectionId, SectionId;
@@ -63,30 +60,30 @@ InitOperatingSystemList(
     CHAR SettingName[260];
     CHAR SettingValue[260];
     CHAR BootType[80];
-    CHAR TempBuffer[sizeof(SettingValue)/sizeof(CHAR)];
+    CHAR TempBuffer[_countof(SettingValue)];
+
+    /* Default with an empty list */
+    *OperatingSystemCount = 0;
 
     /* Open the [Operating Systems] section */
     if (!IniOpenSection("Operating Systems", &OsSectionId))
+    {
+        UiMessageBox("Operating Systems section not found in freeldr.ini");
         return NULL;
+    }
 
     /* Count the number of operating systems in the section */
     Count = IniGetNumSectionItems(OsSectionId);
+    if (Count == 0) /* Fail if no operating systems are found */
+        return NULL;
 
     /* Allocate memory to hold operating system lists */
     Items = FrLdrHeapAlloc(Count * sizeof(OperatingSystemItem), TAG_OS_ITEM);
     if (!Items)
         return NULL;
 
-    /* Retrieve which OS is the default one */
-    DefaultOSName = CmdLineGetDefaultOS();
-    if (!DefaultOSName || !*DefaultOSName)
-    {
-        if ((FrLdrSectionId != 0) &&
-            IniReadSettingByName(FrLdrSectionId, "DefaultOS", DefaultOSText, sizeof(DefaultOSText)))
-        {
-            DefaultOSName = DefaultOSText;
-        }
-    }
+    /* Retrieve the default OS */
+    DefaultOSName = GetBootMgrInfo()->DefaultOs;
 
     /* Now loop through the operating system section and load each item */
     for (i = 0; i < Count; ++i)
@@ -96,7 +93,7 @@ InitOperatingSystemList(
                                SettingValue, sizeof(SettingValue));
         if (!*SettingName)
         {
-            ERR("Invalid OS entry %lu, skipping.\n", i);
+            TRACE("Unkeyed OS entry %lu: separator.\n", i);
             continue;
         }
 
@@ -164,6 +161,7 @@ InitOperatingSystemList(
         if (HadSection)
         {
             /* This is a new OS entry: try to read the boot type */
+            *BootType = ANSI_NULL;
             IniReadSettingByName(SectionId, "BootType", BootType, sizeof(BootType));
         }
         else

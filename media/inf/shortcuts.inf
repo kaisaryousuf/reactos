@@ -49,9 +49,9 @@ QuickLaunchShortcuts=26, Microsoft\Internet Explorer\Quick Launch
 %SystemRoot%\system32\dxdiag.exe, %DXDIAG_TITLE%, %DXDIAG_DESC%, 0
 
 [AccessibilityShortcuts]
-%SystemRoot%\system32\magnify.exe, %MAGNIFY_TITLE%, %MAGNIFY_DESC%, 0, %HOMEDRIVE%%HOMEPATH%
-%SystemRoot%\system32\osk.exe, %OSK_TITLE%, %OSK_DESC%, 0, %HOMEDRIVE%%HOMEPATH%
-%SystemRoot%\system32\utilman.exe, %UTILMAN_TITLE%, %UTILMAN_DESC%, 0, %HOMEDRIVE%%HOMEPATH%
+%SystemRoot%\system32\magnify.exe, %MAGNIFY_TITLE%, %MAGNIFY_DESC%, 0
+%SystemRoot%\system32\osk.exe, %OSK_TITLE%, %OSK_DESC%, 0
+%SystemRoot%\system32\utilman.exe, %UTILMAN_TITLE%, %UTILMAN_DESC%, 0
 
 [EntertainmentShortcuts]
 %SystemRoot%\system32\mplay32.exe, %MPLAY_TITLE%, %MPLAY_DESC%, 0, %HOMEDRIVE%%HOMEPATH%
@@ -67,7 +67,6 @@ QuickLaunchShortcuts=26, Microsoft\Internet Explorer\Quick Launch
 %SystemRoot%\explorer.exe, %EXPLORER_TITLE%, %EXPLORER_DESC%, 1, %HOMEDRIVE%%HOMEPATH%
 %SystemRoot%\system32\cmd.exe, %CMD_TITLE%, %CMD_DESC%, 0, %HOMEDRIVE%%HOMEPATH%
 %SystemRoot%\system32\rapps.exe, %RAPPS_TITLE_SHORT%, %RAPPS_DESC%, 0
-
 
 ;-------------------------------- STRINGS -------------------------------
 
@@ -140,7 +139,6 @@ UTILMAN_DESC=Launch Accessibility Utility Manager
 IEXPLORE_TITLE=Wine Internet Explorer
 IEXPLORE_DESC=Wine Web Browser
 
-; Bulgarian
 [Strings.0402]
 ACCESSORIES=Принадлежности
 SYSTOOLS=Системни средства
@@ -158,12 +156,12 @@ RAPPS_TITLE_SHORT=Управител на приложенията
 RAPPS_DESC=Сваляне и слагане на различни приложения
 SERVMAN_TITLE=Управител на услугите
 SERVMAN_DESC=Пускане на управителя на услугите
-DEVMGMT_TITLE=Управител на устройствата
+DEVMGMT_TITLE=Диспечер на устройствата
 DEVMGMT_DESC=Пускане на управителя на устройствата
 EVENTVWR_TITLE=Преглед на събития
 EVENTVWR_DESC=Пускане на прегледника на събития
-MSCONFIG_TITLE=Настройка на уредбата
-MSCONFIG_DESC=Пускане на приложението за настройка на уредбата
+MSCONFIG_TITLE=Настройка на системата
+MSCONFIG_DESC=Пускане на приложението за настройка на системата
 CALC_TITLE=Изчислител
 CALC_DESC=Пускане на изчислителя
 NOTEPAD_TITLE=Бележник
@@ -201,7 +199,6 @@ WINMINE_DESC=Минички
 SPIDER_TITLE=Пасианс „Паяк“
 SPIDER_DESC=Пасианс „Паяк“
 
-; Traditional Chinese
 [Strings.0404]
 ACCESSORIES=附屬應用程式
 SYSTOOLS=系統管理工具
@@ -214,34 +211,34 @@ README_TITLE=讀我檔案
 README_DESC=ReactOS 讀我檔案
 
 CMD_TITLE=命令提示字元
-CMD_DESC=命令提示字元
+CMD_DESC=啟動命令提示字元
 EXPLORER_TITLE=ReactOS 檔案總管
 EXPLORER_DESC=啟動檔案總管
 RAPPS_TITLE=ReactOS 應用程式管理員
 RAPPS_TITLE_SHORT=應用程式管理員
 RAPPS_DESC=下載並安裝其它應用程式
-SERVMAN_TITLE=服務
-SERVMAN_DESC=服務
+SERVMAN_TITLE=服務管理員
+SERVMAN_DESC=啟動服務管理員
 DEVMGMT_TITLE=裝置管理員
-DEVMGMT_DESC=裝置管理員
+DEVMGMT_DESC=啟動裝置管理員
 EVENTVWR_TITLE=事件檢視器
 EVENTVWR_DESC=啟動事件檢視器
 MSCONFIG_TITLE=系統設定
 MSCONFIG_DESC=啟動系統設定
-CALC_TITLE=小算盤
-CALC_DESC=小算盤
+CALC_TITLE=計算機
+CALC_DESC=啟動計算機
 NOTEPAD_TITLE=記事本
-NOTEPAD_DESC=記事本
+NOTEPAD_DESC=啟動記事本
 MSTSC_TITLE=遠端桌面連線
 MSTSC_DESC=啟動遠端桌面連線
 WORDPAD_TITLE=WordPad
-WORDPAD_DESC=WordPad
+WORDPAD_DESC=啟動 WordPad
 MSPAINT_TITLE=小畫家
-MSPAINT_DESC=小畫家
+MSPAINT_DESC=啟動小畫家
 CHARMAP_TITLE=字元對應表
-CHARMAP_DESC=字元對應表
-CLIPBRD_TITLE=剪貼本檢視器
-CLIPBRD_DESC=剪貼本檢視器
+CHARMAP_DESC=啟動字元對應表
+CLIPBRD_TITLE=剪貼簿檢視器
+CLIPBRD_DESC=啟動剪貼簿檢視器
 KBSWITCH_TITLE=鍵盤配置切換器
 KBSWITCH_DESC=啟動鍵盤配置切換器
 REGEDIT_TITLE=登錄編輯程式
@@ -251,9 +248,9 @@ DXDIAG_DESC=啟動 ReactX 診斷工具
 TASKMGR_TITLE=工作管理員
 TASKMGR_DESC=啟動工作管理員
 MAGNIFY_TITLE=放大鏡
-MAGNIFY_DESC=放大鏡
-OSK_TITLE=螢幕小鍵盤
-OSK_DESC=啟動螢幕小鍵盤
+MAGNIFY_DESC=啟動放大鏡
+OSK_TITLE=螢幕鍵盤
+OSK_DESC=啟動螢幕鍵盤
 MPLAY_TITLE=媒體播放器
 MPLAY_DESC=啟動媒體播放器
 SNDVOL_TITLE=音量控制
@@ -261,17 +258,16 @@ SNDVOL_DESC=啟動音量控制
 SNDREC32_TITLE=錄音機
 SNDREC32_DESC=啟動錄音機
 SOL_TITLE=接龍
-SOL_DESC=接龍
+SOL_DESC=啟動並遊玩接龍
 WINMINE_TITLE=踩地雷
-WINMINE_DESC=踩地雷
+WINMINE_DESC=啟動並遊玩踩地雷
 SPIDER_TITLE=連環新接龍
-SPIDER_DESC=連環新接龍
+SPIDER_DESC=啟動並遊玩連環新接龍
 UTILMAN_TITLE=協助工具管理員
 UTILMAN_DESC=啟動協助工具管理員
 IEXPLORE_TITLE=Wine Internet Explorer
-IEXPLORE_DESC=Wine 網際網路瀏覽器
+IEXPLORE_DESC=瀏覽網際網路上的網頁
 
-; Czech
 [Strings.0405]
 ACCESSORIES=Příslušenství
 SYSTOOLS=Systémové nástroje
@@ -317,7 +313,7 @@ DXDIAG_TITLE=Diagnostika ReactX
 DXDIAG_DESC=Spustit Nástroj pro diagnostiku ReactX
 MAGNIFY_TITLE=Lupa
 MAGNIFY_DESC=Spustit Lupu
-OSK_TITLE=Program Klávesnice na obrazovce 
+OSK_TITLE=Program Klávesnice na obrazovce
 OSK_DESC=Spustit program Klávesnice na obrazovce
 MPLAY_TITLE=Přehrávač multimédií
 MPLAY_DESC=Spustit Přehrávač multimédií
@@ -332,7 +328,6 @@ WINMINE_DESC=Spustit WineMine
 SPIDER_TITLE=Spider Solitaire
 SPIDER_DESC=Spider Solitaire
 
-; German
 [Strings.0407]
 ACCESSORIES=Zubehör
 SYSTOOLS=Systemprogramme
@@ -371,8 +366,8 @@ MSPAINT_TITLE=Paint
 MSPAINT_DESC=Starte Paint
 CHARMAP_TITLE=Zeichentabelle
 CHARMAP_DESC=Zeichentabelle
-CLIPBRD_TITLE=Clipboard Viewer
-CLIPBRD_DESC=Clipboard Viewer
+CLIPBRD_TITLE=Zwischenablagenanzeige
+CLIPBRD_DESC=Zwischenablagenanzeige
 KBSWITCH_TITLE=Tastaturlayout-Umschalter
 KBSWITCH_DESC=Tastaturlayout-Umschalter
 REGEDIT_TITLE=Registrierungseditor
@@ -381,7 +376,7 @@ DXDIAG_TITLE=ReactX-Diagnose
 DXDIAG_DESC=Starte ReactX-Diagnoseprogramm
 MAGNIFY_TITLE=Bildschirmlupe
 MAGNIFY_DESC=Bildschirmlupe
-OSK_TITLE=Bildschirmtastatur 
+OSK_TITLE=Bildschirmtastatur
 OSK_DESC=Startet die Bildschirmtastatur
 MPLAY_TITLE=Multimedia-Player
 MPLAY_DESC=Starte Multimedia-Player
@@ -393,10 +388,11 @@ SOL_TITLE=Solitär
 SOL_DESC=Solitär
 WINMINE_TITLE=WineMine
 WINMINE_DESC=WineMine
-SPIDER_TITLE=Spider Solitaire
-SPIDER_DESC=Spider Solitaire
+SPIDER_TITLE=Spider Solitär
+SPIDER_DESC=Spider Solitär
+UTILMAN_TITLE=Eingabehilfen-Manager
+UTILMAN_DESC=Eingabehilfen-Manager starten
 
-; Greek
 [Strings.0408]
 ACCESSORIES=Βοηθήματα
 SYSTOOLS=Εργαλεία Συστήματος
@@ -457,7 +453,6 @@ WINMINE_DESC=Ναρκαλιευτής
 SPIDER_TITLE=Spider Solitaire
 SPIDER_DESC=Spider Solitaire
 
-; Spanish
 [Strings.0a]
 ACCESSORIES=Accesorios
 SYSTOOLS=Herramientas del sistema
@@ -470,62 +465,61 @@ README_TITLE=Léame
 README_DESC=Documento Léame de ReactOS
 
 CMD_TITLE=Consola
-CMD_DESC=Abre una consola de comandos.
+CMD_DESC=Abre una consola de comandos
 EXPLORER_TITLE=Explorador de ReactOS
-EXPLORER_DESC=Ejecuta una nueva ventada del explorador de archivos.
+EXPLORER_DESC=Ejecuta una nueva ventana del explorador de archivos
 RAPPS_TITLE=Administrador de aplicaciones de ReactOS
 RAPPS_TITLE_SHORT=Administrador de aplicaciones
-RAPPS_DESC=Descarga e instala varias aplicaciones.
+RAPPS_DESC=Descarga e instala varias aplicaciones
 SERVMAN_TITLE=Administrador de servicios
-SERVMAN_DESC=Ejecuta el administrador de servicios.
+SERVMAN_DESC=Ejecuta el administrador de servicios
 DEVMGMT_TITLE=Administrador de dispositivos
-DEVMGMT_DESC=Ejecuta el administrador de dispositivos.
+DEVMGMT_DESC=Ejecuta el administrador de dispositivos
 EVENTVWR_TITLE=Visor de sucesos
-EVENTVWR_DESC=Ejecuta el visor de sucesos.
+EVENTVWR_DESC=Ejecuta el visor de sucesos
 MSCONFIG_TITLE=Configuración del sistema
-MSCONFIG_DESC=Ejecuta la utilidad de configuración del sistema.
+MSCONFIG_DESC=Ejecuta la utilidad de configuración del sistema
 CALC_TITLE=Calculadora
-CALC_DESC=Ejecuta la calculadora.
+CALC_DESC=Ejecuta la calculadora
 NOTEPAD_TITLE=Bloc de notas
-NOTEPAD_DESC=Ejecuta un editor de texto simple.
+NOTEPAD_DESC=Ejecuta un editor de texto simple
 MSTSC_TITLE=Escritorio remoto
-MSTSC_DESC=Ejecuta una conexión de escritorio remoto.
+MSTSC_DESC=Ejecuta una conexión de escritorio remoto
 WORDPAD_TITLE=WordPad
-WORDPAD_DESC=Ejecuta un editor de documentos de texto enriquecido.
+WORDPAD_DESC=Ejecuta un editor de documentos de texto enriquecido
 MSPAINT_TITLE=Paint
-MSPAINT_DESC=Ejecuta un sencillo programa de edición de imágenes.
+MSPAINT_DESC=Ejecuta un sencillo programa de edición de imágenes
 CHARMAP_TITLE=Mapa de caracteres
-CHARMAP_DESC=Ejecuta el mapa de caracteres.
+CHARMAP_DESC=Ejecuta el mapa de caracteres
 CLIPBRD_TITLE=Visor del Portapapeles
-CLIPBRD_DESC=Controla lo que copias y pegas en el visor del portapapeles de ReactOS.
+CLIPBRD_DESC=Controla lo que copias y pegas en el visor del portapapeles de ReactOS
 KBSWITCH_TITLE=Ajustes de distribución de teclado
-KBSWITCH_DESC=Cambia la distribución de teclas del equipo.
+KBSWITCH_DESC=Cambia la distribución de teclas del equipo
 REGEDIT_TITLE=Editor del Registro
-REGEDIT_DESC=Ejecuta la utilidad de configuración del Registro del sistema operativo.
+REGEDIT_DESC=Ejecuta la utilidad de configuración del Registro del sistema operativo
 TASKMGR_TITLE=Administrador de tareas
-TASKMGR_DESC=Administre y gestione las tareas y procesos en funcionamiento.
+TASKMGR_DESC=Administre y gestione las tareas y procesos en funcionamiento
 DXDIAG_TITLE=Diagnósticos de ReactX
-DXDIAG_DESC=Ejecuta el programa de diagnóstico de ReactX.
+DXDIAG_DESC=Ejecuta el programa de diagnóstico de ReactX
 MAGNIFY_TITLE=Lupa
-MAGNIFY_DESC=Amplía secciones de la pantalla y mejora su accesibilidad.
+MAGNIFY_DESC=Amplía secciones de la pantalla y mejora su accesibilidad
 OSK_TITLE=Teclado en pantalla
-OSK_DESC=Ejecuta un teclado virtual, útil para escribir en otras aplicaciones.
+OSK_DESC=Ejecuta un teclado virtual, útil para escribir en otras aplicaciones
 MPLAY_TITLE=Reproductor multimedia
-MPLAY_DESC=Ejecuta el reproductor de audio y vídeo.
+MPLAY_DESC=Ejecuta el reproductor de audio y vídeo
 SNDVOL_TITLE=Control de volumen
-SNDVOL_DESC=Ejecuta una utilidad con la que controlar la salida de audio.
+SNDVOL_DESC=Ejecuta una utilidad con la que controlar la salida de audio
 SNDREC32_TITLE=Grabadora de sonidos
-SNDREC32_DESC=Ejecuta una utilidad para grabar audio desde un micrófono conectado al equipo.
+SNDREC32_DESC=Ejecuta una utilidad para grabar audio desde un micrófono conectado al equipo
 SOL_TITLE=Solitario
-SOL_DESC=Jugar al popular juego de cartas de un sólo jugador.
+SOL_DESC=Jugar al popular juego de cartas de un sólo jugador
 WINMINE_TITLE=Buscaminas
-WINMINE_DESC=Jugar al popular juego en el que se debe despejar un campo de minas sin detonar ninguna.
+WINMINE_DESC=Jugar al popular juego en el que se debe despejar un campo de minas sin detonar ninguna
 SPIDER_TITLE=Solitario Spider
-SPIDER_DESC=Jugar al popular juego de cartas de un sólo jugador.
+SPIDER_DESC=Jugar al popular juego de cartas de un sólo jugador
 UTILMAN_TITLE=Herramientas de Accesibilidad
-UTILMAN_DESC=Gestiona las Herramientas de Accesibilidad y su interacción con el sistema.
+UTILMAN_DESC=Gestiona las Herramientas de Accesibilidad y su interacción con el sistema
 
-; Estonian
 [Strings.0425]
 ACCESSORIES=Tarvikud
 SYSTOOLS=Süsteemi tööriistad
@@ -576,7 +570,7 @@ DXDIAG_TITLE=ReactX Diagnostic
 DXDIAG_DESC=Ava ReactX-Diagnostika programm
 MAGNIFY_TITLE=Magnify
 MAGNIFY_DESC=Suurenda
-OSK_TITLE=Ekraani klaviatuuri 
+OSK_TITLE=Ekraani klaviatuuri
 OSK_DESC=Käivita ekraaniklaviatuur
 MPLAY_TITLE=Multimedia Player
 MPLAY_DESC=Ava Meediamängija
@@ -591,7 +585,6 @@ WINMINE_DESC=WineMine
 SPIDER_TITLE=Spider Solitaire
 SPIDER_DESC=Spider Solitaire
 
-; French
 [Strings.040C]
 ACCESSORIES=Accessoires
 SYSTOOLS=Outils système
@@ -661,7 +654,6 @@ UTILMAN_DESC=Lance le gestionnaire d'utilitaires d'accessibilité
 IEXPLORE_TITLE=Wine Internet Explorer
 IEXPLORE_DESC=Lance le navigateur Wine Internet Explorer
 
-; Hebrew
 [Strings.040D]
 ACCESSORIES=עזרים
 SYSTOOLS=כלי מערכת
@@ -672,7 +664,7 @@ GAMES=משחקים
 
 CMD_TITLE=שורת הפקודה
 CMD_DESC=שורת הפקודה
-EXPLORER_TITLE=סייר ReactOS 
+EXPLORER_TITLE=סייר ReactOS
 EXPLORER_DESC=סייר
 RAPPS_TITLE=מנהל היישומים של ReactOS
 RAPPS_TITLE_SHORT=מנהל היישומים
@@ -726,7 +718,6 @@ SPIDER_DESC=סוליטייר עכביש
 UTILMAN_TITLE=מנהל כלי הנגישות
 UTILMAN_DESC=הפעל את מנהל כלי הנגישות
 
-; Hungarian
 [Strings.040E]
 ACCESSORIES=Kellékek
 SYSTOOLS=Rendszereszközök
@@ -777,8 +768,8 @@ DXDIAG_TITLE=ReactX diagnosztika
 DXDIAG_DESC=ReactX diagnosztikai program indítása
 MAGNIFY_TITLE=Nagyító
 MAGNIFY_DESC=Nagyító
-OSK_TITLE=A képernyőn megjelenő billentyűzet 
-OSK_DESC=A képernyőn megjelenő billentyűzet indítása 
+OSK_TITLE=A képernyőn megjelenő billentyűzet
+OSK_DESC=A képernyőn megjelenő billentyűzet indítása
 MPLAY_TITLE=Médialejátszó
 MPLAY_DESC=Médialejátszó indítása
 SNDVOL_TITLE=Hangerőszabályzó
@@ -794,7 +785,6 @@ SPIDER_DESC=Fekete Özvegy
 UTILMAN_TITLE=Kisegítő lehetőségek kezelő
 UTILMAN_DESC=Kisegítő lehetőségek kezelő indítása
 
-; Indonesian
 [Strings.0421]
 ACCESSORIES=Aksesoris
 SYSTOOLS=Alat Sistem
@@ -855,7 +845,6 @@ WINMINE_DESC=Buka WineMine
 SPIDER_TITLE=Spider Solitaire
 SPIDER_DESC=Buka Spider Solitaire
 
-; Italian
 [Strings.0410]
 ACCESSORIES=Accessori
 SYSTOOLS=Strumenti di sistema
@@ -901,7 +890,7 @@ KBSWITCH_DESC=Cambia il layout di tastiera
 REGEDIT_TITLE=Editor del registro
 REGEDIT_DESC=Lancia l'editor del registro
 DXDIAG_TITLE=ReactX Diagnostica
-DXDIAG_DESC=Esegui il programma di diagnostica ReactX-
+DXDIAG_DESC=Esegui il programma di diagnostica ReactX
 MAGNIFY_TITLE=Lente d'ingrandimento
 MAGNIFY_DESC=Ingrandisce parti dello schermo
 OSK_TITLE=Tastiera su schermo
@@ -919,7 +908,6 @@ WINMINE_DESC=Campo minato
 SPIDER_TITLE=Spider
 SPIDER_DESC=Spider
 
-; Japanese
 [Strings.0411]
 ACCESSORIES=アクセサリ
 SYSTOOLS=システムツール
@@ -932,8 +920,8 @@ CMD_TITLE=コマンド プロンプト
 CMD_DESC=コマンド プロンプトを開きます
 EXPLORER_TITLE=ReactOS Explorer
 EXPLORER_DESC=エクスプローラを起動します
-RAPPS_TITLE=ReactOS アプリケーション マネージャ
-RAPPS_TITLE_SHORT=アプリケーション マネージャ
+RAPPS_TITLE=ReactOS アプリ マネージャ
+RAPPS_TITLE_SHORT=アプリ マネージャ
 RAPPS_DESC=様々なアプリケーションのダウンロードとインストールを行います
 SERVMAN_TITLE=サービス マネージャ
 SERVMAN_DESC=サービス マネージャを起動します
@@ -965,7 +953,7 @@ DXDIAG_TITLE=ReactX 診断
 DXDIAG_DESC=ReactX 診断 プログラムを起動します
 MAGNIFY_TITLE=拡大鏡
 MAGNIFY_DESC=拡大鏡
-OSK_TITLE=画面上のキーボード   
+OSK_TITLE=画面上のキーボード
 OSK_DESC=スクリーンキーボードの起動
 MPLAY_TITLE=マルチメディア プレーヤ
 MPLAY_DESC=マルチメディア プレーヤーを起動します
@@ -980,7 +968,6 @@ WINMINE_DESC=WineMine
 SPIDER_TITLE=スパイダ ソリティア
 SPIDER_DESC=スパイダ ソリティア
 
-; Dutch
 [Strings.0413]
 ACCESSORIES=Accessories
 SYSTOOLS=System Tools
@@ -1029,7 +1016,7 @@ DXDIAG_TITLE=ReactX Diagnostic
 DXDIAG_DESC=Launch ReactX-Diagnostic program
 MAGNIFY_TITLE=Magnify
 MAGNIFY_DESC=Magnify
-OSK_TITLE=On-Screen Keyboard   
+OSK_TITLE=On-Screen Keyboard
 OSK_DESC=Launch On-Screen Keyboard
 MPLAY_TITLE=Multimedia Player
 MPLAY_DESC=Launch Multimedia Player
@@ -1044,7 +1031,6 @@ WINMINE_DESC=WineMine
 SPIDER_TITLE=Spider Solitaire
 SPIDER_DESC=Spider Solitaire
 
-; Norwegian
 [Strings.0414]
 ACCESSORIES=Tilbehør
 SYSTOOLS=Systemverktøy
@@ -1090,7 +1076,7 @@ DXDIAG_TITLE=ReactX Diagnostic
 DXDIAG_DESC=Kjør ReactX-Diagnose program
 MAGNIFY_TITLE=Magnify
 MAGNIFY_DESC=Forstørrelse
-OSK_TITLE=On-Screen Keyboard   
+OSK_TITLE=On-Screen Keyboard
 OSK_DESC=Lansering på Skjerm tastatur
 MPLAY_TITLE=Multimedia Player
 MPLAY_DESC=Start Multimedia avspiller
@@ -1105,7 +1091,6 @@ WINMINE_DESC=Minnesveiper
 SPIDER_TITLE=Spider Solitaire
 SPIDER_DESC=Spider Solitaire
 
-; Polish
 [Strings.0415]
 ACCESSORIES=Akcesoria
 SYSTOOLS=Narzędzia systemowe
@@ -1156,7 +1141,7 @@ DXDIAG_TITLE=Program diagnostyczny ReactX
 DXDIAG_DESC=Uruchom program diagnostyczny ReactX
 MAGNIFY_TITLE=Lupa
 MAGNIFY_DESC=Lupa
-OSK_TITLE=Klawiatura Ekranowa 
+OSK_TITLE=Klawiatura Ekranowa
 OSK_DESC=Uruchomienie na ekranie klawiatury
 MPLAY_TITLE=Odtwarzacz multimedialny
 MPLAY_DESC=Uruchom Odtwarzacz multimedialny
@@ -1173,7 +1158,6 @@ SPIDER_DESC=Pasjans Pająk
 UTILMAN_TITLE=Menedżer narzędzi ułatwienia dostępu
 UTILMAN_DESC=Uruchom Menedżer narzędzi ułatwienia dostępu
 
-; Portuguese - Brazil
 [Strings.0416]
 ACCESSORIES=Acessórios
 SYSTOOLS=Ferramentas de Sistema
@@ -1222,8 +1206,8 @@ DXDIAG_TITLE=ReactX Diagnostic
 DXDIAG_DESC=Iniciar o ReactX-Diagnostic
 MAGNIFY_TITLE=Magnify
 MAGNIFY_DESC=Ampliar
-OSK_TITLE=Em Tela Teclado 
-OSK_DESC=Lançamento em Tela Teclado
+OSK_TITLE=Teclado no ecrã
+OSK_DESC=Iniciar o Teclado no ecrã
 MPLAY_TITLE=Multimedia Player
 MPLAY_DESC=Iniciar Player Multimídia
 SNDVOL_TITLE=Volume Control
@@ -1237,7 +1221,69 @@ WINMINE_DESC=WineMine
 SPIDER_TITLE=Spider Solitaire
 SPIDER_DESC=Spider Solitaire
 
-; Romanian
+[Strings.0816]
+ACCESSORIES=Acessórios
+SYSTOOLS=Ferramentas de Sistema
+ACCESSIBILITY=Acessibilidade
+ENTERTAINMENT=Entretenimento
+COMMUNICATIONS=Comunicações
+GAMES=Jogos
+
+README_TITLE=Leia-Me
+README_DESC=Arquivo de informações para o ReactOS
+
+CMD_TITLE=Linha de Comandos
+CMD_DESC=Abrir Linha de comando
+EXPLORER_TITLE=Explorador do ReactOS
+EXPLORER_DESC=Iniciar Explorador
+RAPPS_TITLE=Gestor de Aplicações ReactOS
+RAPPS_TITLE_SHORT=Gestor de Aplicações
+RAPPS_DESC=Faça o download e instale várias aplicações
+SERVMAN_TITLE=Gestor de Serviços
+SERVMAN_DESC=Iniciar Gestor de Serviços
+DEVMGMT_TITLE=Gestor de Dispositivos
+DEVMGMT_DESC=Iniciar Gestor de Dispositivos
+EVENTVWR_TITLE=Visualizador de Eventos
+EVENTVWR_DESC=Iniciar Visualizador de Eventos
+MSCONFIG_TITLE=Configuração do Sistema
+MSCONFIG_DESC=Iniciar Software de Configuração do Sistema
+CALC_TITLE=Calculadora
+CALC_DESC=Iniciar Calculadora
+NOTEPAD_TITLE=Bloco de notas
+NOTEPAD_DESC=Iniciar Bloco de notas
+MSTSC_TITLE=Ligar ao Ambiente de Trabalho Remoto
+MSTSC_DESC=Abrir Ligação ao Ambiente de Trabalho Remoto
+WORDPAD_TITLE=WordPad
+WORDPAD_DESC=Iniciar Editor de Documentos de texto
+MSPAINT_TITLE=Paint
+MSPAINT_DESC=Iniciar Paint
+CHARMAP_TITLE=Mapa de Caracteres
+CHARMAP_DESC=Mapa de Caracteres
+CLIPBRD_TITLE=Visualizador da área de transferência
+CLIPBRD_DESC=Visualizador da área de transferência
+KBSWITCH_TITLE=Alterar Estilo do Teclado
+KBSWITCH_DESC=Alterar Estilo do Teclado
+REGEDIT_TITLE=Editor do Registo
+REGEDIT_DESC=Iniciar Editor do Registo
+DXDIAG_TITLE=Diagnóstico ReactX
+DXDIAG_DESC=Iniciar Diagnóstico ReactX
+MAGNIFY_TITLE=Lupa
+MAGNIFY_DESC=Ampliar
+OSK_TITLE=Teclado no ecrã
+OSK_DESC=Iniciar Teclado no ecrã
+MPLAY_TITLE=Multimedia Player
+MPLAY_DESC=Iniciar Multimedia Player
+SNDVOL_TITLE=Control de Volume
+SNDVOL_DESC=Iniciar Controle de Volume
+SNDREC32_TITLE=Gravador de Som
+SNDREC32_DESC=Iniciar Gravador de Som
+SOL_TITLE=Solitário
+SOL_DESC=Paciência
+WINMINE_TITLE=WineMine
+WINMINE_DESC=WineMine
+SPIDER_TITLE=Spider Solitaire
+SPIDER_DESC=Spider Solitaire
+
 [Strings.0418]
 ACCESSORIES=Accesorii
 SYSTOOLS=Instrumente de sistem
@@ -1250,60 +1296,59 @@ README_TITLE=De citit
 README_DESC=Fișier de informare ReactOS
 
 CMD_TITLE=Linie de comandă
-CMD_DESC=Mediu textual cu operații lansate de la linia de comandă.
-EXPLORER_TITLE=Explorator ReactOS
-EXPLORER_DESC=Program de explorare a fișierelor în ReactOS.
-RAPPS_TITLE=Gestionar de programe ReactOS
-RAPPS_TITLE_SHORT=Gestionar de programe
-RAPPS_DESC=Program pentru a descărca și instala diverse programe.
+CMD_DESC=Efectuează funcții de tip text (linie de comandă)
+EXPLORER_TITLE=ReactOS Explorer
+EXPLORER_DESC=Afișează fișierele și folderele de pe computer
+RAPPS_TITLE=Managerul de aplicații ReactOS
+RAPPS_TITLE_SHORT=Manager de aplicații
+RAPPS_DESC=Program pentru a descărca și instala diverse programe
 SERVMAN_TITLE=Gestionar de servicii
-SERVMAN_DESC=Program pentru gestionarea serviciilor de sistem.
-DEVMGMT_TITLE=Gestionar de dispozitive
-DEVMGMT_DESC=Program pentru gestiunea dispozitivelor instalate.
-EVENTVWR_TITLE=Observator de evenimente
-EVENTVWR_DESC=Program pentru inspecția evenimentelor programate în sistem.
+SERVMAN_DESC=Pornește, oprește și configurează serviciile ReactOS
+DEVMGMT_TITLE=Manager dispozitive
+DEVMGMT_DESC=Vizualizați și actualizați setările hardware și software-ul pentru drivere
+EVENTVWR_TITLE=Vizualizator de evenimente
+EVENTVWR_DESC=Program pentru inspecția evenimentelor programate în sistem
 MSCONFIG_TITLE=Configurator de sistem
-MSCONFIG_DESC=Program de configurare a sistemului de operare.
-CALC_TITLE=Minicalculator
-CALC_DESC=Program pentru calcule manuale.
-NOTEPAD_TITLE=Carnețel
-NOTEPAD_DESC=Editorul de text simplu.
-MSTSC_TITLE=Birou la distanță
-MSTSC_DESC=Program pentru conectarea și autentificarea la un alt birou.
+MSCONFIG_DESC=Program de configurare a sistemului de operare
+CALC_TITLE=Calculator
+CALC_DESC=Efectuează operații aritmetice de bază cu un calculator pe ecran
+NOTEPAD_TITLE=Notepad
+NOTEPAD_DESC=Creează și editează fișiere text utilizând format text de bază
+MSTSC_TITLE=Conexiune desktop la distanță
+MSTSC_DESC=Utilizați computerul pentru a vă conecta la un computer care este amplasat în altă parte și rulați programe și accesați fișiere
 WORDPAD_TITLE=WordPad
-WORDPAD_DESC=Editor de documente.
-MSPAINT_TITLE=Pictare
-MSPAINT_DESC=Editor de imagini elementar.
-CHARMAP_TITLE=Hartă de caractere
-CHARMAP_DESC=Program de acces la toate caracterele disponibile.
+WORDPAD_DESC=Creează și editează documente text cu formatare complexă
+MSPAINT_TITLE=Paint
+MSPAINT_DESC=Creați și editați desene
+CHARMAP_TITLE=Plan caractere
+CHARMAP_DESC=Selectează caractere speciale și le copiază în document
 CLIPBRD_TITLE=Inspector de Clipboard
 CLIPBRD_DESC=Inspector de Clipboard
 KBSWITCH_TITLE=Comutator aranjamente de tastatură
-KBSWITCH_DESC=Program pentru comutarea aranjamentelor de tastatură.
+KBSWITCH_DESC=Program pentru comutarea aranjamentelor de tastatură
 REGEDIT_TITLE=Editor de registru
-REGEDIT_DESC=Program pentru editarea registrului de sistem.
-TASKMGR_TITLE=Gestionar de activități
-TASKMGR_DESC=Program de gestiune a activităților
-DXDIAG_TITLE=Diagnostic ReactX
-DXDIAG_DESC=Instrument de diagnostic ReactX.
+REGEDIT_DESC=Program pentru editarea registrului de sistem
+TASKMGR_TITLE=Manager de activități
+TASKMGR_DESC=Vizualizare procese în curs de execuție
+DXDIAG_TITLE=Diagnosticare ReactX
+DXDIAG_DESC=Instrument de diagnostic ReactX
 MAGNIFY_TITLE=Lupă
-MAGNIFY_DESC=Program de asistență pentru inspecția conținutului afișat pe ecran.
-OSK_TITLE=Tastatură virtuală
-OSK_DESC=Tastatură virtuală afișată pe ecranul calculatorului.
-MPLAY_TITLE=Lector multimedia
-MPLAY_DESC=Program pentru lectura de conținut multimedia.
-SNDVOL_TITLE=Reglaj de volum
-SNDVOL_DESC=Panou cu reglaje pentru volumul sunetului înregistrat sau lecturat.
-SNDREC32_TITLE=Înregistrator audio
-SNDREC32_DESC=Program pentru înregistrare a sunetelor prin microfon.
-SOL_TITLE=Pasiență
-SOL_DESC=Joc de pasiență.
-WINMINE_TITLE=Genist
-WINMINE_DESC=Joc de deminare.
-SPIDER_TITLE=Pasiență-păianjen
-SPIDER_DESC=Joc de pasiență.
+MAGNIFY_DESC=Extinde textul și alte elemente selectate pe ecran pentru a fi mai bine văzute
+OSK_TITLE=Tastatură vizuală
+OSK_DESC=Afișează o tastatură controlată de mouse sau de un dispozitiv de intrare cu butoane
+MPLAY_TITLE=Player multimedia
+MPLAY_DESC=Program pentru redare de conținut multimedia
+SNDVOL_TITLE=Ajustare volum sistem
+SNDVOL_DESC=Ajustare volum sistem
+SNDREC32_TITLE=Înregistrator sunet
+SNDREC32_DESC=Înregistrare sunet și salvare pe computer
+SOL_TITLE=Solitaire
+SOL_DESC=Solitaire este jocul clasic de cărți cu un singur utilizator. Scopul este de a colecta toate cărțile în șiruri în culori alternante, negru și roșu, de la as până la popă
+WINMINE_TITLE=WineMine
+WINMINE_DESC=Descoperiți pătratele albe și evitați-le pe cele care ascund mine ascunse în acest joc simplu de memorie și raționament. Dacă faceți clic pe o mină, jocul se termină
+SPIDER_TITLE=Spider Solitaire
+SPIDER_DESC=Obiectivul jocului de Spider Solitaire este eliminarea cărților din joc în cât mai puține mutări. Ordonați cărțile de la popă și până la as, în aceeași culoare, pentru a le elimina
 
-; Russian
 [Strings.0419]
 ACCESSORIES=Стандартные
 SYSTOOLS=Служебные
@@ -1316,9 +1361,9 @@ README_TITLE=Прочти Меня
 README_DESC=файл ReadMe для ReactOS
 
 CMD_TITLE=Командная строка
-CMD_DESC=Используется для выполнения вводимых с клавиатуры команд.
+CMD_DESC=Используется для выполнения вводимых с клавиатуры команд
 EXPLORER_TITLE=Проводник ReactOS
-EXPLORER_DESC=Отображает файлы и папки на компьютере.
+EXPLORER_DESC=Отображает файлы и папки на компьютере
 RAPPS_TITLE=Менеджер приложений ReactOS
 RAPPS_TITLE_SHORT=Менеджер приложений
 RAPPS_DESC=Скачать и установить другие приложения
@@ -1331,17 +1376,17 @@ EVENTVWR_DESC=Запустить программу просмотра собы�
 MSCONFIG_TITLE=Параметры системы
 MSCONFIG_DESC=Запустить программу настройки системы
 CALC_TITLE=Калькулятор
-CALC_DESC=Электронный ''Калькулятор'' вполне способен заменить обычный ручной калькулятор.
+CALC_DESC=Электронный ''Калькулятор'' вполне способен заменить обычный ручной калькулятор
 NOTEPAD_TITLE=Блокнот
-NOTEPAD_DESC=Используется для создания и редактирования текстовых файлов простого формата.
+NOTEPAD_DESC=Используется для создания и редактирования текстовых файлов простого формата
 MSTSC_TITLE=Подключение к удаленному рабочему столу
-MSTSC_DESC=Этот компьютер можно использовать для подключения к другому компьютеру, чтобы запускать на нем программы и получать доступ к файлам.
+MSTSC_DESC=Этот компьютер можно использовать для подключения к другому компьютеру, чтобы запускать на нем программы и получать доступ к файлам
 WORDPAD_TITLE=WordPad
-WORDPAD_DESC=Используется для создания и редактирования текстовых файлов со сложным форматированием.
+WORDPAD_DESC=Используется для создания и редактирования текстовых файлов со сложным форматированием
 MSPAINT_TITLE=Paint
-MSPAINT_DESC=Создание и редактирование рисунков.
+MSPAINT_DESC=Создание и редактирование рисунков
 CHARMAP_TITLE=Таблица символов
-CHARMAP_DESC=Позволяет вводить отсутствующие на клавиатуре знаки.
+CHARMAP_DESC=Позволяет вводить отсутствующие на клавиатуре знаки
 CLIPBRD_TITLE=Буфер обмена
 CLIPBRD_DESC=Буфер обмена
 KBSWITCH_TITLE=Переключатель раскладки клавиатуры
@@ -1353,25 +1398,24 @@ TASKMGR_DESC=Запустить диспетчер задач
 DXDIAG_TITLE=Средство диагностики ReactX
 DXDIAG_DESC=Запустить программу диагностики ReactX
 MAGNIFY_TITLE=Экранная лупа
-MAGNIFY_DESC=Используется для увеличения изображения выделенного фрагмента экрана.
+MAGNIFY_DESC=Используется для увеличения изображения выделенного фрагмента экрана
 OSK_TITLE=Экранная клавиатура
-OSK_DESC=Выводит на экран изображение клавиатуры, позволяет моделировать нажатие клавиш с помощью мыши или иного кнопочного устройства ввода.
+OSK_DESC=Выводит на экран изображение клавиатуры, позволяет моделировать нажатие клавиш с помощью мыши или иного кнопочного устройства ввода
 MPLAY_TITLE=Проигрыватель
 MPLAY_DESC=Запустить проигрыватель
 SNDVOL_TITLE=Громкость
 SNDVOL_DESC=Запустить регулятор громкости
 SNDREC32_TITLE=Звукозапись
-SNDREC32_DESC=Запишите звук и сохраните его на своем компьютере.
+SNDREC32_DESC=Запишите звук и сохраните его на своем компьютере
 SOL_TITLE=Пасьянс Косынка
 SOL_DESC=Пасьянс Косынка
-WINMINE_TITLE=Сапер
-WINMINE_DESC=Сапер
+WINMINE_TITLE=Сапёр
+WINMINE_DESC=Сапёр
 SPIDER_TITLE=Пасьянс Паук
 SPIDER_DESC=Пасьянс Паук
 UTILMAN_TITLE=Диспетчер служебных программ
-UTILMAN_DESC=Обеспечивает запуск и настройку программ поддержки специальных возможностей.
+UTILMAN_DESC=Обеспечивает запуск и настройку программ поддержки специальных возможностей
 
-; Slovak
 [Strings.041B]
 ACCESSORIES=Príslušenstvo
 SYSTOOLS=Systémové nástroje
@@ -1432,17 +1476,16 @@ WINMINE_DESC=Míny
 SPIDER_TITLE=Pavúčí solitér
 SPIDER_DESC=Pavúčí solitér
 
-; Turkish
 [Strings.041f]
 ACCESSORIES=Donatılar
-SYSTOOLS=Dizge Araçları
+SYSTOOLS=Sistem Araçları
 ACCESSIBILITY=Erişilebilirlik
 ENTERTAINMENT=Eğlence
 COMMUNICATIONS=İletişim
 GAMES=Oyunlar
 
-README_TITLE=Benioku
-README_DESC=ReactOS Benioku
+README_TITLE=Beni Oku
+README_DESC=ReactOS Beni Oku
 
 CMD_TITLE=Komut İstemi
 CMD_DESC=Komut İstemi'ni aç
@@ -1457,8 +1500,8 @@ DEVMGMT_TITLE=Aygıt Yöneticisi
 DEVMGMT_DESC=Aygıt Yöneticisi'ni başlat
 EVENTVWR_TITLE=Olay Görüntüleyicisi
 EVENTVWR_DESC=Olay Görüntüleyicisi'ni başlat
-MSCONFIG_TITLE=Dizge Yapılandırma İzlencesi
-MSCONFIG_DESC=Dizge Yapılandırma İzlencesi'ni başlat
+MSCONFIG_TITLE=Sistem Yapılandırma Programı
+MSCONFIG_DESC=Sistem Yapılandırma Programı'nı başlat
 CALC_TITLE=Hesap Makinesi
 CALC_DESC=Hesap Makinesi'ni başlat
 NOTEPAD_TITLE=Not Defteri
@@ -1469,20 +1512,20 @@ WORDPAD_TITLE=WordPad
 WORDPAD_DESC=Belge Düzenleyicisi'ni başlat
 MSPAINT_TITLE=Paint
 MSPAINT_DESC=Paint'i başlat
-CHARMAP_TITLE=Damga Eşlem
-CHARMAP_DESC=Damga Eşlem'i başlat
+CHARMAP_TITLE=Karakter Eşlem
+CHARMAP_DESC=Karakter Eşlem'i başlat
 CLIPBRD_TITLE=Pano Görüntüleyicisi
 CLIPBRD_DESC=Pano Görüntüleyicisi
-KBSWITCH_TITLE=Düğme Takımı Düzeni Değiştiricisi
-KBSWITCH_DESC=Düğme Takımı Düzeni Değiştiricisi
-REGEDIT_TITLE=Değer Defteri Düzenleyicisi
-REGEDIT_DESC=Değer Defteri Düzenleyicisi'ni başlat
+KBSWITCH_TITLE=Klavye Düzeni Değiştiricisi
+KBSWITCH_DESC=Klavye Düzeni Değiştiricisi
+REGEDIT_TITLE=Kayıt Defteri Düzenleyicisi
+REGEDIT_DESC=Kayıt Defteri Düzenleyicisi'ni başlat
 DXDIAG_TITLE=ReactX Tanı Aracı
 DXDIAG_DESC=ReactX Tanı Aracı'nı başlat
 MAGNIFY_TITLE=Büyüteç
 MAGNIFY_DESC=Büyüteç
-OSK_TITLE=Görüntülük Düğme Takımı
-OSK_DESC=Görüntülük Düğme Takımı'nı başlat
+OSK_TITLE=Ekran Klavyesi
+OSK_DESC=Ekran Klavyesi'ni başlat
 MPLAY_TITLE=Çoklu Ortam Oynatıcısı
 MPLAY_DESC=Çoklu Ortam Oynatıcısı'nı başlat
 SNDVOL_TITLE=Ses Denetimi
@@ -1495,8 +1538,11 @@ WINMINE_TITLE=Mayın Tarlası
 WINMINE_DESC=Mayın Tarlası
 SPIDER_TITLE=Örümcek Solitaire
 SPIDER_DESC=Örümcek Solitaire
+UTILMAN_TITLE=Erişilebilirlik Araçları Yöneticisi
+UTILMAN_DESC=Erişilebilirlik Araçları Yöneticisi'ni başlat
+IEXPLORE_TITLE=Wine İnternet Gezgini
+IEXPLORE_DESC=Wine Web Tarayıcısı
 
-; Ukrainian
 [Strings.0422]
 ACCESSORIES=Стандартні
 SYSTOOLS=Службові
@@ -1560,9 +1606,75 @@ WINMINE_DESC=Сапер
 SPIDER_TITLE=Пас'янс Павук
 SPIDER_DESC=Пас'янс Павук
 UTILMAN_TITLE=Диспетчер службових програм
-UTILMAN_DESC=Забезпечує запуск і настройку програм підтримки спеціальних можливостей.
+UTILMAN_DESC=Забезпечує запуск і настройку програм підтримки спеціальних можливостей
 
-; Simplified Chinese
+[Strings.042D]
+ACCESSORIES=Osagarriak
+SYSTOOLS=Sistemaren Tresnak
+ACCESSIBILITY=Irisgarritasuna
+ENTERTAINMENT=Dembora-pasa
+COMMUNICATIONS=Komunikazioak
+GAMES=Jolasak
+
+README_TITLE=Irakurri hau
+README_DESC=ReactOS gidaliburua irakurtzeko
+
+CMD_TITLE=Kontsola
+CMD_DESC=Ireki komanduen konstsola
+EXPLORER_TITLE=ReactOS Esploradorea
+EXPLORER_DESC=Ireki fitxategi-esploradore lehio bat
+RAPPS_TITLE=ReactOS aplikazio denda eta eragilea
+RAPPS_TITLE_SHORT=ReactOS app denda
+RAPPS_DESC=Deskargatu eta instalatu nahibaduzun aplikazioak
+SERVMAN_TITLE=Konfiguratu zerbitzaria
+SERVMAN_DESC=Hasi Zerbitzu kudeaketa
+DEVMGMT_TITLE=Gailu administratzaile
+DEVMGMT_DESC=Hasi gailu administratzaile
+EVENTVWR_TITLE=Gertaerak ikustailea
+EVENTVWR_DESC=Hasi gertareak ikustailea
+MSCONFIG_TITLE=Sistemaren konfigurazioa
+MSCONFIG_DESC=Hasi sistemaren konfigurazioa
+CALC_TITLE=Kalkulagailua
+CALC_DESC=Kalkulagailua hasi
+NOTEPAD_TITLE=Ohar-bloka
+NOTEPAD_DESC=Hasi ohar koadernoa
+MSTSC_TITLE=Mahaigain urrunekoa
+MSTSC_DESC=Hasi mahaigain hurrunekoa
+WORDPAD_TITLE=WordPad
+WORDPAD_DESC=Hasi testu dokumentu editorea
+MSPAINT_TITLE=Paint
+MSPAINT_DESC=Hasi irudiaren editore funtsezkoa
+CHARMAP_TITLE=Karaktere-mapa
+CHARMAP_DESC=Karaktere-mapa hasi
+CLIPBRD_TITLE=Arbel-ikustailea
+CLIPBRD_DESC=Controla lo que copias y pegas en el visor del portapapeles de ReactOS
+KBSWITCH_TITLE=Teklatuen diztribuzio aukerak
+KBSWITCH_DESC=Cambia la distribución de teclas del equipo
+REGEDIT_TITLE=Erregistro editorea
+REGEDIT_DESC=Ejecuta la utilidad de configuración del Registro del sistema operativo
+TASKMGR_TITLE=Ataza-kudeatzaile
+TASKMGR_DESC=Administre y gestione las tareas y procesos en funcionamiento
+DXDIAG_TITLE=ReactX analisia
+DXDIAG_DESC=Hasi ReactX analisia
+MAGNIFY_TITLE=Lupa
+MAGNIFY_DESC=Zabaldu pantailaren atalak eta hobetu irisgarritasuna
+OSK_TITLE=Pantailako teklatua
+OSK_DESC=Ejecuta un teclado virtual, útil para escribir en otras aplicaciones
+MPLAY_TITLE=Multimedia erreproduzgailua
+MPLAY_DESC=Ejecuta el reproductor de audio y vídeo
+SNDVOL_TITLE=Bolumen kontrola
+SNDVOL_DESC=Ejecuta una utilidad con la que controlar la salida de audio
+SNDREC32_TITLE=Soinu-grabagailua
+SNDREC32_DESC=Ejecuta una utilidad para grabar audio desde un micrófono conectado al equipo
+SOL_TITLE=Solitarioa
+SOL_DESC=Jugar al popular juego de cartas de un sólo jugador
+WINMINE_TITLE=Minaren-bila
+WINMINE_DESC=Jugar al popular juego en el que se debe despejar un campo de minas sin detonar ninguna
+SPIDER_TITLE=Spider Solitarioa
+SPIDER_DESC=Jugar al popular juego de cartas de un sólo jugador
+UTILMAN_TITLE=Irisgarritasun tresnak
+UTILMAN_DESC=Gestiona las Herramientas de Accesibilidad y su interacción con el sistema
+
 [Strings.0804]
 ACCESSORIES=附件
 SYSTOOLS=系统工具
@@ -1571,8 +1683,8 @@ ENTERTAINMENT=娱乐
 COMMUNICATIONS=通讯
 GAMES=游戏
 
-README_TITLE=说明文件
-README_DESC=ReactOS 说明文件
+README_TITLE=自述文件
+README_DESC=ReactOS 自述文件
 
 CMD_TITLE=命令提示符
 CMD_DESC=命令提示符
@@ -1627,3 +1739,72 @@ WINMINE_TITLE=扫雷
 WINMINE_DESC=扫雷
 SPIDER_TITLE=蜘蛛纸牌
 SPIDER_DESC=蜘蛛纸牌
+
+[Strings.0c04]
+ACCESSORIES=附屬應用程式
+SYSTOOLS=系統管理工具
+ACCESSIBILITY=協助工具
+ENTERTAINMENT=娛樂
+COMMUNICATIONS=通訊
+GAMES=遊樂場
+
+README_TITLE=讀我檔案
+README_DESC=ReactOS 讀我檔案
+
+CMD_TITLE=命令提示字元
+CMD_DESC=啟動命令提示字元
+EXPLORER_TITLE=ReactOS 檔案總管
+EXPLORER_DESC=啟動檔案總管
+RAPPS_TITLE=ReactOS 應用程式管理員
+RAPPS_TITLE_SHORT=應用程式管理員
+RAPPS_DESC=下載並安裝其它應用程式
+SERVMAN_TITLE=服務管理員
+SERVMAN_DESC=啟動服務管理員
+DEVMGMT_TITLE=裝置管理員
+DEVMGMT_DESC=啟動裝置管理員
+EVENTVWR_TITLE=事件檢視器
+EVENTVWR_DESC=啟動事件檢視器
+MSCONFIG_TITLE=系統設定
+MSCONFIG_DESC=啟動系統設定
+CALC_TITLE=計算機
+CALC_DESC=啟動計算機
+NOTEPAD_TITLE=記事本
+NOTEPAD_DESC=啟動記事本
+MSTSC_TITLE=遠端桌面連線
+MSTSC_DESC=啟動遠端桌面連線
+WORDPAD_TITLE=WordPad
+WORDPAD_DESC=啟動 WordPad
+MSPAINT_TITLE=小畫家
+MSPAINT_DESC=啟動小畫家
+CHARMAP_TITLE=字元對應表
+CHARMAP_DESC=啟動字元對應表
+CLIPBRD_TITLE=剪貼簿檢視器
+CLIPBRD_DESC=啟動剪貼簿檢視器
+KBSWITCH_TITLE=鍵盤配置切換器
+KBSWITCH_DESC=啟動鍵盤配置切換器
+REGEDIT_TITLE=登錄編輯程式
+REGEDIT_DESC=啟動登錄編輯程式
+DXDIAG_TITLE=ReactX 診斷工具
+DXDIAG_DESC=啟動 ReactX 診斷工具
+TASKMGR_TITLE=工作管理員
+TASKMGR_DESC=啟動工作管理員
+MAGNIFY_TITLE=放大鏡
+MAGNIFY_DESC=啟動放大鏡
+OSK_TITLE=螢幕鍵盤
+OSK_DESC=啟動螢幕鍵盤
+MPLAY_TITLE=媒體播放器
+MPLAY_DESC=啟動媒體播放器
+SNDVOL_TITLE=音量控制
+SNDVOL_DESC=啟動音量控制
+SNDREC32_TITLE=錄音機
+SNDREC32_DESC=啟動錄音機
+SOL_TITLE=接龍
+SOL_DESC=啟動並遊玩接龍
+WINMINE_TITLE=踩地雷
+WINMINE_DESC=啟動並遊玩踩地雷
+SPIDER_TITLE=連環新接龍
+SPIDER_DESC=啟動並遊玩連環新接龍
+UTILMAN_TITLE=協助工具管理員
+UTILMAN_DESC=啟動協助工具管理員
+IEXPLORE_TITLE=Wine Internet Explorer
+IEXPLORE_DESC=瀏覽互聯網上的網頁

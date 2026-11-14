@@ -1,6 +1,6 @@
 /*
  * FILE:       base/applications/kbswitch/lang/ro-RO.rc
- *             ReactOS Project (http://www.reactos.org)
+ *             ReactOS Project (https://reactos.org)
  * TRANSLATOR: Fulea Ștefan (PM on ReactOS Forum at fulea.stefan)
  * CHANGE LOG: 2011-08-21  initial translation
  */
@@ -15,4 +15,14 @@ BEGIN
         MENUITEM SEPARATOR
         MENUITEM "I&eșire", ID_EXIT
     END
+END
+
+STRINGTABLE
+BEGIN
+    IDS_IME_ON "Input System (IME) - ON"
+    IDS_IME_OFF "Input System (IME) - OFF"
+    IDS_SOFTKBD_ON "Soft Keyboard - ON"
+    IDS_SOFTKBD_OFF "Soft Keyboard - OFF"
+    IDS_SHOWTOOLBAR "Show Toolbar"
+    IDS_INPUTSYSTEM "Input System (IME) configuration..."
 END

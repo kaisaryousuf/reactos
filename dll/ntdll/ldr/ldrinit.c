@@ -55,10 +55,8 @@ ULONG LdrpNumberOfTlsEntries;
 ULONG LdrpNumberOfProcessors;
 PVOID NtDllBase;
 extern LARGE_INTEGER RtlpTimeout;
-BOOLEAN RtlpTimeoutDisable;
-PVOID LdrpHeap;
+extern BOOLEAN RtlpTimeoutDisable;
 LIST_ENTRY LdrpHashTable[LDR_HASH_TABLE_ENTRIES];
-LIST_ENTRY LdrpDllNotificationList;
 HANDLE LdrpKnownDllObjectDirectory;
 UNICODE_STRING LdrpKnownDllPath;
 WCHAR LdrpKnownDllPathBuffer[128];
@@ -86,15 +84,20 @@ ULONG LdrpActiveUnloadCount;
 //extern LIST_ENTRY RtlCriticalSectionList;
 
 VOID NTAPI RtlpInitializeVectoredExceptionHandling(VOID);
-VOID NTAPI RtlpInitDeferedCriticalSection(VOID);
+VOID NTAPI RtlpInitDeferredCriticalSection(VOID);
 VOID NTAPI RtlInitializeHeapManager(VOID);
+NTSTATUS NTAPI RtlpInitializeLocaleTable(VOID);
 
 ULONG RtlpDisableHeapLookaside; // TODO: Move to heap.c
 ULONG RtlpShutdownProcessFlags; // TODO: Use it
 
 NTSTATUS LdrPerformRelocations(PIMAGE_NT_HEADERS NTHeaders, PVOID ImageBase);
-void actctx_init(PVOID* pOldShimData);
+NTSTATUS NTAPI RtlpInitializeActCtx(PVOID* pOldShimData);
 extern BOOLEAN RtlpUse16ByteSLists;
+
+#ifdef _M_AMD64
+extern ULONG NTAPI RtlGetCurrentDirectory_U_RtlpMsysDecoy(ULONG MaximumLength, PWSTR Buffer);
+#endif
 
 #ifdef _WIN64
 #define DEFAULT_SECURITY_COOKIE 0x00002B992DDFA232ll
@@ -109,9 +112,10 @@ extern BOOLEAN RtlpUse16ByteSLists;
  */
 NTSTATUS
 NTAPI
-LdrOpenImageFileOptionsKey(IN PUNICODE_STRING SubKey,
-                           IN BOOLEAN Wow64,
-                           OUT PHANDLE NewKeyHandle)
+LdrOpenImageFileOptionsKey(
+    _In_ PUNICODE_STRING SubKey,
+    _In_ BOOLEAN Wow64,
+    _Out_ PHANDLE NewKeyHandle)
 {
     PHANDLE RootKeyLocation;
     HANDLE RootKey;
@@ -181,12 +185,13 @@ LdrOpenImageFileOptionsKey(IN PUNICODE_STRING SubKey,
  */
 NTSTATUS
 NTAPI
-LdrQueryImageFileKeyOption(IN HANDLE KeyHandle,
-                           IN PCWSTR ValueName,
-                           IN ULONG Type,
-                           OUT PVOID Buffer,
-                           IN ULONG BufferSize,
-                           OUT PULONG ReturnedLength OPTIONAL)
+LdrQueryImageFileKeyOption(
+    _In_ HANDLE KeyHandle,
+    _In_ PCWSTR ValueName,
+    _In_ ULONG Type,
+    _Out_ PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_opt_ PULONG ReturnedLength)
 {
     ULONG KeyInfo[256];
     UNICODE_STRING ValueNameString, IntegerString;
@@ -345,13 +350,14 @@ LdrQueryImageFileKeyOption(IN HANDLE KeyHandle,
  */
 NTSTATUS
 NTAPI
-LdrQueryImageFileExecutionOptionsEx(IN PUNICODE_STRING SubKey,
-                                    IN PCWSTR ValueName,
-                                    IN ULONG Type,
-                                    OUT PVOID Buffer,
-                                    IN ULONG BufferSize,
-                                    OUT PULONG ReturnedLength OPTIONAL,
-                                    IN BOOLEAN Wow64)
+LdrQueryImageFileExecutionOptionsEx(
+    _In_ PUNICODE_STRING SubKey,
+    _In_ PCWSTR ValueName,
+    _In_ ULONG Type,
+    _Out_ PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_opt_ PULONG ReturnedLength,
+    _In_ BOOLEAN Wow64)
 {
     NTSTATUS Status;
     HANDLE KeyHandle;
@@ -383,12 +389,13 @@ LdrQueryImageFileExecutionOptionsEx(IN PUNICODE_STRING SubKey,
  */
 NTSTATUS
 NTAPI
-LdrQueryImageFileExecutionOptions(IN PUNICODE_STRING SubKey,
-                                  IN PCWSTR ValueName,
-                                  IN ULONG Type,
-                                  OUT PVOID Buffer,
-                                  IN ULONG BufferSize,
-                                  OUT PULONG ReturnedLength OPTIONAL)
+LdrQueryImageFileExecutionOptions(
+    _In_ PUNICODE_STRING SubKey,
+    _In_ PCWSTR ValueName,
+    _In_ ULONG Type,
+    _Out_ PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_opt_ PULONG ReturnedLength)
 {
     /* Call the newer function */
     return LdrQueryImageFileExecutionOptionsEx(SubKey,
@@ -513,6 +520,9 @@ LdrpInitializeThread(IN PCONTEXT Context)
             NtCurrentTeb()->RealClientId.UniqueProcess,
             NtCurrentTeb()->RealClientId.UniqueThread);
 
+    /* Acquire the loader Lock */
+    RtlEnterCriticalSection(&LdrpLoaderLock);
+
     /* Allocate an Activation Context Stack */
     DPRINT("ActivationContextStack %p\n", NtCurrentTeb()->ActivationContextStackPointer);
     Status = RtlAllocateActivationContextStack(&NtCurrentTeb()->ActivationContextStackPointer);
@@ -522,7 +532,7 @@ LdrpInitializeThread(IN PCONTEXT Context)
     }
 
     /* Make sure we are not shutting down */
-    if (LdrpShutdownInProgress) return;
+    if (LdrpShutdownInProgress) goto Exit;
 
     /* Allocate TLS */
     LdrpAllocateTls();
@@ -628,6 +638,11 @@ LdrpInitializeThread(IN PCONTEXT Context)
         /* Deactivate the ActCtx */
         RtlDeactivateActivationContextUnsafeFast(&ActCtx);
     }
+
+Exit:
+
+    /* Release the loader lock */
+    RtlLeaveCriticalSection(&LdrpLoaderLock);
 
     DPRINT("LdrpInitializeThread() done\n");
 }
@@ -968,12 +983,14 @@ LdrShutdownProcess(VOID)
     /* Enter the Loader Lock */
     RtlEnterCriticalSection(&LdrpLoaderLock);
 
+#if (NTDDI_VERSION < NTDDI_VISTA)
     /* Cleanup trace logging data (Etw) */
     if (SharedUserData->TraceLogging)
     {
         /* FIXME */
         DPRINT1("We don't support Etw yet.\n");
     }
+#endif
 
     /* Start at the end */
     ListHead = &Peb->Ldr->InInitializationOrderModuleList;
@@ -1087,12 +1104,14 @@ LdrShutdownThread(VOID)
     DPRINT("LdrShutdownThread() called for %wZ\n",
             &LdrpImageEntry->BaseDllName);
 
+#if (NTDDI_VERSION < NTDDI_VISTA)
     /* Cleanup trace logging data (Etw) */
     if (SharedUserData->TraceLogging)
     {
         /* FIXME */
         DPRINT1("We don't support Etw yet.\n");
     }
+#endif
 
     /* Get the Ldr Lock */
     RtlEnterCriticalSection(&LdrpLoaderLock);
@@ -1235,7 +1254,11 @@ LdrShutdownThread(VOID)
     }
 
     /* Check for Fiber data */
+#if (NTDDI_VERSION < NTDDI_LONGHORN)
     if (Teb->HasFiberData)
+#else
+    if (Teb->DbgHasFiberData)
+#endif
     {
         /* Free Fiber data*/
         RtlFreeHeap(RtlGetProcessHeap(), 0, Teb->NtTib.FiberData);
@@ -1506,7 +1529,7 @@ LdrpInitializeExecutionOptions(PUNICODE_STRING ImagePathName, PPEB Peb, PHANDLE 
         /* Call AVRF if necessary */
         if (Peb->NtGlobalFlag & (FLG_APPLICATION_VERIFIER | FLG_HEAP_PAGE_ALLOCS))
         {
-            Status = LdrpInitializeApplicationVerifierPackage(KeyHandle, Peb, TRUE, FALSE);
+            Status = LdrpInitializeApplicationVerifierPackage(KeyHandle, Peb, FALSE, FALSE);
             if (!NT_SUCCESS(Status))
             {
                 DPRINT1("AVRF: LdrpInitializeApplicationVerifierPackage failed with %08X\n", Status);
@@ -1534,7 +1557,9 @@ VOID
 NTAPI
 LdrpValidateImageForMp(IN PLDR_DATA_TABLE_ENTRY LdrDataTableEntry)
 {
-    UNIMPLEMENTED;
+    DPRINT("LdrpValidateImageForMp is unimplemented\n");
+    // TODO:
+    // Scan the LockPrefixTable in the load config directory
 }
 
 BOOLEAN
@@ -1602,6 +1627,9 @@ LdrpInitializeProcessCompat(PVOID pProcessActctx, PVOID* pOldShimData)
             DPRINT1("LdrpInitializeProcessCompat: Corrupt pShimData (0x%x, %u)\n", pShimData->dwMagic, pShimData->dwSize);
             return;
         }
+#ifdef _M_AMD64
+        pShimData->RtlGetCurrentDirectory_U_RtlpMsysDecoy = &RtlGetCurrentDirectory_U_RtlpMsysDecoy;   /* We need this private symbol for a MSYS shim */
+#endif
         if (pShimData->dwRosProcessCompatVersion)
         {
             if (pShimData->dwRosProcessCompatVersion == REACTOS_COMPATVERSION_IGNOREMANIFEST)
@@ -1671,6 +1699,10 @@ LdrpInitializeProcessCompat(PVOID pProcessActctx, PVOID* pOldShimData)
 
                     pShimData->dwSize = sizeof(*pShimData);
                     pShimData->dwMagic = REACTOS_SHIMDATA_MAGIC;
+#ifdef _M_AMD64
+                    /* The process did not ask for shims, but we want to make sure that if the Peb->pShimData is available, the data in it is complete */
+                    pShimData->RtlGetCurrentDirectory_U_RtlpMsysDecoy = &RtlGetCurrentDirectory_U_RtlpMsysDecoy;
+#endif
 
                     Peb->pShimData = pShimData;
                     *pOldShimData = pShimData;
@@ -1839,7 +1871,7 @@ LdrpInitializeProcess(IN PCONTEXT Context,
     /* ReactOS specific: do not clear it. (Windows starts doing the same in later versions) */
     //Peb->pShimData = NULL;
 
-    /* Save the number of processors and CS Timeout */
+    /* Save the number of processors and CS timeout */
     LdrpNumberOfProcessors = Peb->NumberOfProcessors;
     RtlpTimeout = Peb->CriticalSectionTimeout;
 
@@ -1879,7 +1911,7 @@ LdrpInitializeProcess(IN PCONTEXT Context,
     HeapParameters.Length = sizeof(HeapParameters);
 
     /* Check if we have Configuration Data */
-#define VALID_CONFIG_FIELD(Name) (ConfigSize >= (FIELD_OFFSET(IMAGE_LOAD_CONFIG_DIRECTORY, Name) + sizeof(LoadConfig->Name)))
+#define VALID_CONFIG_FIELD(Name) (ConfigSize >= RTL_SIZEOF_THROUGH_FIELD(IMAGE_LOAD_CONFIG_DIRECTORY, Name))
     /* The 'original' load config ends after SecurityCookie */
     if ((LoadConfig) && ConfigSize && (VALID_CONFIG_FIELD(SecurityCookie) || ConfigSize == LoadConfig->Size))
     {
@@ -1894,8 +1926,9 @@ LdrpInitializeProcess(IN PCONTEXT Context,
         if (VALID_CONFIG_FIELD(GlobalFlagsClear) && LoadConfig->GlobalFlagsClear)
             Peb->NtGlobalFlag &= ~LoadConfig->GlobalFlagsClear;
 
+        /* Convert the default CS timeout from milliseconds to 100ns units */
         if (VALID_CONFIG_FIELD(CriticalSectionDefaultTimeout) && LoadConfig->CriticalSectionDefaultTimeout)
-            RtlpTimeout.QuadPart = Int32x32To64(LoadConfig->CriticalSectionDefaultTimeout, -10000000);
+            RtlpTimeout.QuadPart = Int32x32To64(LoadConfig->CriticalSectionDefaultTimeout, -10000);
 
         if (VALID_CONFIG_FIELD(DeCommitFreeBlockThreshold) && LoadConfig->DeCommitFreeBlockThreshold)
             HeapParameters.DeCommitFreeBlockThreshold = LoadConfig->DeCommitFreeBlockThreshold;
@@ -1935,15 +1968,12 @@ LdrpInitializeProcess(IN PCONTEXT Context,
                 &CommandLine);
     }
 
-    /* If the timeout is too long */
+    /* If the CS timeout is longer than 1 hour, disable it */
     if (RtlpTimeout.QuadPart < Int32x32To64(3600, -10000000))
-    {
-        /* Then disable CS Timeout */
         RtlpTimeoutDisable = TRUE;
-    }
 
     /* Initialize Critical Section Data */
-    RtlpInitDeferedCriticalSection();
+    RtlpInitDeferredCriticalSection();
 
     /* Initialize VEH Call lists */
     RtlpInitializeVectoredExceptionHandling();
@@ -1996,9 +2026,8 @@ LdrpInitializeProcess(IN PCONTEXT Context,
     //Peb->FastPebLockRoutine = (PPEBLOCKROUTINE)RtlEnterCriticalSection;
     //Peb->FastPebUnlockRoutine = (PPEBLOCKROUTINE)RtlLeaveCriticalSection;
 
-    /* Setup Callout Lock and Notification list */
+    /* Setup Callout Lock */
     //RtlInitializeCriticalSection(&RtlpCalloutEntryLock);
-    InitializeListHead(&LdrpDllNotificationList);
 
     /* For old executables, use 16-byte aligned heap */
     if ((NtHeader->OptionalHeader.MajorSubsystemVersion <= 3) &&
@@ -2020,6 +2049,13 @@ LdrpInitializeProcess(IN PCONTEXT Context,
     {
         DPRINT1("Failed to create process heap\n");
         return STATUS_NO_MEMORY;
+    }
+
+    Status = RtlpInitializeLocaleTable();
+    if (!NT_SUCCESS(Status))
+    {
+        DPRINT1("Failed to initialize locale table\n");
+        return Status;
     }
 
     /* Allocate an Activation Context Stack */
@@ -2263,7 +2299,7 @@ LdrpInitializeProcess(IN PCONTEXT Context,
                    &LdrpNtDllDataTableEntry->InInitializationOrderLinks);
 
     /* Initialize Wine's active context implementation for the current process */
-    actctx_init(&OldShimData);
+    RtlpInitializeActCtx(&OldShimData);
 
     /* Set the current directory */
     Status = RtlSetCurrentDirectory_U(&CurrentDirectory);
@@ -2329,7 +2365,7 @@ LdrpInitializeProcess(IN PCONTEXT Context,
         if (!NT_SUCCESS(Status))
         {
             if (ShowSnaps)
-                DPRINT1("LDR: Unable to find post-import process init function, Status=0x%08lx\n", &Kernel32String, Status);
+                DPRINT1("LDR: Unable to find post-import process init function, Status=0x%08lx\n", Status);
             return Status;
         }
         Kernel32ProcessInitPostImportFunction = FunctionAddress;
@@ -2342,7 +2378,7 @@ LdrpInitializeProcess(IN PCONTEXT Context,
         if (!NT_SUCCESS(Status))
         {
             if (ShowSnaps)
-                DPRINT1("LDR: Unable to find BaseQueryModuleData, Status=0x%08lx\n", &Kernel32String, Status);
+                DPRINT1("LDR: Unable to find BaseQueryModuleData, Status=0x%08lx\n", Status);
             return Status;
         }
         Kernel32BaseQueryModuleData = FunctionAddress;
@@ -2403,6 +2439,11 @@ LdrpInitializeProcess(IN PCONTEXT Context,
     /* Check whether all static imports were properly loaded and return here */
     if (!NT_SUCCESS(ImportStatus)) return ImportStatus;
 
+    /* Following two calls are for Vista+ support, required for winesync */
+    /* Initialize the keyed event for condition variables */
+    RtlpInitializeKeyedEvent();
+    RtlpInitializeThreadPooling();
+
     /* Initialize TLS */
     Status = LdrpInitializeTls();
     if (!NT_SUCCESS(Status))
@@ -2427,21 +2468,26 @@ LdrpInitializeProcess(IN PCONTEXT Context,
     /* Validate the Image for MP Usage */
     if (LdrpNumberOfProcessors > 1) LdrpValidateImageForMp(LdrpImageEntry);
 
-    /* Check NX Options */
-    if (SharedUserData->NXSupportPolicy == 1)
+    /* Check NX options and set them */
+    if (SharedUserData->NXSupportPolicy == NX_SUPPORT_POLICY_ALWAYSON)
     {
-        ExecuteOptions = 0xD;
+        ExecuteOptions = MEM_EXECUTE_OPTION_DISABLE |
+                         MEM_EXECUTE_OPTION_DISABLE_THUNK_EMULATION |
+                         MEM_EXECUTE_OPTION_PERMANENT;
     }
-    else if (!SharedUserData->NXSupportPolicy)
+    else if (SharedUserData->NXSupportPolicy == NX_SUPPORT_POLICY_ALWAYSOFF)
     {
-        ExecuteOptions = 0xA;
+        ExecuteOptions = MEM_EXECUTE_OPTION_ENABLE | MEM_EXECUTE_OPTION_PERMANENT;
     }
-
-    /* Let Mm know */
-    ZwSetInformationProcess(NtCurrentProcess(),
-                            ProcessExecuteFlags,
-                            &ExecuteOptions,
-                            sizeof(ULONG));
+    Status = NtSetInformationProcess(NtCurrentProcess(),
+                                     ProcessExecuteFlags,
+                                     &ExecuteOptions,
+                                     sizeof(ExecuteOptions));
+    if (!NT_SUCCESS(Status))
+    {
+        DPRINT1("LDR: Could not set process execute flags 0x%x; status %x\n",
+                ExecuteOptions, Status);
+    }
 
     // FIXME: Should be done by Application Compatibility features,
     // by reading the registry, etc...
@@ -2561,10 +2607,10 @@ LdrpInit(PCONTEXT Context,
         NtCurrentTeb()->RealClientId.UniqueProcess,
         NtCurrentTeb()->RealClientId.UniqueThread);
 
-#ifdef _WIN64
+#ifdef _M_AMD64
     /* Set the SList header usage */
     RtlpUse16ByteSLists = SharedUserData->ProcessorFeatures[PF_COMPARE_EXCHANGE128];
-#endif /* _WIN64 */
+#endif /* _M_AMD64 */
 
     /* Check if we have a deallocation stack */
     if (!Teb->DeallocationStack)

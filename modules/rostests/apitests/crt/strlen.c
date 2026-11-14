@@ -32,7 +32,7 @@ Test_strlen(PFN_STRLEN pstrlen)
 {
     size_t len;
 #if defined(_M_IX86) || defined(_M_AMD64)
-    volatile uintptr_t eflags;
+    volatile uintptr_t eflags, eflags2;
     char *teststr = "a\0bcdefghijk";
 #endif
 
@@ -48,8 +48,10 @@ Test_strlen(PFN_STRLEN pstrlen)
     eflags = __readeflags();
     __writeeflags(eflags | EFLAGS_DF);
     len = pstrlen(teststr + 4);
-    eflags = __readeflags();
-    ok((eflags & EFLAGS_DF) != 0, "Direction flag in ELFAGS was changed.");
+    eflags2 = __readeflags();
+    MemoryBarrier();
+    ok((eflags2 & EFLAGS_DF) != 0, "Direction flag in ELFAGS was changed: 0x%Ix -> 0x%Ix.\n", eflags | EFLAGS_DF, eflags2);
+    __writeeflags(eflags);
 
     /* Only test this for the exported versions, intrinsics might do it
        differently. It's up to us to not do fishy stuff! Also crtdll does

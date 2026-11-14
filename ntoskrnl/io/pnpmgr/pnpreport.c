@@ -21,7 +21,7 @@ typedef struct _INTERNAL_WORK_QUEUE_ITEM
     PDEVICE_OBJECT PhysicalDeviceObject;
     PDEVICE_CHANGE_COMPLETE_CALLBACK Callback;
     PVOID Context;
-    PTARGET_DEVICE_CUSTOM_NOTIFICATION NotificationStructure;
+    TARGET_DEVICE_CUSTOM_NOTIFICATION NotificationStructure;
 } INTERNAL_WORK_QUEUE_ITEM, *PINTERNAL_WORK_QUEUE_ITEM;
 
 NTSTATUS
@@ -104,7 +104,7 @@ IopReportTargetDeviceChangeAsyncWorker(PVOID Context)
     PINTERNAL_WORK_QUEUE_ITEM Item;
 
     Item = (PINTERNAL_WORK_QUEUE_ITEM)Context;
-    PpSetCustomTargetEvent(Item->PhysicalDeviceObject, NULL, NULL, Item->Callback, Item->Context, Item->NotificationStructure);
+    PpSetCustomTargetEvent(Item->PhysicalDeviceObject, NULL, NULL, Item->Callback, Item->Context, &Item->NotificationStructure);
     ObDereferenceObject(Item->PhysicalDeviceObject);
     ExFreePoolWithTag(Context, '  pP');
 }
@@ -155,15 +155,19 @@ IoReportDetectedDevice(
     _In_ BOOLEAN ResourceAssigned,
     _Inout_ PDEVICE_OBJECT *DeviceObject)
 {
+    UNICODE_STRING Control = RTL_CONSTANT_STRING(L"Control");
+    UNICODE_STRING DeviceReportedName = RTL_CONSTANT_STRING(L"DeviceReported");
+    OBJECT_ATTRIBUTES ObjectAttributes;
     PDEVICE_NODE DeviceNode;
     PDEVICE_OBJECT Pdo;
     NTSTATUS Status;
-    HANDLE InstanceKey;
+    HANDLE InstanceKey, ControlKey;
     UNICODE_STRING ValueName, ServiceLongName, ServiceName;
     WCHAR HardwareId[256];
     PWCHAR IfString;
     ULONG IdLength;
     ULONG LegacyValue;
+    ULONG DeviceReported = 1;
 
     DPRINT("IoReportDetectedDevice (DeviceObject %p, *DeviceObject %p)\n",
            DeviceObject, DeviceObject ? *DeviceObject : NULL);
@@ -219,7 +223,7 @@ IoReportDetectedDevice(
     }
 
     /* We use the caller's PDO if they supplied one */
-    UNICODE_STRING instancePath;
+    UNICODE_STRING instancePath = {0};
     if (DeviceObject && *DeviceObject)
     {
         Pdo = *DeviceObject;
@@ -227,7 +231,7 @@ IoReportDetectedDevice(
     else
     {
         /* Create the PDO */
-        Status = PnpRootCreateDevice(&ServiceName, NULL, &Pdo, &instancePath);
+        Status = PnpRootCreateDevice(&ServiceName, &Pdo, &instancePath);
         if (!NT_SUCCESS(Status))
         {
             DPRINT("PnpRootCreateDevice() failed (Status 0x%08lx)\n", Status);
@@ -243,7 +247,8 @@ IoReportDetectedDevice(
         return STATUS_INSUFFICIENT_RESOURCES;
     }
 
-    Status = RtlDuplicateUnicodeString(0, &instancePath, &DeviceNode->InstancePath);
+    // The string comes from PnpRootCreateDevice, so it can be used right away
+    DeviceNode->InstancePath = instancePath;
 
     /* Open a handle to the instance path key */
     Status = IopCreateDeviceKeyPath(&DeviceNode->InstancePath, REG_OPTION_NON_VOLATILE, &InstanceKey);
@@ -266,19 +271,52 @@ IoReportDetectedDevice(
     {
         DPRINT("Failed to write the Legacy value: 0x%x\n", Status);
     }
+    Status = ZwSetValueKey(InstanceKey, &DeviceReportedName, 0, REG_DWORD, &DeviceReported, sizeof(DeviceReported));
+    if (!NT_SUCCESS(Status))
+    {
+        DPRINT("Failed to write the DeviceReported value: 0x%x\n", Status);
+    }
+
+    /* Set DeviceReported=1 in Control subkey */
+    InitializeObjectAttributes(&ObjectAttributes,
+                               &Control,
+                               OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE,
+                               InstanceKey,
+                               NULL);
+    Status = ZwCreateKey(&ControlKey,
+                         KEY_SET_VALUE,
+                         &ObjectAttributes,
+                         0,
+                         NULL,
+                         REG_OPTION_VOLATILE,
+                         NULL);
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZwSetValueKey(ControlKey,
+                               &DeviceReportedName,
+                               0,
+                               REG_DWORD,
+                               &DeviceReported,
+                               sizeof(DeviceReported));
+        ZwClose(ControlKey);
+    }
+    if (!NT_SUCCESS(Status))
+    {
+        DPRINT1("Failed to set ReportedDevice=1 for device %wZ (status 0x%08lx)\n", &instancePath, Status);
+    }
 
     /* Add DETECTEDInterfaceType\DriverName */
     IdLength = 0;
-    IdLength += swprintf(&HardwareId[IdLength],
-                         L"DETECTED%ls\\%wZ",
-                         IfString,
-                         &ServiceName);
+    IdLength += _swprintf(&HardwareId[IdLength],
+                          L"DETECTED%ls\\%wZ",
+                          IfString,
+                          &ServiceName);
     IdLength++;
 
     /* Add DETECTED\DriverName */
-    IdLength += swprintf(&HardwareId[IdLength],
-                         L"DETECTED\\%wZ",
-                         &ServiceName);
+    IdLength += _swprintf(&HardwareId[IdLength],
+                          L"DETECTED\\%wZ",
+                          &ServiceName);
     IdLength++;
 
     /* Terminate the string with another null */
@@ -376,7 +414,7 @@ IoReportResourceForDetection(IN PDRIVER_OBJECT DriverObject,
         ResourceList = DriverList;
 
     /* Look for a resource conflict */
-    Status = IopDetectResourceConflict(ResourceList, FALSE, NULL);
+    Status = IopDetectResourceConflict(ResourceList, TRUE, NULL);
     if (Status == STATUS_CONFLICTING_ADDRESSES)
     {
         /* Oh noes */
@@ -426,9 +464,9 @@ IoReportTargetDeviceChange(IN PDEVICE_OBJECT PhysicalDeviceObject,
     ASSERT(notifyStruct->FileObject == NULL);
 
     /* Do not handle system PnP events */
-    if ((RtlCompareMemory(&(notifyStruct->Event), &(GUID_TARGET_DEVICE_QUERY_REMOVE), sizeof(GUID)) != sizeof(GUID)) ||
-        (RtlCompareMemory(&(notifyStruct->Event), &(GUID_TARGET_DEVICE_REMOVE_CANCELLED), sizeof(GUID)) != sizeof(GUID)) ||
-        (RtlCompareMemory(&(notifyStruct->Event), &(GUID_TARGET_DEVICE_REMOVE_COMPLETE), sizeof(GUID)) != sizeof(GUID)))
+    if (IsEqualGUID(&(notifyStruct->Event), &GUID_TARGET_DEVICE_QUERY_REMOVE) ||
+        IsEqualGUID(&(notifyStruct->Event), &GUID_TARGET_DEVICE_REMOVE_CANCELLED) ||
+        IsEqualGUID(&(notifyStruct->Event), &GUID_TARGET_DEVICE_REMOVE_COMPLETE))
     {
         return STATUS_INVALID_DEVICE_REQUEST;
     }
@@ -464,6 +502,7 @@ IoReportTargetDeviceChangeAsynchronous(IN PDEVICE_OBJECT PhysicalDeviceObject,
 {
     PINTERNAL_WORK_QUEUE_ITEM Item = NULL;
     PTARGET_DEVICE_CUSTOM_NOTIFICATION notifyStruct = (PTARGET_DEVICE_CUSTOM_NOTIFICATION)NotificationStructure;
+    SIZE_T WorkItemSize;
 
     ASSERT(notifyStruct);
 
@@ -477,9 +516,9 @@ IoReportTargetDeviceChangeAsynchronous(IN PDEVICE_OBJECT PhysicalDeviceObject,
     ASSERT(notifyStruct->FileObject == NULL);
 
     /* Do not handle system PnP events */
-    if ((RtlCompareMemory(&(notifyStruct->Event), &(GUID_TARGET_DEVICE_QUERY_REMOVE), sizeof(GUID)) != sizeof(GUID)) ||
-        (RtlCompareMemory(&(notifyStruct->Event), &(GUID_TARGET_DEVICE_REMOVE_CANCELLED), sizeof(GUID)) != sizeof(GUID)) ||
-        (RtlCompareMemory(&(notifyStruct->Event), &(GUID_TARGET_DEVICE_REMOVE_COMPLETE), sizeof(GUID)) != sizeof(GUID)))
+    if (IsEqualGUID(&(notifyStruct->Event), &GUID_TARGET_DEVICE_QUERY_REMOVE) ||
+        IsEqualGUID(&(notifyStruct->Event), &GUID_TARGET_DEVICE_REMOVE_CANCELLED) ||
+        IsEqualGUID(&(notifyStruct->Event), &GUID_TARGET_DEVICE_REMOVE_COMPLETE))
     {
         return STATUS_INVALID_DEVICE_REQUEST;
     }
@@ -489,16 +528,20 @@ IoReportTargetDeviceChangeAsynchronous(IN PDEVICE_OBJECT PhysicalDeviceObject,
         return STATUS_INVALID_DEVICE_REQUEST;
     }
 
+    /* Calculate the required size for the work item and notification structure */
+    WorkItemSize = FIELD_OFFSET(INTERNAL_WORK_QUEUE_ITEM, NotificationStructure)
+                   + notifyStruct->Size;
+
     /* We need to store all the data given by the caller with the WorkItem, so use our own struct */
-    Item = ExAllocatePoolWithTag(NonPagedPool, sizeof(INTERNAL_WORK_QUEUE_ITEM), '  pP');
+    Item = ExAllocatePoolWithTag(NonPagedPool, WorkItemSize, '  pP');
     if (!Item) return STATUS_INSUFFICIENT_RESOURCES;
 
     /* Initialize all stuff */
     ObReferenceObject(PhysicalDeviceObject);
-    Item->NotificationStructure = notifyStruct;
     Item->PhysicalDeviceObject = PhysicalDeviceObject;
     Item->Callback = Callback;
     Item->Context = Context;
+    RtlCopyMemory(&Item->NotificationStructure, notifyStruct, notifyStruct->Size);
     ExInitializeWorkItem(&(Item->WorkItem), IopReportTargetDeviceChangeAsyncWorker, Item);
 
     /* Finally, queue the item, our work here is done */

@@ -84,8 +84,8 @@ LpcpClosePort(
     IN PEPROCESS Process OPTIONAL,
     IN PVOID Object,
     IN ACCESS_MASK GrantedAccess,
-    IN ULONG ProcessHandleCount,
-    IN ULONG SystemHandleCount
+    IN ULONG_PTR ProcessHandleCount,
+    IN ULONG_PTR SystemHandleCount
 );
 
 VOID
@@ -137,6 +137,7 @@ LpcExitThread(
 //
 // Initialization functions
 //
+CODE_SEG("INIT")
 BOOLEAN
 NTAPI
 LpcInitSystem(

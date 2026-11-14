@@ -38,9 +38,19 @@ SetAccountsDomainSid(
     SAM_HANDLE DomainHandle = NULL;
     DOMAIN_NAME_INFORMATION DomainNameInfo;
 
+    SIZE_T DomainNameLength = 0;
     NTSTATUS Status;
 
     DPRINT("SYSSETUP: SetAccountsDomainSid\n");
+
+    if (DomainName != NULL)
+    {
+        DomainNameLength = wcslen(DomainName);
+        if (DomainNameLength > UNICODE_STRING_MAX_CHARS)
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+    }
 
     memset(&ObjectAttributes, 0, sizeof(LSA_OBJECT_ATTRIBUTES));
     ObjectAttributes.Length = sizeof(LSA_OBJECT_ATTRIBUTES);
@@ -69,7 +79,7 @@ SetAccountsDomainSid(
         else
         {
             Info.DomainName.Buffer = (LPWSTR)DomainName;
-            Info.DomainName.Length = wcslen(DomainName) * sizeof(WCHAR);
+            Info.DomainName.Length = DomainNameLength * sizeof(WCHAR);
             Info.DomainName.MaximumLength = Info.DomainName.Length + sizeof(WCHAR);
         }
 
@@ -81,7 +91,7 @@ SetAccountsDomainSid(
     else
     {
         Info.DomainName.Buffer = (LPWSTR)DomainName;
-        Info.DomainName.Length = wcslen(DomainName) * sizeof(WCHAR);
+        Info.DomainName.Length = DomainNameLength * sizeof(WCHAR);
         Info.DomainName.MaximumLength = Info.DomainName.Length + sizeof(WCHAR);
         Info.DomainSid = DomainSid;
     }
@@ -99,7 +109,7 @@ SetAccountsDomainSid(
 
     LsaClose(PolicyHandle);
 
-    DomainNameInfo.DomainName.Length = wcslen(DomainName) * sizeof(WCHAR);
+    DomainNameInfo.DomainName.Length = DomainNameLength * sizeof(WCHAR);
     DomainNameInfo.DomainName.MaximumLength = DomainNameInfo.DomainName.Length + sizeof(WCHAR);
     DomainNameInfo.DomainName.Buffer = (LPWSTR)DomainName;
 
@@ -147,9 +157,19 @@ SetPrimaryDomain(LPCWSTR DomainName,
     POLICY_PRIMARY_DOMAIN_INFO Info;
     LSA_OBJECT_ATTRIBUTES ObjectAttributes;
     LSA_HANDLE PolicyHandle;
+    SIZE_T DomainNameLength = 0;
     NTSTATUS Status;
 
     DPRINT1("SYSSETUP: SetPrimaryDomain()\n");
+
+    if (DomainName != NULL)
+    {
+        DomainNameLength = wcslen(DomainName);
+        if (DomainNameLength > UNICODE_STRING_MAX_CHARS)
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+    }
 
     memset(&ObjectAttributes, 0, sizeof(LSA_OBJECT_ATTRIBUTES));
     ObjectAttributes.Length = sizeof(LSA_OBJECT_ATTRIBUTES);
@@ -178,7 +198,7 @@ SetPrimaryDomain(LPCWSTR DomainName,
         else
         {
             Info.Name.Buffer = (LPWSTR)DomainName;
-            Info.Name.Length = wcslen(DomainName) * sizeof(WCHAR);
+            Info.Name.Length = DomainNameLength * sizeof(WCHAR);
             Info.Name.MaximumLength = Info.Name.Length + sizeof(WCHAR);
         }
 
@@ -190,7 +210,7 @@ SetPrimaryDomain(LPCWSTR DomainName,
     else
     {
         Info.Name.Buffer = (LPWSTR)DomainName;
-        Info.Name.Length = wcslen(DomainName) * sizeof(WCHAR);
+        Info.Name.Length = DomainNameLength * sizeof(WCHAR);
         Info.Name.MaximumLength = Info.Name.Length + sizeof(WCHAR);
         Info.Sid = DomainSid;
     }
@@ -214,7 +234,9 @@ SetPrimaryDomain(LPCWSTR DomainName,
 
 static
 VOID
-InstallBuiltinAccounts(VOID)
+InstallBuiltinAccounts(
+    _In_ PITEMSDATA pItemsData,
+    _In_ PREGISTRATIONNOTIFY pNotify)
 {
     LPWSTR BuiltinAccounts[] = {
         L"S-1-1-0",         /* Everyone */
@@ -250,6 +272,9 @@ InstallBuiltinAccounts(VOID)
 
     for (i = 0; i < ARRAYSIZE(BuiltinAccounts); i++)
     {
+        pNotify->Progress++;
+        SendMessage(pItemsData->hwndDlg, PM_STEP_START, 0, (LPARAM)pNotify);
+
         if (!ConvertStringSidToSid(BuiltinAccounts[i], &AccountSid))
         {
             DPRINT1("ConvertStringSidToSid(%S) failed: %lu\n", BuiltinAccounts[i], GetLastError());
@@ -266,6 +291,8 @@ InstallBuiltinAccounts(VOID)
         }
 
         LocalFree(AccountSid);
+
+        SendMessage(pItemsData->hwndDlg, PM_STEP_END, 0, (LPARAM)pNotify);
     }
 
     LsaClose(PolicyHandle);
@@ -275,7 +302,9 @@ InstallBuiltinAccounts(VOID)
 static
 VOID
 InstallPrivileges(
-    HINF hSecurityInf)
+    _In_ HINF hSecurityInf,
+    _In_ PITEMSDATA pItemsData,
+    _In_ PREGISTRATIONNOTIFY pNotify)
 {
     LSA_OBJECT_ATTRIBUTES ObjectAttributes;
     WCHAR szPrivilegeString[256];
@@ -314,6 +343,9 @@ InstallPrivileges(
 
     do
     {
+        pNotify->Progress++;
+        SendMessage(pItemsData->hwndDlg, PM_STEP_START, 0, (LPARAM)pNotify);
+
         /* Retrieve the privilege name */
         if (!SetupGetStringFieldW(&InfContext,
                                   0,
@@ -407,6 +439,7 @@ InstallPrivileges(
             }
         }
 
+        SendMessage(pItemsData->hwndDlg, PM_STEP_END, 0, (LPARAM)pNotify);
     }
     while (SetupFindNextLine(&InfContext, &InfContext));
 
@@ -419,7 +452,9 @@ done:
 static
 VOID
 ApplyRegistryValues(
-    HINF hSecurityInf)
+    _In_ HINF hSecurityInf,
+    _In_ PITEMSDATA pItemsData,
+    _In_ PREGISTRATIONNOTIFY pNotify)
 {
     WCHAR szRegistryPath[MAX_PATH];
     WCHAR szRootName[MAX_PATH];
@@ -445,7 +480,10 @@ ApplyRegistryValues(
 
     do
     {
-        /* Retrieve the privilege name */
+        pNotify->Progress++;
+        SendMessage(pItemsData->hwndDlg, PM_STEP_START, 0, (LPARAM)pNotify);
+
+        /* Retrieve the registry path */
         if (!SetupGetStringFieldW(&InfContext,
                                   0,
                                   szRegistryPath,
@@ -610,6 +648,8 @@ ApplyRegistryValues(
 
             RegCloseKey(hKey);
         }
+
+        SendMessage(pItemsData->hwndDlg, PM_STEP_END, 0, (LPARAM)pNotify);
     }
     while (SetupFindNextLine(&InfContext, &InfContext));
 }
@@ -619,6 +659,8 @@ static
 VOID
 ApplyEventlogSettings(
     _In_ HINF hSecurityInf,
+    _In_ PITEMSDATA pItemsData,
+    _In_ PREGISTRATIONNOTIFY pNotify,
     _In_ PWSTR pszSectionName,
     _In_ PWSTR pszLogName)
 {
@@ -666,6 +708,9 @@ ApplyEventlogSettings(
                             L"MaximumLogSize",
                             &InfContext))
     {
+        pNotify->Progress++;
+        SendMessage(pItemsData->hwndDlg, PM_STEP_START, 0, (LPARAM)pNotify);
+
         DPRINT("MaximumLogSize\n");
         dwValue = 0;
         SetupGetIntField(&InfContext,
@@ -685,6 +730,8 @@ ApplyEventlogSettings(
                           (LPBYTE)&dwValue,
                           sizeof(dwValue));
         }
+
+        SendMessage(pItemsData->hwndDlg, PM_STEP_END, 0, (LPARAM)pNotify);
     }
 
     if (SetupFindFirstLineW(hSecurityInf,
@@ -692,6 +739,9 @@ ApplyEventlogSettings(
                             L"AuditLogRetentionPeriod",
                             &InfContext))
     {
+        pNotify->Progress++;
+        SendMessage(pItemsData->hwndDlg, PM_STEP_START, 0, (LPARAM)pNotify);
+
         bValueSet = FALSE;
         dwValue = 0;
         SetupGetIntField(&InfContext,
@@ -731,6 +781,8 @@ ApplyEventlogSettings(
                           (LPBYTE)&dwValue,
                           sizeof(dwValue));
         }
+
+        SendMessage(pItemsData->hwndDlg, PM_STEP_END, 0, (LPARAM)pNotify);
     }
 
     if (SetupFindFirstLineW(hSecurityInf,
@@ -738,6 +790,9 @@ ApplyEventlogSettings(
                             L"RestrictGuestAccess",
                             &InfContext))
     {
+        pNotify->Progress++;
+        SendMessage(pItemsData->hwndDlg, PM_STEP_START, 0, (LPARAM)pNotify);
+
         dwValue = 0;
         SetupGetIntField(&InfContext,
                          1,
@@ -752,6 +807,8 @@ ApplyEventlogSettings(
                           (LPBYTE)&dwValue,
                           sizeof(dwValue));
         }
+
+        SendMessage(pItemsData->hwndDlg, PM_STEP_END, 0, (LPARAM)pNotify);
     }
 
     RegCloseKey(hLogKey);
@@ -763,6 +820,8 @@ static
 VOID
 ApplyPasswordSettings(
     _In_ HINF hSecurityInf,
+    _In_ PITEMSDATA pItemsData,
+    _In_ PREGISTRATIONNOTIFY pNotify,
     _In_ PWSTR pszSectionName)
 {
     INFCONTEXT InfContext;
@@ -1251,6 +1310,8 @@ SetNewAccountName(
     if (dwLength == 0)
         return;
 
+    ASSERT(dwLength <= UNICODE_STRING_MAX_CHARS);
+
     pszName = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, dwLength * sizeof(WCHAR));
     if (pszName == NULL)
     {
@@ -1280,7 +1341,7 @@ SetNewAccountName(
         goto done;
     }
 
-    NameInfo.UserName.Length = wcslen(pszName) * sizeof(WCHAR);
+    NameInfo.UserName.Length = (USHORT)wcslen(pszName) * sizeof(WCHAR);
     NameInfo.UserName.MaximumLength = NameInfo.UserName.Length + sizeof(WCHAR);
     NameInfo.UserName.Buffer = pszName;
     NameInfo.FullName.Length = 0;
@@ -1542,9 +1603,51 @@ done:
         LsaClose(PolicyHandle);
 }
 
+LONG
+CountSecuritySteps(VOID)
+{
+    HINF hSecurityInf;
+    PWSTR pszSecurityInf;
+    LONG Steps = 0;
 
-VOID
-InstallSecurity(VOID)
+//    if (IsServer())
+//        pszSecurityInf = L"defltsv.inf";
+//    else
+        pszSecurityInf = L"defltwk.inf";
+
+    Steps += 10; //    InstallBuiltinAccounts();
+
+    hSecurityInf = SetupOpenInfFileW(pszSecurityInf,
+                                     NULL,
+                                     INF_STYLE_WIN4,
+                                     NULL);
+    if (hSecurityInf != INVALID_HANDLE_VALUE)
+    {
+        /* Count InstallPrivilege steps */
+        Steps += SetupGetLineCountW(hSecurityInf, L"Privilege Rights");
+
+        Steps += SetupGetLineCountW(hSecurityInf, L"Registry Values");
+
+        Steps += SetupGetLineCountW(hSecurityInf, L"Application Log");
+        Steps += SetupGetLineCountW(hSecurityInf, L"Security Log");
+        Steps += SetupGetLineCountW(hSecurityInf, L"System Log");
+
+        Steps += SetupGetLineCountW(hSecurityInf, L"System Access");
+
+        Steps += SetupGetLineCountW(hSecurityInf, L"Event Audit");
+
+        SetupCloseInfFile(hSecurityInf);
+    }
+
+    Steps++; // SetPrimaryDomain
+
+    return Steps;
+}
+
+DWORD
+InstallSecurity(
+    _In_ PITEMSDATA pItemsData,
+    _In_ PREGISTRATIONNOTIFY pNotify)
 {
     HINF hSecurityInf;
     PWSTR pszSecurityInf;
@@ -1554,7 +1657,7 @@ InstallSecurity(VOID)
 //    else
         pszSecurityInf = L"defltwk.inf";
 
-    InstallBuiltinAccounts();
+    InstallBuiltinAccounts(pItemsData, pNotify);
 
     hSecurityInf = SetupOpenInfFileW(pszSecurityInf,
                                      NULL,
@@ -1562,14 +1665,14 @@ InstallSecurity(VOID)
                                      NULL);
     if (hSecurityInf != INVALID_HANDLE_VALUE)
     {
-        InstallPrivileges(hSecurityInf);
-        ApplyRegistryValues(hSecurityInf);
+        InstallPrivileges(hSecurityInf, pItemsData, pNotify);
+        ApplyRegistryValues(hSecurityInf, pItemsData, pNotify);
 
-        ApplyEventlogSettings(hSecurityInf, L"Application Log", L"Application");
-        ApplyEventlogSettings(hSecurityInf, L"Security Log", L"Security");
-        ApplyEventlogSettings(hSecurityInf, L"System Log", L"System");
+        ApplyEventlogSettings(hSecurityInf, pItemsData, pNotify, L"Application Log", L"Application");
+        ApplyEventlogSettings(hSecurityInf, pItemsData, pNotify, L"Security Log", L"Security");
+        ApplyEventlogSettings(hSecurityInf, pItemsData, pNotify, L"System Log", L"System");
 
-        ApplyPasswordSettings(hSecurityInf, L"System Access");
+        ApplyPasswordSettings(hSecurityInf, pItemsData, pNotify, L"System Access");
         ApplyLockoutSettings(hSecurityInf, L"System Access");
         ApplyAccountSettings(hSecurityInf, L"System Access");
 
@@ -1580,6 +1683,8 @@ InstallSecurity(VOID)
 
     /* Hack */
     SetPrimaryDomain(L"WORKGROUP", NULL);
+
+    return ERROR_SUCCESS;
 }
 
 

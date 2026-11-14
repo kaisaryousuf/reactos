@@ -289,8 +289,8 @@ NTAPI
 FltpServerPortClose(_In_opt_ PEPROCESS Process,
                     _In_ PVOID Object,
                     _In_ ACCESS_MASK GrantedAccess,
-                    _In_ ULONG ProcessHandleCount,
-                    _In_ ULONG SystemHandleCount)
+                    _In_ ULONG_PTR ProcessHandleCount,
+                    _In_ ULONG_PTR SystemHandleCount)
 {
     PFLT_SERVER_PORT_OBJECT PortObject;
     PFAST_MUTEX Lock;
@@ -327,8 +327,8 @@ NTAPI
 FltpClientPortClose(_In_opt_ PEPROCESS Process,
                     _In_ PVOID Object,
                     _In_ ACCESS_MASK GrantedAccess,
-                    _In_ ULONG ProcessHandleCount,
-                    _In_ ULONG SystemHandleCount)
+                    _In_ ULONG_PTR ProcessHandleCount,
+                    _In_ ULONG_PTR SystemHandleCount)
 {
     PFLT_PORT_OBJECT PortObject = (PFLT_PORT_OBJECT)Object;
 
@@ -699,10 +699,12 @@ CreateClientPort(_In_ PFILE_OBJECT FileObject,
         goto Quit;
     }
 
-    /* Now insert the new client port into the object manager*/
-    Status = ObInsertObject(ClientPortObject, 0, FLT_PORT_ALL_ACCESS, 1, 0, (PHANDLE)&PortHandle);
+    /* Now insert the new client port into the object manager */
+    Status = ObInsertObject(ClientPortObject, NULL, FLT_PORT_ALL_ACCESS, 1, NULL, (PHANDLE)&PortHandle);
     if (!NT_SUCCESS(Status))
     {
+        /* ObInsertObject() failed and already dereferenced ClientPortObject */
+        ClientPortObject = NULL;
         goto Quit;
     }
 

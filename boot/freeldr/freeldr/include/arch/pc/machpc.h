@@ -30,8 +30,9 @@ VOID PcConsPutChar(int Ch);
 BOOLEAN PcConsKbHit(VOID);
 int PcConsGetCh(VOID);
 
+VOID PcVideoInit(VOID);
 VOID PcVideoClearScreen(UCHAR Attr);
-VIDEODISPLAYMODE PcVideoSetDisplayMode(char *DisplayMode, BOOLEAN Init);
+VIDEODISPLAYMODE PcVideoSetDisplayMode(PCSTR DisplayMode, BOOLEAN Init);
 VOID PcVideoGetDisplaySize(PULONG Width, PULONG Height, PULONG Depth);
 ULONG PcVideoGetBufferSize(VOID);
 VOID PcVideoGetFontsFromFirmware(PULONG RomFontPointers);
@@ -47,7 +48,12 @@ VOID PcVideoPrepareForReactOS(VOID);
 VOID PcPrepareForReactOS(VOID);
 
 PFREELDR_MEMORY_DESCRIPTOR PcMemGetMemoryMap(ULONG *MemoryMapSize);
-BOOLEAN PcFindPciBios(PPCI_REGISTRY_INFO BusData);
+
+BOOLEAN
+PcDetectPciBus(
+    _In_ PCONFIGURATION_COMPONENT_DATA SystemKey,
+    _Inout_ PULONG BusNumber,
+    _Out_ PPCI_REGISTRY_INFO BusData);
 
 /*
  * Disk Variables and Functions
@@ -56,9 +62,12 @@ BOOLEAN PcFindPciBios(PPCI_REGISTRY_INFO BusData);
 extern UCHAR FrldrBootDrive;
 extern ULONG FrldrBootPartition;
 
+CONFIGURATION_TYPE
+DiskGetConfigType(
+    _In_ UCHAR DriveNumber);
+
 LONG DiskReportError(BOOLEAN bShowError);
 BOOLEAN DiskResetController(UCHAR DriveNumber);
-// BOOLEAN DiskGetExtendedDriveParameters(UCHAR DriveNumber, PVOID Buffer, USHORT BufferSize);
 
 BOOLEAN PcDiskReadLogicalSectors(UCHAR DriveNumber, ULONGLONG SectorNumber, ULONG SectorCount, PVOID Buffer);
 BOOLEAN PcDiskGetDriveGeometry(UCHAR DriveNumber, PGEOMETRY DriveGeometry);
@@ -67,7 +76,11 @@ ULONG PcDiskGetCacheableBlockCount(UCHAR DriveNumber);
 TIMEINFO* PcGetTime(VOID);
 
 BOOLEAN PcInitializeBootDevices(VOID);
-PCONFIGURATION_COMPONENT_DATA PcHwDetect(VOID);
+
+PCONFIGURATION_COMPONENT_DATA
+PcHwDetect(
+    _In_opt_ PCSTR Options);
+
 VOID PcHwIdle(VOID);
 
 extern BIOS_MEMORY_MAP PcBiosMemoryMap[];

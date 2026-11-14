@@ -10,9 +10,54 @@
 #include <winreg.h>
 #include <shlobj.h>
 #include <shellapi.h>
+#include <shlwapi.h>
 #include <atlbase.h>
 #include <atlcom.h>
 
-VOID PathToIDList(LPCWSTR pszPath, ITEMIDLIST** ppidl);
+// Vista's shell32 is buggy so we need to skip some tests there.
+static const BOOL g_bVista = (GetNTVersion() == _WIN32_WINNT_VISTA);
+
+HRESULT PathToIDList(LPCWSTR pszPath, ITEMIDLIST** ppidl);
+
+static inline LPITEMIDLIST SHELL_SimpleIDListFromPath(LPCWSTR pszPath)
+{
+    ITEMIDLIST *pidl = NULL;
+    HRESULT hr = PathToIDList(pszPath, &pidl);
+    return SUCCEEDED(hr) ? pidl : NULL;
+}
+
+static inline LPCWSTR RegNameDisp(LPCWSTR s)
+{
+    return (s && *s) ? s : L"(Default)";
+}
+
+static inline UINT RegSetStringEx(HKEY hKey, LPCWSTR Path, LPCWSTR Name, LPCWSTR Str, DWORD Type)
+{
+    return SHSetValueW(hKey, Path, Name, Type, (LPCVOID)Str, (lstrlenW(Str) + 1) * sizeof(WCHAR));
+}
+
+static inline UINT RegSetString(HKEY hKey, LPCWSTR Path, LPCWSTR Name, LPCWSTR Str)
+{
+    return RegSetStringEx(hKey, Path, Name, Str, REG_SZ);
+}
+
+#ifdef __cplusplus
+template<class R>
+HRESULT SHELL_BindToObject(IShellFolder *pSF, LPCITEMIDLIST pidl, IBindCtx *pBC, R riid, void **ppv)
+{
+    CComPtr<IShellFolder> psfDesktop;
+    HRESULT hr;
+    if (!pSF)
+    {
+        if (FAILED(hr = SHGetDesktopFolder(&psfDesktop)))
+            return hr;
+        pSF = psfDesktop;
+    }
+    hr = ILIsEmpty(pidl) ? pSF->QueryInterface(riid, ppv) : pSF->BindToObject(pidl, pBC, riid, ppv);
+    if (SUCCEEDED(hr) && !*ppv)
+        hr = E_FAIL;
+    return hr;
+}
+#endif
 
 #endif /* !_SHELLTEST_H_ */

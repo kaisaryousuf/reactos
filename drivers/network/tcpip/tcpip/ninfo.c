@@ -25,7 +25,7 @@ TDI_STATUS InfoTdiQueryGetRouteTable( PIP_INTERFACE IF, PNDIS_BUFFER Buffer, PUI
 
     TI_DbgPrint(DEBUG_INFO, ("Called, routes = %d\n",
 			    RtCount));
-    
+
     if (RtCount == 0)
         return InfoCopyOut(NULL, 0, NULL, BufferSize);
 
@@ -327,8 +327,8 @@ TDI_STATUS InfoTdiSetRoute(PIP_INTERFACE IF, PVOID Buffer, UINT BufferSize)
 
     if( Route->Type == IP_ROUTE_TYPE_ADD ) { /* Add the route */
         TI_DbgPrint(DEBUG_INFO,("Adding route (%s)\n", A2S(&Address)));
-	if (!RouterCreateRoute( &Address, &Netmask, &Router,
-			       IF, Route->Metric1))
+        IF->Metric = Route->Metric1;
+	if (!RouterCreateRoute(&Address, &Netmask, &Router, IF))
 	    return TDI_NO_RESOURCES;
 
         return TDI_SUCCESS;

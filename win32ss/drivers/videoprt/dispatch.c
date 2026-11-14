@@ -43,7 +43,7 @@ VideoPortWin32kCallout(
     if (!Win32kCallout)
         return;
 
-    /* Perform the call in the context of CSRSS */
+    /* Perform the call in the CSRSS context */
     if (!CsrProcess)
         return;
 
@@ -339,17 +339,20 @@ IntVideoPortAddDevice(
     PDEVICE_OBJECT DeviceObject;
     NTSTATUS Status;
 
-    /* Get the initialization data we saved in VideoPortInitialize. */
+    /* Get the initialization data we saved in VideoPortInitialize */
     DriverExtension = IoGetDriverObjectExtension(DriverObject, DriverObject);
 
-    /* Create adapter device object. */
+    /* Create adapter device object */
     Status = IntVideoPortCreateAdapterDeviceObject(DriverObject,
                                                    DriverExtension,
                                                    PhysicalDeviceObject,
+                                                   DriverExtension->InitializationData.StartingDeviceNumber,
+                                                   0,
                                                    &DeviceObject);
-    if (NT_SUCCESS(Status))
-        VideoPortDeviceNumber++;
-
+    if (!NT_SUCCESS(Status))
+    {
+        ERR_(VIDEOPRT, "IntVideoPortCreateAdapterDeviceObject() failed with status 0x%lx\n", Status);
+    }
     return Status;
 }
 
@@ -375,19 +378,17 @@ IntVideoPortDispatchOpen(
 
     if (!CsrProcess)
     {
-        /*
-         * We know the first open call will be from the CSRSS process
-         * to let us know its handle.
-         */
+        /* We know the first open call is from the CSRSS process.
+         * Get a reference to it for Int10 support. */
         INFO_(VIDEOPRT, "Referencing CSRSS\n");
         CsrProcess = (PKPROCESS)PsGetCurrentProcess();
         ObReferenceObject(CsrProcess);
         INFO_(VIDEOPRT, "CsrProcess 0x%p\n", CsrProcess);
 
-        Status = IntInitializeVideoAddressSpace();
+        Status = IntInitializeInt10();
         if (!NT_SUCCESS(Status))
         {
-            ERR_(VIDEOPRT, "IntInitializeVideoAddressSpace() failed: 0x%lx\n", Status);
+            ERR_(VIDEOPRT, "IntInitializeInt10(CSR) failed: 0x%lx\n", Status);
             ObDereferenceObject(CsrProcess);
             CsrProcess = NULL;
             return Status;
@@ -402,18 +403,22 @@ IntVideoPortDispatchOpen(
 
     if (DriverExtension->InitializationData.HwInitialize(&DeviceExtension->MiniPortDeviceExtension))
     {
-        Irp->IoStatus.Status = STATUS_SUCCESS;
+        Status = STATUS_SUCCESS;
         InterlockedIncrement((PLONG)&DeviceExtension->DeviceOpened);
+
+        /* Query children, now that device is opened */
+        VideoPortEnumerateChildren(DeviceExtension->MiniPortDeviceExtension, NULL);
     }
     else
     {
-        Irp->IoStatus.Status = STATUS_UNSUCCESSFUL;
+        Status = STATUS_UNSUCCESSFUL;
     }
 
+    Irp->IoStatus.Status = Status;
     Irp->IoStatus.Information = FILE_OPENED;
     IoCompleteRequest(Irp, IO_NO_INCREMENT);
 
-    return STATUS_SUCCESS;
+    return Status;
 }
 
 /*
@@ -617,12 +622,59 @@ VideoPortUseDeviceInSession(
 
 static
 NTSTATUS
+VideoPortEnumMonitorPdo(
+    _In_ PDEVICE_OBJECT DeviceObject,
+    _Inout_ PVIDEO_MONITOR_DEVICE *ppMonitorDevices,
+    _Out_ PULONG_PTR Information)
+{
+    PVIDEO_MONITOR_DEVICE pMonitorDevices;
+    PVIDEO_PORT_DEVICE_EXTENSION DeviceExtension = DeviceObject->DeviceExtension;
+    PVIDEO_PORT_CHILD_EXTENSION ChildExtension;
+    ULONG i;
+    PLIST_ENTRY CurrentEntry;
+
+    /* Count the children */
+    i = 0;
+    CurrentEntry = DeviceExtension->ChildDeviceList.Flink;
+    while (CurrentEntry != &DeviceExtension->ChildDeviceList)
+    {
+        i++;
+        CurrentEntry = CurrentEntry->Flink;
+    }
+
+    pMonitorDevices = ExAllocatePoolZero(PagedPool,
+                                         sizeof(VIDEO_MONITOR_DEVICE) * (i + 1),
+                                         TAG_VIDEO_PORT);
+    if (!pMonitorDevices)
+        return STATUS_INSUFFICIENT_RESOURCES;
+
+    /* Add the children */
+    i = 0;
+    CurrentEntry = DeviceExtension->ChildDeviceList.Flink;
+    while (CurrentEntry != &DeviceExtension->ChildDeviceList)
+    {
+        ChildExtension = CONTAINING_RECORD(CurrentEntry, VIDEO_PORT_CHILD_EXTENSION, ListEntry);
+
+        ObReferenceObject(ChildExtension->PhysicalDeviceObject);
+        pMonitorDevices[i++].pdo = ChildExtension->PhysicalDeviceObject;
+        CurrentEntry = CurrentEntry->Flink;
+    }
+
+    *ppMonitorDevices = pMonitorDevices;
+    *Information = sizeof(pMonitorDevices);
+    return STATUS_SUCCESS;
+}
+
+static
+NTSTATUS
 VideoPortInitWin32kCallbacks(
     _In_ PDEVICE_OBJECT DeviceObject,
     _Inout_ PVIDEO_WIN32K_CALLBACKS Win32kCallbacks,
     _In_ ULONG BufferLength,
     _Out_ PULONG_PTR Information)
 {
+    PVIDEO_PORT_DEVICE_EXTENSION DeviceExtension = DeviceObject->DeviceExtension;
+
     *Information = sizeof(VIDEO_WIN32K_CALLBACKS);
     if (BufferLength < sizeof(VIDEO_WIN32K_CALLBACKS))
     {
@@ -636,7 +688,7 @@ VideoPortInitWin32kCallbacks(
 
     /* Return reasonable values to Win32k */
     Win32kCallbacks->bACPI = FALSE;
-    Win32kCallbacks->pPhysDeviceObject = DeviceObject;
+    Win32kCallbacks->pPhysDeviceObject = DeviceExtension->PhysicalDeviceObject;
     Win32kCallbacks->DualviewFlags = 0;
 
     return STATUS_SUCCESS;
@@ -677,7 +729,7 @@ VideoPortForwardDeviceControl(
 
     INFO_(VIDEOPRT, "- Returned status: %x\n", Irp->IoStatus.Status);
 
-    /* Map from win32 error codes to NT status values. */
+    /* Map from win32 error codes to NT status values */
     switch (Irp->IoStatus.Status)
     {
         case NO_ERROR:
@@ -781,6 +833,13 @@ IntVideoPortDispatchDeviceControl(
             Status = STATUS_NOT_IMPLEMENTED;
             break;
 
+        case IOCTL_VIDEO_ENUM_MONITOR_PDO:
+            INFO_(VIDEOPRT, "- IOCTL_VIDEO_ENUM_MONITOR_PDO\n");
+            Status = VideoPortEnumMonitorPdo(DeviceObject,
+                                             Irp->AssociatedIrp.SystemBuffer,
+                                             &Irp->IoStatus.Information);
+            break;
+
         case IOCTL_VIDEO_INIT_WIN32K_CALLBACKS:
             INFO_(VIDEOPRT, "- IOCTL_VIDEO_INIT_WIN32K_CALLBACKS\n");
             Status = VideoPortInitWin32kCallbacks(DeviceObject,
@@ -843,12 +902,12 @@ IntVideoPortPnPStartDevice(
     PVIDEO_PORT_DEVICE_EXTENSION DeviceExtension;
     PCM_RESOURCE_LIST AllocatedResources;
 
-    /* Get the initialization data we saved in VideoPortInitialize.*/
+    /* Get the initialization data we saved in VideoPortInitialize */
     DriverObject = DeviceObject->DriverObject;
     DriverExtension = IoGetDriverObjectExtension(DriverObject, DriverObject);
     DeviceExtension = (PVIDEO_PORT_DEVICE_EXTENSION)DeviceObject->DeviceExtension;
 
-    /* Store some resources in the DeviceExtension. */
+    /* Store some resources in the DeviceExtension */
     AllocatedResources = Stack->Parameters.StartDevice.AllocatedResources;
     if (AllocatedResources != NULL)
     {
@@ -876,7 +935,8 @@ IntVideoPortPnPStartDevice(
         FullList = AllocatedResources->List;
         ASSERT(AllocatedResources->Count == 1);
         INFO_(VIDEOPRT, "InterfaceType %u BusNumber List %u Device BusNumber %u Version %u Revision %u\n",
-              FullList->InterfaceType, FullList->BusNumber, DeviceExtension->SystemIoBusNumber, FullList->PartialResourceList.Version, FullList->PartialResourceList.Revision);
+              FullList->InterfaceType, FullList->BusNumber, DeviceExtension->SystemIoBusNumber,
+              FullList->PartialResourceList.Version, FullList->PartialResourceList.Revision);
 
         /* FIXME: Is this ASSERT ok for resources from the PNP manager? */
         ASSERT(FullList->InterfaceType == PCIBus);
@@ -903,10 +963,9 @@ IntVideoPortPnPStartDevice(
           DeviceExtension->InterruptLevel,
           DeviceExtension->InterruptVector);
 
-    /* Create adapter device object. */
-    return IntVideoPortFindAdapter(DriverObject,
-                                   DriverExtension,
-                                   DeviceObject);
+    /* Create adapter device object */
+    return IntVideoPortFindAdapter(DriverObject, DriverExtension,
+                                   DeviceObject, FALSE);
 }
 
 
@@ -934,6 +993,18 @@ IntVideoPortQueryBusRelations(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     PVIDEO_PORT_CHILD_EXTENSION ChildExtension;
     ULONG i;
     PLIST_ENTRY CurrentEntry;
+    NTSTATUS Status;
+
+    if (InterlockedCompareExchange((PLONG)&DeviceExtension->DeviceOpened, 0, 0) == 0)
+    {
+        /* Device not opened. Don't enumerate children yet */
+        WARN_(VIDEOPRT, "Skipping child enumeration because device is not opened\n");
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+    /* Query children of the device */
+    Status = IntVideoPortEnumerateChildren(DeviceObject, Irp);
+    if (!NT_SUCCESS(Status))
+        return Status;
 
     /* Count the children */
     i = 0;
@@ -1025,27 +1096,73 @@ IntVideoPortDispatchFdoPnp(
             break;
 
         case IRP_MN_FILTER_RESOURCE_REQUIREMENTS:
-            Status = IntVideoPortForwardIrpAndWait(DeviceObject, Irp);
-            if (NT_SUCCESS(Status) && NT_SUCCESS(Irp->IoStatus.Status))
-                Status = IntVideoPortFilterResourceRequirements(DeviceObject, Irp);
+            /* Call lower drivers, and ignore result (that's probably STATUS_NOT_SUPPORTED) */
+            (VOID)IntVideoPortForwardIrpAndWait(DeviceObject, Irp);
+            /* Now, fill resource requirements list */
+            Status = IntVideoPortFilterResourceRequirements(DeviceObject, IrpSp, Irp);
             Irp->IoStatus.Status = Status;
-            Irp->IoStatus.Information = 0;
             IoCompleteRequest(Irp, IO_NO_INCREMENT);
             break;
 
         case IRP_MN_QUERY_DEVICE_RELATIONS:
-            if (IrpSp->Parameters.QueryDeviceRelations.Type != BusRelations)
+        {
+            DEVICE_RELATION_TYPE RelationType = IrpSp->Parameters.QueryDeviceRelations.Type;
+
+            switch (RelationType)
             {
-                IoSkipCurrentIrpStackLocation(Irp);
-                Status = IoCallDriver(DeviceExtension->NextDeviceObject, Irp);
-            }
-            else
-            {
-                Status = IntVideoPortQueryBusRelations(DeviceObject, Irp);
-                Irp->IoStatus.Status = Status;
-                IoCompleteRequest(Irp, IO_NO_INCREMENT);
+                case TargetDeviceRelation:
+                {
+                    PDEVICE_RELATIONS TargetList;
+
+                    TargetList = ExAllocatePoolZero(PagedPool, sizeof(*TargetList), TAG_VIDEO_PORT);
+                    if (TargetList == NULL)
+                    {
+                        Status = STATUS_INSUFFICIENT_RESOURCES;
+                        Irp->IoStatus.Information = 0;
+                    }
+                    else
+                    {
+                        TargetList->Count++;
+                        TargetList->Objects[0] = DeviceObject;
+                        ObReferenceObject(DeviceObject);
+                        Irp->IoStatus.Information = (ULONG_PTR)TargetList;
+                        Status = STATUS_SUCCESS;
+                    }
+
+                    Irp->IoStatus.Status = Status;
+                    IoCompleteRequest(Irp, IO_NO_INCREMENT);
+                    break;
+                }
+
+                case BusRelations:
+                    Status = IntVideoPortQueryBusRelations(DeviceObject, Irp);
+                    Irp->IoStatus.Status = Status;
+                    if (!NT_SUCCESS(Status))
+                    {
+                        IoCompleteRequest(Irp, IO_NO_INCREMENT);
+                    }
+                    else if (DeviceExtension->NextDeviceObject != NULL)
+                    {
+                        IoSkipCurrentIrpStackLocation(Irp);
+                        Status = IoCallDriver(DeviceExtension->NextDeviceObject, Irp);
+                    }
+                    break;
+
+                default:
+                    if (DeviceExtension->NextDeviceObject != NULL)
+                    {
+                        IoSkipCurrentIrpStackLocation(Irp);
+                        Status = IoCallDriver(DeviceExtension->NextDeviceObject, Irp);
+                    }
+                    else
+                    {
+                        Status = Irp->IoStatus.Status;
+                        IoCompleteRequest(Irp, IO_NO_INCREMENT);
+                    }
+                    break;
             }
             break;
+        }
 
         case IRP_MN_REMOVE_DEVICE:
         case IRP_MN_QUERY_REMOVE_DEVICE:

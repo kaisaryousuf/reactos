@@ -4,10 +4,11 @@
  * FILE:            dll/win32/netcfgx/installer.c
  * PURPOSE:         Network devices installer
  *
- * PROGRAMMERS:     Hervé Poussineau (hpoussin@reactos.org)
+ * PROGRAMMERS:     HervÃ© Poussineau (hpoussin@reactos.org)
  */
 
 #include "precomp.h"
+#include <strsafe.h>
 
 
 /* Append a REG_SZ to an existing REG_MULTI_SZ string in the registry.
@@ -89,6 +90,59 @@ cleanup:
     return rc;
 }
 
+static
+DWORD
+GetUniqueConnectionName(
+    _In_ HKEY hNetworkKey,
+    _Out_ PWSTR *ppszNameBuffer)
+{
+    int Length = 0;
+    PWSTR pszDefaultName = NULL;
+    PWSTR pszNameBuffer = NULL;
+    DWORD dwSubKeys = 0;
+    DWORD dwError;
+
+    TRACE("GetNewConnectionName()\n");
+
+    Length = LoadStringW(netcfgx_hInstance, IDS_NET_CONNECT, (LPWSTR)&pszDefaultName, 0);
+    if (Length == 0)
+    {
+        pszDefaultName = L"Network Connection";
+        Length = wcslen(pszDefaultName);
+    }
+
+    TRACE("Length %d\n", Length);
+
+    dwError = RegQueryInfoKeyW(hNetworkKey,
+                               NULL, NULL, NULL, &dwSubKeys,
+                               NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+    if (dwError != ERROR_SUCCESS)
+    {
+        ERR("RegQueryInfoKeyW: Error %lu\n", dwError);
+        return dwError;
+    }
+
+    TRACE("Adapter Count: %lu\n", dwSubKeys);
+
+    pszNameBuffer = HeapAlloc(GetProcessHeap(),
+                              HEAP_ZERO_MEMORY,
+                              (Length + ((dwSubKeys != 0) ? 6 : 1)) * sizeof(WCHAR));
+    if (pszNameBuffer == NULL)
+    {
+        return ERROR_OUTOFMEMORY;
+    }
+
+    if (dwSubKeys != 0)
+        StringCchPrintfW(pszNameBuffer, Length + 6, L"%.*s %lu", Length, pszDefaultName, dwSubKeys + 1);
+    else
+        StringCchPrintfW(pszNameBuffer, Length + 1, L"%.*s", Length, pszDefaultName);
+
+    TRACE("Adapter Name: %S\n", pszNameBuffer);
+
+    *ppszNameBuffer = pszNameBuffer;
+
+    return ERROR_SUCCESS;
+}
 
 static
 DWORD
@@ -105,13 +159,14 @@ InstallNetDevice(
     LPWSTR DeviceName = NULL;
     LPWSTR ExportName = NULL;
     LONG rc;
+    HKEY hInterfacesKey = NULL, hInterfaceKey = NULL;
     HKEY hKey = NULL;
     HKEY hNetworkKey = NULL;
     HKEY hLinkageKey = NULL;
     HKEY hConnectionKey = NULL;
     DWORD dwShowIcon, dwLength, dwValue;
-    WCHAR szBuffer[300];
-    PWSTR ptr;
+    PWSTR pszNameBuffer = NULL;
+    DWORD dwRegType;
 
     DeviceInstallParams.cbSize = sizeof(DeviceInstallParams);
     if (!SetupDiGetDeviceInstallParamsW(DeviceInfoSet,
@@ -166,19 +221,6 @@ InstallNetDevice(
         goto cleanup;
     }
 
-    ComponentId = HeapAlloc(GetProcessHeap(), 0, dwLength * sizeof(WCHAR));
-    if (!ComponentId)
-    {
-        ERR("HeapAlloc() failed\n");
-        rc = ERROR_NOT_ENOUGH_MEMORY;
-        goto cleanup;
-    }
-
-    wcscpy(ComponentId, InstanceId);
-    ptr = wcsrchr(ComponentId, L'\\');
-    if (ptr != NULL)
-        *ptr = UNICODE_NULL;
-
     /* Create device name */
     DeviceName = HeapAlloc(GetProcessHeap(), 0, (wcslen(L"\\Device\\") + wcslen(UuidString)) * sizeof(WCHAR) + sizeof(UNICODE_NULL));
     if (!DeviceName)
@@ -202,46 +244,35 @@ InstallNetDevice(
     wcscat(ExportName, UuidString);
 
     /* Write Tcpip parameters in new service Key */
-    rc = RegCreateKeyExW(HKEY_LOCAL_MACHINE, L"SYSTEM\\CurrentControlSet\\Services", 0, NULL, REG_OPTION_NON_VOLATILE, KEY_CREATE_SUB_KEY, NULL, &hKey, NULL);
+    rc = RegCreateKeyExW(HKEY_LOCAL_MACHINE, L"SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters\\Interfaces", 0, NULL, REG_OPTION_NON_VOLATILE, KEY_WRITE, NULL, &hInterfacesKey, NULL);
     if (rc != ERROR_SUCCESS)
     {
         ERR("RegCreateKeyExW() failed with error 0x%lx\n", rc);
         goto cleanup;
     }
 
-    rc = RegCreateKeyExW(hKey, UuidString, 0, NULL, REG_OPTION_NON_VOLATILE, KEY_CREATE_SUB_KEY, NULL, &hNetworkKey, NULL);
+    rc = RegCreateKeyExW(hInterfacesKey, UuidString, 0, NULL, REG_OPTION_NON_VOLATILE, KEY_WRITE, NULL, &hInterfaceKey, NULL);
     if (rc != ERROR_SUCCESS)
     {
         ERR("RegCreateKeyExW() failed with error 0x%lx\n", rc);
         goto cleanup;
     }
-    RegCloseKey(hKey);
-    hKey = NULL;
 
-    rc = RegCreateKeyExW(hNetworkKey, L"Parameters\\Tcpip", 0, NULL, REG_OPTION_NON_VOLATILE, KEY_SET_VALUE, NULL, &hKey, NULL);
-    if (rc != ERROR_SUCCESS)
-    {
-        ERR("RegCreateKeyExW() failed with error 0x%lx\n", rc);
-        goto cleanup;
-    }
-    RegCloseKey(hNetworkKey);
-    hNetworkKey = NULL;
-
-    rc = RegSetValueExW(hKey, L"DefaultGateway", 0, REG_SZ, (const BYTE*)L"0.0.0.0", (wcslen(L"0.0.0.0") + 1) * sizeof(WCHAR));
+    rc = RegSetValueExW(hInterfaceKey, L"DefaultGateway", 0, REG_MULTI_SZ, (const BYTE*)L"0.0.0.0\0", (wcslen(L"0.0.0.0") + 2) * sizeof(WCHAR));
     if (rc != ERROR_SUCCESS)
     {
         ERR("RegSetValueExW() failed with error 0x%lx\n", rc);
         goto cleanup;
     }
 
-    rc = RegSetValueExW(hKey, L"IPAddress", 0, REG_SZ, (const BYTE*)L"0.0.0.0", (wcslen(L"0.0.0.0") + 1) * sizeof(WCHAR));
+    rc = RegSetValueExW(hInterfaceKey, L"IPAddress", 0, REG_MULTI_SZ, (const BYTE*)L"0.0.0.0\0", (wcslen(L"0.0.0.0") + 2) * sizeof(WCHAR));
     if (rc != ERROR_SUCCESS)
     {
         ERR("RegSetValueExW() failed with error 0x%lx\n", rc);
         goto cleanup;
     }
 
-    rc = RegSetValueExW(hKey, L"SubnetMask", 0, REG_SZ, (const BYTE*)L"0.0.0.0", (wcslen(L"0.0.0.0") + 1) * sizeof(WCHAR));
+    rc = RegSetValueExW(hInterfaceKey, L"SubnetMask", 0, REG_MULTI_SZ, (const BYTE*)L"0.0.0.0\0", (wcslen(L"0.0.0.0") + 2) * sizeof(WCHAR));
     if (rc != ERROR_SUCCESS)
     {
         ERR("RegSetValueExW() failed with error 0x%lx\n", rc);
@@ -249,14 +280,12 @@ InstallNetDevice(
     }
 
     dwValue = 1;
-    rc = RegSetValueExW(hKey, L"EnableDHCP", 0, REG_DWORD, (const BYTE*)&dwValue, sizeof(DWORD));
+    rc = RegSetValueExW(hInterfaceKey, L"EnableDHCP", 0, REG_DWORD, (const BYTE*)&dwValue, sizeof(DWORD));
     if (rc != ERROR_SUCCESS)
     {
         ERR("RegSetValueExW() failed with error 0x%lx\n", rc);
         goto cleanup;
     }
-    RegCloseKey(hKey);
-    hKey = NULL;
 
     /* Write 'Linkage' key in hardware key */
 #if _WIN32_WINNT >= 0x502
@@ -288,7 +317,34 @@ InstallNetDevice(
         goto cleanup;
     }
 
-    rc = RegSetValueExW(hKey, L"ComponentId", 0, REG_SZ, (const BYTE*)ComponentId, (wcslen(ComponentId) + 1) * sizeof(WCHAR));
+    /* Get ComponentId (from MatchingDeviceId value) */
+    rc = RegQueryValueExW(hKey, L"MatchingDeviceId", 0, &dwRegType, NULL, &dwLength);
+    if (rc != ERROR_SUCCESS)
+    {
+        ERR("RegQueryValueExW() failed with error 0x%lx\n", rc);
+        goto cleanup;
+    }
+    if (dwRegType != REG_SZ)
+    {
+        ERR("Invalid registry type for 'MatchingDeviceId'\n");
+        rc = ERROR_GEN_FAILURE;
+        goto cleanup;
+    }
+    ComponentId = HeapAlloc(GetProcessHeap(), 0, dwLength);
+    if (!ComponentId)
+    {
+        ERR("HeapAlloc() failed\n");
+        rc = ERROR_NOT_ENOUGH_MEMORY;
+        goto cleanup;
+    }
+    rc = RegQueryValueExW(hKey, L"MatchingDeviceId", 0, &dwRegType, (BYTE*)ComponentId, &dwLength);
+    if (rc != ERROR_SUCCESS)
+    {
+        ERR("RegQueryValueExW() failed with error 0x%lx\n", rc);
+        goto cleanup;
+    }
+
+    rc = RegSetValueExW(hKey, L"ComponentId", 0, REG_SZ, (const BYTE*)ComponentId, dwLength);
     if (rc != ERROR_SUCCESS)
     {
         ERR("RegSetValueExW() failed with error 0x%lx\n", rc);
@@ -336,10 +392,25 @@ InstallNetDevice(
     hKey = NULL;
 
     /* Write connection information in network subkey */
-    rc = RegCreateKeyExW(HKEY_LOCAL_MACHINE, L"SYSTEM\\CurrentControlSet\\Control\\Network\\{4D36E972-E325-11CE-BFC1-08002BE10318}", 0, NULL, REG_OPTION_NON_VOLATILE, KEY_CREATE_SUB_KEY, NULL, &hNetworkKey, NULL);
+    rc = RegCreateKeyExW(HKEY_LOCAL_MACHINE,
+                         L"SYSTEM\\CurrentControlSet\\Control\\Network\\{4D36E972-E325-11CE-BFC1-08002BE10318}",
+                         0,
+                         NULL,
+                         REG_OPTION_NON_VOLATILE,
+                         KEY_CREATE_SUB_KEY | KEY_QUERY_VALUE,
+                         NULL,
+                         &hNetworkKey,
+                         NULL);
     if (rc != ERROR_SUCCESS)
     {
         ERR("RegCreateKeyExW() failed with error 0x%lx\n", rc);
+        goto cleanup;
+    }
+
+    rc = GetUniqueConnectionName(hNetworkKey, &pszNameBuffer);
+    if (rc != ERROR_SUCCESS)
+    {
+        ERR("GetUniqueConnectionName() failed with error 0x%lx\n", rc);
         goto cleanup;
     }
 
@@ -359,12 +430,7 @@ InstallNetDevice(
         goto cleanup;
     }
 
-    if (!LoadStringW(netcfgx_hInstance, IDS_NET_CONNECT, szBuffer, sizeof(szBuffer)/sizeof(WCHAR)))
-    {
-        wcscpy(szBuffer, L"Network Connection");
-    }
-
-    rc = RegSetValueExW(hConnectionKey, L"Name", 0, REG_SZ, (const BYTE*)szBuffer, (wcslen(szBuffer) + 1) * sizeof(WCHAR));
+    rc = RegSetValueExW(hConnectionKey, L"Name", 0, REG_SZ, (const BYTE*)pszNameBuffer, (wcslen(pszNameBuffer) + 1) * sizeof(WCHAR));
     if (rc != ERROR_SUCCESS)
     {
         ERR("RegSetValueExW() failed with error 0x%lx\n", rc);
@@ -423,10 +489,15 @@ InstallNetDevice(
     rc = ERROR_SUCCESS;
 
 cleanup:
+    HeapFree(GetProcessHeap(), 0, pszNameBuffer);
     HeapFree(GetProcessHeap(), 0, InstanceId);
     HeapFree(GetProcessHeap(), 0, ComponentId);
     HeapFree(GetProcessHeap(), 0, DeviceName);
     HeapFree(GetProcessHeap(), 0, ExportName);
+    if (hInterfaceKey != NULL)
+        RegCloseKey(hInterfaceKey);
+    if (hInterfacesKey != NULL)
+        RegCloseKey(hInterfacesKey);
     if (hKey != NULL)
         RegCloseKey(hKey);
     if (hNetworkKey != NULL)

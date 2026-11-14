@@ -8,6 +8,7 @@
 
 #include <win32k.h>
 #include <napi.h>
+#include <winbase_undoc.h>
 
 #define NDEBUG
 #include <debug.h>
@@ -26,7 +27,6 @@ NTSTATUS GdiThreadDestroy(PETHREAD Thread);
 
 PSERVERINFO gpsi = NULL; // Global User Server Information.
 
-USHORT gusLanguageID;
 PPROCESSINFO ppiScrnSaver;
 PPROCESSINFO gppiList = NULL;
 
@@ -180,6 +180,14 @@ UserProcessDestroy(PEPROCESS Process)
     if (ppiScrnSaver == ppiCurrent)
         ppiScrnSaver = NULL;
 
+    IntFreeImeHotKeys();
+
+    if (gpwlCache)
+    {
+        ExFreePoolWithTag(gpwlCache, USERTAG_WINDOWLIST);
+        gpwlCache = NULL;
+    }
+
     /* Destroy user objects */
     UserDestroyObjectsForOwner(gHandleTable, ppiCurrent);
 
@@ -283,6 +291,16 @@ InitProcessCallback(PEPROCESS Process)
     ppiCurrent->ppiNext = gppiList;
     gppiList = ppiCurrent;
 
+    /* If we belong to a job that restricts the UI, join it now. A process is
+       normally assigned to its job while still suspended, i.e. before it ever
+       calls into win32k, so the kernel could not hand us over back then. */
+    Status = IntJobConnectProcess(ppiCurrent);
+    if (!NT_SUCCESS(Status))
+    {
+        ERR_CH(UserProcess, "IntJobConnectProcess failed, Status 0x%08lx\n", Status);
+        goto error;
+    }
+
     return STATUS_SUCCESS;
 
 error:
@@ -304,6 +322,9 @@ ExitProcessCallback(PEPROCESS Process)
 
     TRACE_CH(UserProcess, "Destroying ppi 0x%p\n", ppiCurrent);
     ppiCurrent->W32PF_flags |= W32PF_TERMINATED;
+
+    /* Leave the job we were restricted by, if any */
+    IntJobDisconnectProcess(ppiCurrent);
 
     /* Remove it from the list */
     pppi = &gppiList;
@@ -454,6 +475,8 @@ InitThreadCallback(PETHREAD Thread)
     NTSTATUS Status = STATUS_SUCCESS;
     PTEB pTeb;
     PRTL_USER_PROCESS_PARAMETERS ProcessParams;
+    PKL pDefKL;
+    BOOLEAN bFirstThread;
 
     Process = Thread->ThreadsProcess;
 
@@ -478,6 +501,7 @@ InitThreadCallback(PETHREAD Thread)
     pTeb->Win32ThreadInfo = ptiCurrent;
     ptiCurrent->pClientInfo = (PCLIENTINFO)pTeb->Win32ClientInfo;
     ptiCurrent->pcti = &ptiCurrent->cti;
+    bFirstThread = !(ptiCurrent->ppi->W32PF_flags & W32PF_THREADCONNECTED);
 
     /* Mark the process as having threads */
     ptiCurrent->ppi->W32PF_flags |= W32PF_THREADCONNECTED;
@@ -524,9 +548,8 @@ InitThreadCallback(PETHREAD Thread)
         goto error;
     }
 
-    ptiCurrent->KeyboardLayout = W32kGetDefaultKeyLayout();
-    if (ptiCurrent->KeyboardLayout)
-        UserReferenceObject(ptiCurrent->KeyboardLayout);
+    pDefKL = W32kGetDefaultKeyLayout();
+    UserAssignmentLock((PVOID*)&(ptiCurrent->KeyboardLayout), pDefKL);
 
     ptiCurrent->TIF_flags &= ~TIF_INCLEANUP;
 
@@ -536,17 +559,29 @@ InitThreadCallback(PETHREAD Thread)
     if (Process == gpepCSRSS || !gpepCSRSS)
         ptiCurrent->TIF_flags = TIF_CSRSSTHREAD | TIF_DONTATTACHQUEUE;
 
+    /* A thread of a process that is in a job restricting the UI is restricted
+       from the moment it appears, not from the next time the job is touched */
+    if (ptiCurrent->ppi->W32PF_flags & W32PF_JOBRESTRICTED)
+        ptiCurrent->TIF_flags |= TIF_JOBRESTRICTED;
+
     /* Initialize the CLIENTINFO */
     pci = (PCLIENTINFO)pTeb->Win32ClientInfo;
     RtlZeroMemory(pci, sizeof(*pci));
     pci->ppi = ptiCurrent->ppi;
     pci->fsHooks = ptiCurrent->fsHooks;
     pci->dwTIFlags = ptiCurrent->TIF_flags;
-    if (ptiCurrent->KeyboardLayout)
+    if (pDefKL)
     {
-        pci->hKL = ptiCurrent->KeyboardLayout->hkl;
-        pci->CodePage = ptiCurrent->KeyboardLayout->CodePage;
+        pci->hKL = pDefKL->hkl;
+        pci->CodePage = pDefKL->CodePage;
     }
+
+    /* Populate dwExpWinVer */
+    if (Process->Peb)
+        ptiCurrent->dwExpWinVer = RtlGetExpWinVer(Process->SectionBaseAddress);
+    else
+        ptiCurrent->dwExpWinVer = WINVER_WINNT4;
+    pci->dwExpWinVer = ptiCurrent->dwExpWinVer;
 
     /* Need to pass the user Startup Information to the current process. */
     if ( ProcessParams )
@@ -564,6 +599,25 @@ InitThreadCallback(PETHREAD Thread)
              ptiCurrent->ppi->usi.wShowWindow = (WORD)ProcessParams->ShowWindowFlags;
           }
        }
+
+        if (bFirstThread)
+        {
+            /* Note: Only initialize once so it can be set back to 0 after being used */
+            if (ProcessParams->WindowFlags & STARTF_USEHOTKEY)
+                ptiCurrent->ppi->dwHotkey = HandleToUlong(ProcessParams->StandardInput);
+            /* TODO:
+            else if (ProcessParams->ShellInfo.Buffer)
+                ..->dwHotkey = ParseShellInfo(ProcessParams->ShellInfo.Buffer, L"hotkey.");
+            */
+
+            if (ProcessParams->WindowFlags & STARTF_SHELLPRIVATE)
+            {
+              /* We need to validate this handle because it can also be a HICON */
+                HMONITOR hMonitor = (HMONITOR)ProcessParams->StandardOutput;
+                if (hMonitor && UserGetMonitorObject(hMonitor))
+                    ptiCurrent->ppi->hMonitor = hMonitor;
+            }
+        }
     }
 
     /*
@@ -651,6 +705,12 @@ InitThreadCallback(PETHREAD Thread)
     }
     ptiCurrent->pClientInfo->dwTIFlags = ptiCurrent->TIF_flags;
 
+    /* Create the default input context */
+    if (IS_IMM_MODE())
+    {
+        (VOID)UserCreateInputContext(0);
+    }
+
     /* Last things to do only if we are not a SYSTEM or CSRSS thread */
     if (!(ptiCurrent->TIF_flags & (TIF_SYSTEMTHREAD | TIF_CSRSSTHREAD)))
     {
@@ -691,6 +751,7 @@ ExitThreadCallback(PETHREAD Thread)
     PPROCESSINFO ppiCurrent;
     PEPROCESS Process;
     PTHREADINFO ptiCurrent;
+    PWINDOWLIST pwl, pwlNext;
 
     Process = Thread->ThreadsProcess;
 
@@ -707,6 +768,16 @@ ExitThreadCallback(PETHREAD Thread)
     ASSERT(ppiCurrent);
 
     IsRemoveAttachThread(ptiCurrent);
+
+    if (gpwlList)
+    {
+        for (pwl = gpwlList; pwl; pwl = pwlNext)
+        {
+            pwlNext = pwl->pNextList;
+            if (pwl->pti == ptiCurrent)
+                IntFreeHwndList(pwl);
+        }
+    }
 
     ptiCurrent->TIF_flags |= TIF_DONTATTACHQUEUE;
     ptiCurrent->pClientInfo->dwTIFlags = ptiCurrent->TIF_flags;
@@ -758,6 +829,7 @@ ExitThreadCallback(PETHREAD Thread)
             ASSERT(FALSE);
             return STATUS_UNSUCCESSFUL;
         }
+        UserAssignmentUnlock((PVOID*)&ptiCurrent->spDefaultImc);
 
         if (ppiCurrent && ppiCurrent->ptiList == ptiCurrent && !ptiCurrent->ptiSibling &&
             ppiCurrent->W32PF_flags & W32PF_CLASSESREGISTERED)
@@ -780,6 +852,9 @@ ExitThreadCallback(PETHREAD Thread)
             UserDereferenceObject(ref->obj);
 
             psle = PopEntryList(&ptiCurrent->ReferencesList);
+#if DBG
+            ptiCurrent->cRefObjectCo--;
+#endif
         }
     }
 
@@ -802,8 +877,8 @@ ExitThreadCallback(PETHREAD Thread)
     /* Remove it from the list */
     *ppti = ptiCurrent->ptiSibling;
 
-    if (ptiCurrent->KeyboardLayout)
-        UserDereferenceObject(ptiCurrent->KeyboardLayout);
+    if (!UserAssignmentUnlock((PVOID*)&(ptiCurrent->KeyboardLayout)))
+        ptiCurrent->pClientInfo->hKL = NULL;
 
     if (gptiForeground == ptiCurrent)
     {
@@ -838,6 +913,8 @@ ExitThreadCallback(PETHREAD Thread)
        ObDereferenceObject(ptiCurrent->pEventQueueServer);
     }
     ptiCurrent->hEventQueueClient = NULL;
+
+    ASSERT(ptiCurrent->cRefObjectCo == 0);
 
     /* The thread is dying */
     PsSetThreadWin32Thread(Thread /*ptiCurrent->pEThread*/, NULL, ptiCurrent);
@@ -881,8 +958,10 @@ DriverUnload(IN PDRIVER_OBJECT DriverObject)
 {
     // TODO: Do more cleanup!
 
+    FreeFontSupport();
     ResetCsrApiPort();
     ResetCsrProcess();
+    IntWin32PowerManagementCleanup();
 }
 
 // Return on failure
@@ -895,6 +974,21 @@ DriverUnload(IN PDRIVER_OBJECT DriverObject)
         return Status; \
     } \
 }
+
+// Lock & return on failure
+#define USERLOCK_AND_ROF(x)         \
+{                                   \
+    UserEnterExclusive();           \
+    Status = (x);                   \
+    UserLeave();                    \
+    if (!NT_SUCCESS(Status))        \
+    { \
+        DPRINT1("Failed '%s' (0x%lx)\n", #x, Status); \
+        return Status; \
+    } \
+}
+
+
 
 /*
  * This definition doesn't work
@@ -935,9 +1029,9 @@ DriverEntry(
     CalloutData.ProcessCallout = Win32kProcessCallback;
     CalloutData.ThreadCallout = Win32kThreadCallback;
     // CalloutData.GlobalAtomTableCallout = NULL;
-    // CalloutData.PowerEventCallout = NULL;
-    // CalloutData.PowerStateCallout = NULL;
-    // CalloutData.JobCallout = NULL;
+    CalloutData.PowerEventCallout = IntHandlePowerEvent;
+    CalloutData.PowerStateCallout = IntHandlePowerState;
+    CalloutData.JobCallout = Win32kJobCallout;
     CalloutData.BatchFlushRoutine = NtGdiFlushUserBatch;
     CalloutData.DesktopOpenProcedure = IntDesktopObjectOpen;
     CalloutData.DesktopOkToCloseProcedure = IntDesktopOkToClose;
@@ -968,8 +1062,15 @@ DriverEntry(
         return STATUS_UNSUCCESSFUL;
     }
 
+    /* Init the global user lock */
+    ExInitializeResourceLite(&UserLock);
+
+    /* Lock while we use the heap (UserHeapAlloc asserts on this) */
+    UserEnterExclusive();
+
     /* Allocate global server info structure */
     gpsi = UserHeapAlloc(sizeof(*gpsi));
+    UserLeave();
     if (!gpsi)
     {
         DPRINT1("Failed allocate server info structure!\n");
@@ -992,23 +1093,15 @@ DriverEntry(
     NT_ROF(InitLDEVImpl());
     NT_ROF(InitDeviceImpl());
     NT_ROF(InitDcImpl());
-    NT_ROF(InitUserImpl());
+    USERLOCK_AND_ROF(InitUserImpl());
     NT_ROF(InitWindowStationImpl());
     NT_ROF(InitDesktopImpl());
     NT_ROF(InitInputImpl());
     NT_ROF(InitKeyboardImpl());
+    NT_ROF(InitRawInputImpl());
     NT_ROF(MsqInitializeImpl());
     NT_ROF(InitTimerImpl());
     NT_ROF(InitDCEImpl());
-
-    gusLanguageID = UserGetLanguageID();
-
-    /* Initialize FreeType library */
-    if (!InitFontSupport())
-    {
-        DPRINT1("Unable to initialize font support\n");
-        return Status;
-    }
 
     return STATUS_SUCCESS;
 }

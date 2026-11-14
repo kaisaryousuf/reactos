@@ -34,9 +34,8 @@
 
 #include <windef.h>
 #include <winbase.h>
+#include <wincon.h>     // Console APIs (only if kernel32 support included)
 #include <winnls.h>
-// #include <winuser.h> // MAKEINTRESOURCEW, RT_STRING
-#include <wincon.h>  // Console APIs (only if kernel32 support included)
 #include <strsafe.h>
 
 #include "conutils.h"
@@ -280,7 +279,7 @@ ConStreamSetOSHandle(
     int fdOut = _open_osfhandle((intptr_t)Handle, _O_TEXT /* FIXME! */);
     FILE* fpOut = _fdopen(fdOut, "w");
     *Stream->fStream = *fpOut;
-    /// setvbuf(Stream->fStream, NULL, _IONBF, 0); 
+    /// setvbuf(Stream->fStream, NULL, _IONBF, 0);
 
     return TRUE;
 #else

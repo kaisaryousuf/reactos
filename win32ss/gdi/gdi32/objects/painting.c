@@ -29,7 +29,7 @@ MoveToEx(
 {
     PDC_ATTR pdcattr;
 
-    HANDLE_METADC(BOOL, MoveTo, FALSE, hdc, x, y, ppt);
+    HANDLE_METADC(BOOL, MoveTo, FALSE, hdc, x, y);
 
     /* Get the DC attribute */
     pdcattr = GdiGetDcAttr(hdc);
@@ -265,7 +265,7 @@ PolyBezier(
     _In_reads_(cpt) const POINT *apt,
     _In_ DWORD cpt)
 {
-    HANDLE_METADC(BOOL, PolyBezier, FALSE, hdc, apt, cpt);
+    HANDLE_EMETAFDC(BOOL, PolyBezier, FALSE, hdc, apt, cpt);
 
     if ( GdiConvertAndCheckDC(hdc) == NULL ) return FALSE;
 
@@ -283,11 +283,54 @@ PolyBezierTo(
     _In_reads_(cpt) const POINT *apt,
     _In_ DWORD cpt)
 {
-    HANDLE_METADC(BOOL, PolyBezierTo, FALSE, hdc, apt, cpt);
+    POINT pt1 = { 0, 0 };
+    BOOL ret = FALSE;
+
+    HANDLE_EMETAFDC(BOOL, PolyBezierTo, FALSE, hdc, apt, cpt);
 
     if ( GdiConvertAndCheckDC(hdc) == NULL ) return FALSE;
 
-    return NtGdiPolyPolyDraw(hdc , (PPOINT)apt, &cpt, 1, GdiPolyBezierTo);
+    /* This section of code is just an optimization so we can do an early return.
+     * Everything would work the same even if this code were removed. */
+    if (cpt == 3)
+    {
+        /* If there are exactly 3 points, see if all three points of
+         * the PolyBezierTo are equal. */
+        if (apt[0].x == apt[1].x && apt[1].x == apt[2].x &&
+            apt[0].y == apt[1].y && apt[1].y == apt[2].y)
+        {
+            /* If all points are equal and they equal the start point,
+             * then we can just return TRUE as an optimization. */
+            if (GetCurrentPositionEx(hdc, &pt1) &&
+                pt1.x == apt[0].x && pt1.y == apt[0].y)
+            {
+                return TRUE;
+            }
+            /* If they are all equal, but not equal to the start point,
+             * then we can just do a LineTo and return as an optimization. */
+            return LineTo(hdc, apt[0].x, apt[0].y);
+        }
+    }
+
+    /* Following based on Wine 10.0 nulldrv_PolyBezierTo function */
+    POINT *pts = HeapAlloc(GetProcessHeap(), 0, (cpt + 1) * sizeof(*apt));
+    if (!pts)
+    {
+        SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+        return FALSE;
+    }
+
+    if (GetCurrentPositionEx(hdc, &pt1))
+    {
+        pts[0] = pt1;
+        memcpy(&pts[1], apt, sizeof(*apt) * cpt);
+        cpt++;
+        ret = NtGdiPolyPolyDraw(hdc, (PPOINT)pts, &cpt, 1, GdiPolyBezierTo);
+    }
+
+    HeapFree(GetProcessHeap(), 0, pts);
+
+    return ret;
 }
 
 
@@ -302,7 +345,7 @@ PolyDraw(
     _In_reads_(cpt) const BYTE *aj,
     _In_ INT cpt)
 {
-    HANDLE_METADC(BOOL, PolyDraw, FALSE, hdc, apt, aj, cpt);
+    HANDLE_EMETAFDC(BOOL, PolyDraw, FALSE, hdc, apt, aj, cpt);
 
     if ( GdiConvertAndCheckDC(hdc) == NULL ) return FALSE;
 
@@ -356,11 +399,32 @@ PolylineTo(
     _In_reads_(cpt) const POINT *apt,
     _In_ DWORD cpt)
 {
-    HANDLE_METADC(BOOL, PolylineTo, FALSE, hdc, apt, cpt);
+    POINT pt1 = { 0, 0 };
+    BOOL ret = FALSE;
+
+    HANDLE_EMETAFDC(BOOL, PolylineTo, FALSE, hdc, apt, cpt);
 
     if ( GdiConvertAndCheckDC(hdc) == NULL ) return FALSE;
 
-    return NtGdiPolyPolyDraw(hdc , (PPOINT)apt, &cpt, 1, GdiPolyLineTo);
+    /* Following based on Wine 10.0 nulldrv_PolylineTo function */
+    POINT *pts = HeapAlloc(GetProcessHeap(), 0, (cpt + 1) * sizeof(*apt));
+    if (!pts)
+    {
+        SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+        return FALSE;
+    }
+
+    if (GetCurrentPositionEx(hdc, &pt1))
+    {
+        pts[0] = pt1;
+        memcpy(&pts[1], apt, sizeof(*apt) * cpt);
+        cpt++;
+        ret = NtGdiPolyPolyDraw(hdc, (PPOINT)pts, &cpt, 1, GdiPolyLineTo);
+    }
+
+    HeapFree(GetProcessHeap(), 0, pts);
+
+    return ret;
 }
 
 
@@ -397,7 +461,7 @@ PolyPolyline(
     if (GDI_HANDLE_GET_TYPE(hdc) == GDILoObjType_LO_METADC16_TYPE)
         return FALSE;
 
-    HANDLE_METADC(BOOL, PolyPolyline, FALSE, hdc, apt, asz, csz);
+    HANDLE_EMETAFDC(BOOL, PolyPolyline, FALSE, hdc, apt, asz, csz);
 
     if ( GdiConvertAndCheckDC(hdc) == NULL ) return FALSE;
 
@@ -461,9 +525,9 @@ BitBlt(
         return PatBlt(hdcDest, xDest, yDest, cx, cy, dwRop);
     }
 
-    /* For meta DCs we use StretchBlt */
+    /* For meta DCs we use StretchBlt via emfdc.c */
     HANDLE_METADC(BOOL,
-                  StretchBlt,
+                  BitBlt,
                   FALSE,
                   hdcDest,
                   xDest,
@@ -473,13 +537,11 @@ BitBlt(
                   hdcSrc,
                   xSrc,
                   ySrc,
-                  cx,
-                  cy,
                   dwRop);
 
     if ( GdiConvertAndCheckDC(hdcDest) == NULL ) return FALSE;
 
-    return NtGdiBitBlt(hdcDest, xDest, yDest, cx, cy, hdcSrc, xSrc, ySrc, dwRop, 0, 0);
+    return NtGdiBitBlt(hdcDest, xDest, yDest, cx, cy, hdcSrc, xSrc, ySrc, dwRop, CLR_INVALID, 0);
 }
 
 BOOL
@@ -494,7 +556,7 @@ PatBlt(
 {
     PDC_ATTR pdcattr;
 
-    HANDLE_METADC(BOOL, PatBlt, FALSE, hdc, nXLeft, nYLeft, nWidth, nHeight, dwRop);
+    HANDLE_EMETAFDC(BOOL, PatBlt, FALSE, hdc, nXLeft, nYLeft, nWidth, nHeight, dwRop);
 
     if ( GdiConvertAndCheckDC(hdc) == NULL ) return FALSE;
 
@@ -663,7 +725,7 @@ StretchBlt(
                            cxSrc,
                            cySrc,
                            dwRop,
-                           0);
+                           CLR_INVALID);
 }
 
 
@@ -686,7 +748,7 @@ MaskBlt(
     _In_ INT yMask,
     _In_ DWORD dwRop)
 {
-    HANDLE_METADC(BOOL,
+    HANDLE_EMETAFDC(BOOL,
                   MaskBlt,
                   FALSE,
                   hdcDest,
@@ -716,7 +778,7 @@ MaskBlt(
                         xMask,
                         yMask,
                         dwRop,
-                        GetBkColor(hdcSrc));
+                        CLR_INVALID);
 }
 
 
@@ -737,7 +799,7 @@ PlgBlt(
     _In_ INT xMask,
     _In_ INT yMask)
 {
-    HANDLE_METADC(BOOL,
+    HANDLE_EMETAFDC(BOOL,
                   PlgBlt,
                   FALSE,
                   hdcDest,
@@ -763,7 +825,7 @@ PlgBlt(
                        hbmMask,
                        xMask,
                        yMask,
-                       GetBkColor(hdcSrc));
+                       CLR_INVALID);
 }
 
 BOOL
@@ -785,7 +847,7 @@ GdiAlphaBlend(
 
     if (GDI_HANDLE_GET_TYPE(hdcSrc) == GDI_OBJECT_TYPE_METADC) return FALSE;
 
-    HANDLE_METADC(BOOL,
+    HANDLE_EMETAFDC(BOOL,
                   AlphaBlend,
                   FALSE,
                   hdcDst,
@@ -835,7 +897,7 @@ GdiTransparentBlt(
     _In_ INT cySrc,
     _In_ UINT crTransparent)
 {
-    HANDLE_METADC(BOOL,
+    HANDLE_EMETAFDC(BOOL,
                   TransparentBlt,
                   FALSE,
                   hdcDst,
@@ -868,7 +930,9 @@ GdiGradientFill(
     _In_ ULONG nCount,
     _In_ ULONG ulMode)
 {
-    HANDLE_METADC(BOOL, GradientFill, FALSE, hdc, pVertex, nVertex, pMesh, nCount, ulMode);
+    if (GDI_HANDLE_GET_TYPE(hdc) == GDILoObjType_LO_METADC16_TYPE) return TRUE;
+
+    HANDLE_EMETAFDC(BOOL, GradientFill, FALSE, hdc, pVertex, nVertex, pMesh, nCount, ulMode);
 
     if ( GdiConvertAndCheckDC(hdc) == NULL ) return FALSE;
 

@@ -21,13 +21,13 @@ $if (_WDMDDK_)
 
 #define PROCESS_DUP_HANDLE               (0x0040)
 
-#if (NTDDI_VERSION >= NTDDI_VISTA)
+#if (NTDDI_VERSION >= NTDDI_VISTA) || defined(__REACTOS__)
 #define PROCESS_ALL_ACCESS  (STANDARD_RIGHTS_REQUIRED | SYNCHRONIZE | 0xFFFF)
 #else
 #define PROCESS_ALL_ACCESS  (STANDARD_RIGHTS_REQUIRED | SYNCHRONIZE | 0xFFF)
 #endif
 
-#if (NTDDI_VERSION >= NTDDI_VISTA)
+#if (NTDDI_VERSION >= NTDDI_VISTA) || defined(__REACTOS__)
 #define THREAD_ALL_ACCESS   (STANDARD_RIGHTS_REQUIRED | SYNCHRONIZE | 0xFFFF)
 #else
 #define THREAD_ALL_ACCESS   (STANDARD_RIGHTS_REQUIRED | SYNCHRONIZE | 0x3FF)
@@ -319,6 +319,28 @@ typedef enum _THREADINFOCLASS {
   ThreadUmsInformation,
   ThreadCounterProfiling,
   ThreadIdealProcessorEx,
+  ThreadCpuAccountingInformation, // 6.2
+  ThreadSuspendCount,             // 6.3
+  ThreadHeterogeneousCpuPolicy,   // 10.0+
+  ThreadContainerId,
+  ThreadNameInformation,
+  ThreadSelectedCpuSets,
+  ThreadSystemThreadInformation,
+  ThreadActualGroupAffinity,
+  ThreadDynamicCodePolicyInfo,
+  ThreadExplicitCaseSensitivity,
+  ThreadWorkOnBehalfTicket,
+  ThreadSubsystemInformation,
+  ThreadDbgkWerReportActive,
+  ThreadAttachContainer,
+  ThreadManageWritesToExecutableMemory,
+  ThreadPowerThrottlingState,
+  ThreadWorkloadClass,
+  ThreadCreateStateChange,
+  ThreadApplyStateChange,
+  ThreadStrongerBadHandleChecks,
+  ThreadEffectiveIoPriority,
+  ThreadEffectivePagePriority,
   MaxThreadInfoClass
 } THREADINFOCLASS;
 

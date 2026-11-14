@@ -49,36 +49,14 @@ GetPartitionTypeString(
     }
     else
     {
-        UINT i;
-
         /* Do the table lookup */
-        if (PartEntry->DiskEntry->DiskStyle == PARTITION_STYLE_MBR)
+        PCSTR Description = LookupPartitionTypeString(PartEntry->DiskEntry->DiskStyle,
+                                                      &PartEntry->PartitionType);
+        if (Description)
         {
-            for (i = 0; i < ARRAYSIZE(MbrPartitionTypes); ++i)
-            {
-                if (PartEntry->PartitionType == MbrPartitionTypes[i].Type)
-                {
-                    RtlStringCchCopyA(strBuffer, cchBuffer,
-                                      MbrPartitionTypes[i].Description);
-                    return;
-                }
-            }
+            RtlStringCchCopyA(strBuffer, cchBuffer, Description);
+            return;
         }
-#if 0 // TODO: GPT support!
-        else if (PartEntry->DiskEntry->DiskStyle == PARTITION_STYLE_GPT)
-        {
-            for (i = 0; i < ARRAYSIZE(GptPartitionTypes); ++i)
-            {
-                if (IsEqualPartitionType(PartEntry->PartitionType,
-                                         GptPartitionTypes[i].Guid))
-                {
-                    RtlStringCchCopyA(strBuffer, cchBuffer,
-                                      GptPartitionTypes[i].Description);
-                    return;
-                }
-            }
-        }
-#endif
 
         /* We are here because the partition type is unknown */
         if (cchBuffer > 0) *strBuffer = '\0';
@@ -154,9 +132,10 @@ PartitionDescription(
     size_t cchBufferSize = cchBuffer;
     ULONGLONG PartSize;
     PCSTR Unit;
+    PVOLINFO VolInfo = (PartEntry->Volume ? &PartEntry->Volume->Info : NULL);
 
     /* Get the partition size */
-    PartSize = PartEntry->SectorCount.QuadPart * PartEntry->DiskEntry->BytesPerSector;
+    PartSize = GetPartEntrySizeInBytes(PartEntry);
     PrettifySize2(&PartSize, &Unit);
 
     if (PartEntry->IsPartitioned == FALSE)
@@ -204,8 +183,8 @@ PartitionDescription(
     RtlStringCchPrintfExA(pBuffer, cchBufferSize,
                           &pBuffer, &cchBufferSize, 0,
                           "%c%c %c %s(%lu) ",
-                          (PartEntry->DriveLetter == 0) ? '-' : (CHAR)PartEntry->DriveLetter,
-                          (PartEntry->DriveLetter == 0) ? '-' : ':',
+                          !(VolInfo && VolInfo->DriveLetter) ? '-' : (CHAR)VolInfo->DriveLetter,
+                          !(VolInfo && VolInfo->DriveLetter) ? '-' : ':',
                           PartEntry->BootIndicator ? '*' : ' ',
                           PartEntry->LogicalPartition ? "  " : "", // Optional indentation
                           PartEntry->PartitionNumber);
@@ -215,16 +194,15 @@ PartitionDescription(
      * (if any) and the file system name. Otherwise, display the partition
      * type if it's not a new partition.
      */
-    if (!PartEntry->New && *PartEntry->FileSystem &&
-        _wcsicmp(PartEntry->FileSystem, L"RAW") != 0)
+    if (VolInfo && IsFormatted(VolInfo))
     {
         size_t cchLabelSize = 0;
-        if (*PartEntry->VolumeLabel)
+        if (*VolInfo->VolumeLabel)
         {
             RtlStringCchPrintfExA(pBuffer, cchBufferSize,
                                   &pBuffer, &cchLabelSize, 0,
                                   "\"%-.11S\" ",
-                                  PartEntry->VolumeLabel);
+                                  VolInfo->VolumeLabel);
             cchLabelSize = cchBufferSize - cchLabelSize; // Actual length of the label part.
             cchBufferSize -= cchLabelSize; // And reset cchBufferSize to what it should be.
         }
@@ -237,7 +215,7 @@ PartitionDescription(
                               /* The minimum length can be at most 11 since
                                * cchLabelSize can be at most == 11 + 3 == 14 */
                               25 - min(cchLabelSize, 25),
-                              PartEntry->FileSystem);
+                              VolInfo->FileSystem);
     }
     else
     {
@@ -275,7 +253,7 @@ PartitionDescription(
     /* Show the remaining free space only if a FS is mounted */
     // FIXME: We don't support that yet!
 #if 0
-    if (*PartEntry->FileSystem)
+    if (VolInfo && *VolInfo->FileSystem)
     {
         RtlStringCchPrintfA(pBuffer, cchBufferSize,
                             "%*s%6I64u %s (%6I64u %s %s)",
@@ -307,7 +285,7 @@ DiskDescription(
     PCSTR Unit;
 
     /* Get the disk size */
-    DiskSize = DiskEntry->SectorCount.QuadPart * DiskEntry->BytesPerSector;
+    DiskSize = GetDiskSizeInBytes(DiskEntry);
     PrettifySize1(&DiskSize, &Unit);
 
     //
@@ -316,7 +294,7 @@ DiskDescription(
     if (DiskEntry->DriverName.Length > 0)
     {
         RtlStringCchPrintfA(strBuffer, cchBuffer,
-                            MUIGetString(STRING_HDDINFO_1),
+                            MUIGetString(STRING_HDDINFO1),
                             DiskSize,
                             Unit,
                             DiskEntry->DiskNumber,
@@ -331,7 +309,7 @@ DiskDescription(
     else
     {
         RtlStringCchPrintfA(strBuffer, cchBuffer,
-                            MUIGetString(STRING_HDDINFO_2),
+                            MUIGetString(STRING_HDDINFO2),
                             DiskSize,
                             Unit,
                             DiskEntry->DiskNumber,
@@ -696,7 +674,7 @@ DrawPartitionList(
     coPos.X = ListUi->Left;
     coPos.Y = ListUi->Top;
     FillConsoleOutputCharacterA(StdOutput,
-                                0xDA, // '+',
+                                CharUpperLeftCorner, // '+',
                                 1,
                                 coPos,
                                 &Written);
@@ -707,7 +685,7 @@ DrawPartitionList(
     if (ListUi->Offset == 0)
     {
         FillConsoleOutputCharacterA(StdOutput,
-                                    0xC4, // '-',
+                                    CharHorizontalLine, // '-',
                                     Width,
                                     coPos,
                                     &Written);
@@ -715,19 +693,23 @@ DrawPartitionList(
     else
     {
         FillConsoleOutputCharacterA(StdOutput,
-                                    0xC4, // '-',
+                                    CharHorizontalLine, // '-',
                                     Width - 4,
                                     coPos,
                                     &Written);
-        coPos.X = ListUi->Right - 5;
-        WriteConsoleOutputCharacterA(StdOutput,
-                                     "(\x18)", // "(up)"
-                                     3,
-                                     coPos,
-                                     &Written);
+        {
+            CHAR szBuff[] = "(.)"; // "(up)"
+            szBuff[1] = CharUpArrow;
+            coPos.X = ListUi->Right - 5;
+            WriteConsoleOutputCharacterA(StdOutput,
+                                         szBuff,
+                                         3,
+                                         coPos,
+                                         &Written);
+        }
         coPos.X = ListUi->Right - 2;
         FillConsoleOutputCharacterA(StdOutput,
-                                    0xC4, // '-',
+                                    CharHorizontalLine, // '-',
                                     2,
                                     coPos,
                                     &Written);
@@ -737,7 +719,7 @@ DrawPartitionList(
     coPos.X = ListUi->Right;
     coPos.Y = ListUi->Top;
     FillConsoleOutputCharacterA(StdOutput,
-                                0xBF, // '+',
+                                CharUpperRightCorner, // '+',
                                 1,
                                 coPos,
                                 &Written);
@@ -748,14 +730,14 @@ DrawPartitionList(
         coPos.X = ListUi->Left;
         coPos.Y = i;
         FillConsoleOutputCharacterA(StdOutput,
-                                    0xB3, // '|',
+                                    CharVerticalLine, // '|',
                                     1,
                                     coPos,
                                     &Written);
 
         coPos.X = ListUi->Right;
         FillConsoleOutputCharacterA(StdOutput,
-                                    0xB3, //'|',
+                                    CharVerticalLine, //'|',
                                     1,
                                     coPos,
                                     &Written);
@@ -765,7 +747,7 @@ DrawPartitionList(
     coPos.X = ListUi->Left;
     coPos.Y = ListUi->Bottom;
     FillConsoleOutputCharacterA(StdOutput,
-                                0xC0, // '+',
+                                CharLowerLeftCorner, // '+',
                                 1,
                                 coPos,
                                 &Written);
@@ -776,7 +758,7 @@ DrawPartitionList(
     if (LastLine - ListUi->Offset <= Height)
     {
         FillConsoleOutputCharacterA(StdOutput,
-                                    0xC4, // '-',
+                                    CharHorizontalLine, // '-',
                                     Width,
                                     coPos,
                                     &Written);
@@ -784,19 +766,23 @@ DrawPartitionList(
     else
     {
         FillConsoleOutputCharacterA(StdOutput,
-                                    0xC4, // '-',
+                                    CharHorizontalLine, // '-',
                                     Width - 4,
                                     coPos,
                                     &Written);
-        coPos.X = ListUi->Right - 5;
-        WriteConsoleOutputCharacterA(StdOutput,
-                                     "(\x19)", // "(down)"
-                                     3,
-                                     coPos,
-                                     &Written);
+        {
+            CHAR szBuff[] = "(.)"; // "(down)"
+            szBuff[1] = CharDownArrow;
+            coPos.X = ListUi->Right - 5;
+            WriteConsoleOutputCharacterA(StdOutput,
+                                         szBuff,
+                                         3,
+                                         coPos,
+                                         &Written);
+        }
        coPos.X = ListUi->Right - 2;
        FillConsoleOutputCharacterA(StdOutput,
-                                   0xC4, // '-',
+                                   CharHorizontalLine, // '-',
                                    2,
                                    coPos,
                                    &Written);
@@ -806,7 +792,7 @@ DrawPartitionList(
     coPos.X = ListUi->Right;
     coPos.Y = ListUi->Bottom;
     FillConsoleOutputCharacterA(StdOutput,
-                                0xD9, // '+',
+                                CharLowerRightCorner, // '+',
                                 1,
                                 coPos,
                                 &Written);
@@ -825,28 +811,22 @@ DrawPartitionList(
     }
 }
 
+/**
+ * @param[in]   Direction
+ * TRUE or FALSE to scroll to the next (down) or previous (up) entry, respectively.
+ **/
 VOID
-ScrollDownPartitionList(
-    IN PPARTLIST_UI ListUi)
+ScrollUpDownPartitionList(
+    _In_ PPARTLIST_UI ListUi,
+    _In_ BOOLEAN Direction)
 {
-    PPARTENTRY NextPart = GetNextPartition(ListUi->List, ListUi->CurrentPartition);
-    if (NextPart)
+    PPARTENTRY PartEntry =
+        (Direction ? GetNextPartition
+                   : GetPrevPartition)(ListUi->List, ListUi->CurrentPartition);
+    if (PartEntry)
     {
-        ListUi->CurrentPartition = NextPart;
-        ListUi->CurrentDisk = NextPart->DiskEntry;
-        DrawPartitionList(ListUi);
-    }
-}
-
-VOID
-ScrollUpPartitionList(
-    IN PPARTLIST_UI ListUi)
-{
-    PPARTENTRY PrevPart = GetPrevPartition(ListUi->List, ListUi->CurrentPartition);
-    if (PrevPart)
-    {
-        ListUi->CurrentPartition = PrevPart;
-        ListUi->CurrentDisk = PrevPart->DiskEntry;
+        ListUi->CurrentPartition = PartEntry;
+        ListUi->CurrentDisk = PartEntry->DiskEntry;
         DrawPartitionList(ListUi);
     }
 }

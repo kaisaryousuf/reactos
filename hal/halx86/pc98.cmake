@@ -13,12 +13,14 @@ list(APPEND HAL_PC98_SOURCE
     generic/dma.c
     generic/drive.c
     generic/halinit.c
+    generic/kdpci.c
     generic/memory.c
     generic/misc.c
     generic/nmi.c
     generic/portio.c
     generic/sysinfo.c
-    generic/usage.c)
+    generic/usage.c
+    generic/x86bios.c)
 
 list(APPEND HAL_PC98_ASM_SOURCE
     generic/v86.S)
@@ -32,6 +34,7 @@ list(APPEND HAL_PC98_SOURCE
     pic/processor.c)
 
 list(APPEND HAL_PC98_ASM_SOURCE
+    pc98/delay.S
     generic/trap.S
     pic/pic.S)
 
@@ -50,7 +53,7 @@ list(APPEND HAL_PC98_SOURCE
 
 add_asm_files(lib_hal_pc98_asm ${HAL_PC98_ASM_SOURCE})
 add_library(lib_hal_pc98 OBJECT ${HAL_PC98_SOURCE} ${lib_hal_pc98_asm})
-add_dependencies(lib_hal_pc98 bugcodes xdk asm)
 #add_pch(lib_hal_pc98 pc98/halpc98.h)
-
+add_dependencies(lib_hal_pc98 bugcodes xdk asm)
 target_compile_definitions(lib_hal_pc98 PRIVATE SARCH_PC98)
+target_link_libraries(lib_hal_pc98 PRIVATE fast486)

@@ -157,6 +157,7 @@ BEGIN
             TVS_LINESATROOT | TVS_DISABLEDRAGDROP, 8, 151, 236, 68
     LTEXT "Některé služby závisí na jiných službách, systémových ovladačích nebo načítají jiné skupiny služeb. Zastavené nebo nesprávně fungující součásti systému mohou ovlivnit závislé služby.", IDC_STATIC, 8, 7, 238, 26
     LTEXT "Tato služba závisí na následujících součástech:", IDC_STATIC, 8, 57, 236, 9
+    LTEXT "The following components depend on this service:", IDC_STATIC, 8, 140, 236, 9
     LTEXT "", IDC_DEPEND_SERVICE, 8, 38, 236, 13
 END
 
@@ -280,7 +281,7 @@ END
 
 STRINGTABLE
 BEGIN
-    IDS_HELP_OPTIONS "MOŽNOSTI VYTVOŘENÍ:\r\nPOZNÁMKA: Jméno parametru zahrnuje i znak rovnítko.\r\n type= <own|share|interact|kernel|filesys|rec>\r\n       (výchozí = own)\r\n start= <boot|system|auto|demand|disabled>\r\n       (výchozí = demand) \r\n error= <normal|severe|critical|ignore>\r\n       (výchozí = normal)\r\n group= <SkupinaPořadíNačtení>\r\n tag= <yes|no>\r\n depend= <Závislosti(oddělené / (lomítko))>\r\n obj= <JménoÚčtu|JménoObjektu>\r\n       (výchozí = LocalSystem)\r\n password= <heslo>\r\n"
+    IDS_HELP_OPTIONS "MOŽNOSTI VYTVOŘENÍ:\nPOZNÁMKA: Jméno parametru zahrnuje i znak rovnítko.\n type= <own|share|interact|kernel|filesys|rec>\n       (výchozí = own)\n start= <boot|system|auto|demand|disabled>\n       (výchozí = demand)\n error= <normal|severe|critical|ignore>\n       (výchozí = normal)\n group= <SkupinaPořadíNačtení>\n tag= <yes|no>\n depend= <Závislosti(oddělené / (lomítko))>\n obj= <JménoÚčtu|JménoObjektu>\n       (výchozí = LocalSystem)\n password= <heslo>\n"
 END
 
 /* Hints */

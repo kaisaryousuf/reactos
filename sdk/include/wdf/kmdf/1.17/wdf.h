@@ -40,7 +40,7 @@ Revision History:
 #endif
 
 // reactos start
-#include <psdk/sal.h>
+#include <sal.h>
 #include <section_attribs.h>
 #define STDCALL __stdcall
 // reactos end
@@ -65,7 +65,7 @@ WDF_EXTERN_C_START
 //
 #define WdfFunctions WdfFunctions_01017
 
-typedef VOID (*WDFFUNC) (VOID);
+typedef VOID (NTAPI *WDFFUNC) (VOID);
 extern const WDFFUNC *WdfFunctions;
 extern WDFFUNC WdfDriverMiniportUnloadOverride;
 

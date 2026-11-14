@@ -29,7 +29,7 @@ WINE_DEFAULT_DEBUG_CHANNEL (shell);
 
 static shvheader PrinterSFHeader[] = {
     {IDS_SHV_COLUMN_NAME, SHCOLSTATE_TYPE_STR | SHCOLSTATE_ONBYDEFAULT, LVCFMT_LEFT, 15},
-    {IDS_SHV_COLUMN_DOCUMENTS , SHCOLSTATE_TYPE_STR | SHCOLSTATE_ONBYDEFAULT, LVCFMT_LEFT, 15},
+    {IDS_SHV_COLUMN_DOCUMENTS, SHCOLSTATE_TYPE_INT | SHCOLSTATE_ONBYDEFAULT, LVCFMT_LEFT, 15},
     {IDS_SHV_COLUMN_STATUS, SHCOLSTATE_TYPE_STR | SHCOLSTATE_ONBYDEFAULT, LVCFMT_LEFT, 15},
     {IDS_SHV_COLUMN_COMMENTS, SHCOLSTATE_TYPE_STR | SHCOLSTATE_ONBYDEFAULT, LVCFMT_LEFT, 15},
     {IDS_SHV_COLUMN_LOCATION, SHCOLSTATE_TYPE_STR | SHCOLSTATE_ONBYDEFAULT, LVCFMT_LEFT, 15},
@@ -102,17 +102,28 @@ static LPITEMIDLIST _ILCreatePrinterItem(PRINTER_INFO_4W *pi)
     PIDLPrinterStruct * p;
     int size0 = (char*)&tmp.u.cprinter.szName - (char*)&tmp.u.cprinter;
     int size = size0;
+    SIZE_T cchPrinterName = 0;
+    SIZE_T cchServerName = 0;
+
+    if (pi->pPrinterName)
+        cchPrinterName = wcslen(pi->pPrinterName);
+    if (pi->pServerName)
+        cchServerName = wcslen(pi->pServerName);
+    if ((cchPrinterName + cchServerName) > (MAXUSHORT - 2))
+    {
+        return NULL;
+    }
 
     tmp.type = 0x00;
     tmp.u.cprinter.dummy = 0xFF;
     if (pi->pPrinterName)
-        tmp.u.cprinter.offsServer = wcslen(pi->pPrinterName) + 1;
+        tmp.u.cprinter.offsServer = cchPrinterName + 1;
     else
         tmp.u.cprinter.offsServer = 1;
 
     size += tmp.u.cprinter.offsServer * sizeof(WCHAR);
     if (pi->pServerName)
-        size += (wcslen(pi->pServerName) + 1) * sizeof(WCHAR);
+        size += (cchServerName + 1) * sizeof(WCHAR);
     else
         size += sizeof(WCHAR);
 
@@ -312,6 +323,21 @@ HRESULT WINAPI CPrinterFolder::GetAttributesOf(UINT cidl, PCUITEMID_CHILD_ARRAY 
     return hr;
 }
 
+HRESULT CPrinterFolder::_AssocCreate(REFIID riid, PVOID *ppvObj)
+{
+    IQueryAssociations *pAssoc;
+    HRESULT hr = ::AssocCreate(CLSID_QueryAssociations, IID_PPV_ARG(IQueryAssociations, &pAssoc));
+    if (FAILED_UNEXPECTEDLY(hr))
+        return hr;
+
+    hr = pAssoc->Init(ASSOCF_NONE, L"Printers", NULL, NULL);
+    if (SUCCEEDED(hr))
+        hr = pAssoc->QueryInterface(riid, ppvObj);
+
+    pAssoc->Release();
+    return hr;
+}
+
 /**************************************************************************
  *    CPrinterFolder::GetUIObjectOf
  *
@@ -340,6 +366,8 @@ HRESULT WINAPI CPrinterFolder::GetUIObjectOf(HWND hwndOwner, UINT cidl, PCUITEMI
 
     if ((IsEqualIID (riid, IID_IExtractIconA) || IsEqualIID(riid, IID_IExtractIconW)) && cidl == 1)
         hr = CPrintersExtractIconW_CreateInstane(apidl[0], riid, &pObj);
+    else if (IsEqualIID(riid, IID_IQueryAssociations))
+        hr = _AssocCreate(riid, &pObj);
     else
         hr = E_NOINTERFACE;
 
@@ -413,19 +441,14 @@ HRESULT WINAPI CPrinterFolder::EnumSearches(IEnumExtraSearch **ppenum)
 
 HRESULT WINAPI CPrinterFolder::GetDefaultColumn(DWORD dwRes, ULONG *pSort, ULONG *pDisplay)
 {
-    if (pSort)
-        *pSort = 0;
-    if (pDisplay)
-        *pDisplay = 0;
-
-    return S_OK;
+    return E_NOTIMPL; // Not required when column 0 is our default.
 }
 
-HRESULT WINAPI CPrinterFolder::GetDefaultColumnState(UINT iColumn, DWORD *pcsFlags)
+HRESULT WINAPI CPrinterFolder::GetDefaultColumnState(UINT iColumn, SHCOLSTATEF *pcsFlags)
 {
     if (!pcsFlags || iColumn >= PrinterSHELLVIEWCOLUMNS)
         return E_INVALIDARG;
-    *pcsFlags = PrinterSFHeader[iColumn].pcsFlags;
+    *pcsFlags = PrinterSFHeader[iColumn].colstate;
     return S_OK;
 
 }
@@ -442,7 +465,7 @@ HRESULT WINAPI CPrinterFolder::GetDetailsOf(PCUITEMID_CHILD pidl, UINT iColumn, 
     TRACE("(%p)->(%p %i %p): stub\n", this, pidl, iColumn, psd);
 
     if (iColumn >= PrinterSHELLVIEWCOLUMNS)
-        return E_FAIL;
+        return E_NOTIMPL;
 
     psd->fmt = PrinterSFHeader[iColumn].fmt;
     psd->cxChar = PrinterSFHeader[iColumn].cxChar;
@@ -495,6 +518,8 @@ HRESULT WINAPI CPrinterFolder::GetCurFolder(PIDLIST_ABSOLUTE * pidl)
 {
     TRACE ("(%p)->(%p)\n", this, pidl);
 
-    *pidl = ILClone (pidlRoot);
-    return S_OK;
+    if (pidlRoot)
+        return SHILClone(pidlRoot, pidl);
+    *pidl = NULL;
+    return S_FALSE;
 }

@@ -2,6 +2,8 @@
 #include "precomp.h"
 #include <versionhelpers.h>
 
+#include <pseh/pseh2.h>
+
 static BOOL IsBroken = FALSE;
 
 void
@@ -598,10 +600,10 @@ Test_RtlFindLongestRunClear(void)
 }
 
 
-START_TEST(RtlBitmap)
+START_TEST(RtlBitmapApi)
 {
     /* Windows 2003 has broken bitmap code that modifies the buffer */
-    if (!IsWindows7OrGreater() && !IsReactOS())
+    if (!IsWindowsVistaOrGreater() && !IsReactOS())
     {
         IsBroken = TRUE;
     }

@@ -1,9 +1,8 @@
 /*
- * COPYRIGHT:       See COPYING in the top level directory
- * PROJECT:         ReactOS Drivers
- * PURPOSE:         Kernel Security Support Provider Interface Driver
- *
- * PROGRAMMERS:     Timo Kreuzer (timo.kreuzer@reactos.org)
+ * PROJECT:     ReactOS Kernel Security Support Provider Interface Driver
+ * LICENSE:     MIT (https://spdx.org/licenses/MIT)
+ * PURPOSE:     Random number generation and entropy gathering
+ * COPYRIGHT:   Copyright 2014-2017 Timo Kreuzer <timo.kreuzer@reactos.org>
  */
 
 /* INCLUDES *******************************************************************/
@@ -79,13 +78,20 @@ KsecReadMachineSpecificCounters(
 #elif defined(_M_ARM)
     /* Read the Cycle Counter Register */
     MachineSpecificCounters->Ccr = _MoveFromCoprocessor(CP15_PMCCNTR);
+#elif defined(_M_ARM64)
+    /* Read the virtual count of the generic timer */
+#ifdef _MSC_VER
+    MachineSpecificCounters->Cntvct = _ReadStatusReg(ARM64_CNTVCT);
+#else
+    __asm__ __volatile__("mrs %0, cntvct_el0" : "=r"(MachineSpecificCounters->Cntvct));
+#endif
 #else
     #error Implement me!
 #endif
 }
 
 /*!
- *  \see http://blogs.msdn.com/b/michael_howard/archive/2005/01/14/353379.aspx
+ *  \see http://blogs.msdn.com/b/michael_howard/archive/2005/01/14/353379.aspx (DEAD_LINK)
  */
 NTSTATUS
 NTAPI

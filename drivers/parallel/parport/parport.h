@@ -15,9 +15,6 @@
 
 #include "hardware.h"
 
-//#define NDEBUG
-#include <debug.h>
-
 typedef enum
 {
     dsStopped,
@@ -108,10 +105,6 @@ FdoPower(IN PDEVICE_OBJECT DeviceObject,
 
 
 /* misc.c */
-
-NTSTATUS
-ForwardIrpAndWait(IN PDEVICE_OBJECT DeviceObject,
-                  IN PIRP Irp);
 
 DRIVER_DISPATCH ForwardIrpAndForget;
 

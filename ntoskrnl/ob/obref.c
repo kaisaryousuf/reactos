@@ -15,8 +15,6 @@
 #define NDEBUG
 #include <debug.h>
 
-extern ULONG ObpAccessProtectCloseBit;
-
 /* PRIVATE FUNCTIONS *********************************************************/
 
 BOOLEAN
@@ -265,8 +263,7 @@ ObReferenceFileObjectForWrite(IN HANDLE Handle,
 
             HandleInformation->GrantedAccess = GrantedAccess;
 
-            /* FIXME: Get handle attributes */
-            HandleInformation->HandleAttributes = 0;
+            HandleInformation->HandleAttributes = HandleEntry->ObAttributes & OBJ_HANDLE_ATTRIBUTES;
 
             /* Do granted and desired access match? */
             if (GrantedAccess & DesiredAccess)

@@ -703,7 +703,7 @@ LdrpWalkImportDescriptor(IN LPWSTR DllPath OPTIONAL,
                 DPFLTR_WARNING_LEVEL,
                 "LDR: LdrpWalkImportDescriptor() failed to probe %wZ for its "
                 "manifest, ntstatus = 0x%08lx\n",
-                &LdrEntry->FullDllName, Status);
+                &LdrEntry->FullDllName, Status2);
         }
     }
 
@@ -876,26 +876,13 @@ LdrpLoadImportModule(IN PWSTR DllPath OPTIONAL,
     }
 
     /* Check if the SxS Assemblies specify another file */
-    Status = RtlDosApplyFileIsolationRedirection_Ustr(TRUE,
-                                                      ImpDescName,
-                                                      &LdrApiDefaultExtension,
-                                                      NULL,
-                                                      &RedirectedImpDescName,
-                                                      &ImpDescName,
-                                                      NULL,
-                                                      NULL,
-                                                      NULL);
+    Status = LdrpApplyFileNameRedirection(
+        ImpDescName, &LdrApiDefaultExtension, NULL, &RedirectedImpDescName, &ImpDescName, &RedirectedDll);
 
-    /* Check success */
-    if (NT_SUCCESS(Status))
-    {
-        /* Let Ldrp know */
-        RedirectedDll = TRUE;
-    }
-    else if (Status != STATUS_SXS_KEY_NOT_FOUND)
+    if (!NT_SUCCESS(Status))
     {
         /* Unrecoverable SxS failure */
-        DPRINT1("LDR: RtlDosApplyFileIsolationRedirection_Ustr failed  with status %x for dll %wZ\n", Status, ImpDescName);
+        DPRINT1("LDR: LdrpApplyFileNameRedirection failed  with status %x for dll %wZ\n", Status, ImpDescName);
         goto done;
     }
 
@@ -974,7 +961,7 @@ LdrpSnapThunk(IN PVOID ExportBase,
     UNICODE_STRING TempUString;
     ANSI_STRING ForwarderName;
     PANSI_STRING ForwardName;
-    PVOID ForwarderHandle;
+    PVOID ForwarderHandle = NULL;
     ULONG ForwardOrdinal;
 
     /* Check if the snap is by ordinal */
@@ -1025,6 +1012,13 @@ LdrpSnapThunk(IN PVOID ExportBase,
     if ((ULONG)Ordinal >= ExportDirectory->NumberOfFunctions)
     {
 FailurePath:
+        /* Check if we loeaded a forwarder DLL */
+        if (ForwarderHandle != NULL)
+        {
+            /* Unload the forwarder DLL */
+            LdrUnloadDll(ForwarderHandle);
+        }
+
         /* Is this a static snap? */
         if (Static)
         {
@@ -1151,23 +1145,13 @@ FailurePath:
                 RtlInitEmptyUnicodeString(&StaticString, StringBuffer, sizeof(StringBuffer));
 
                 /* Check if the SxS Assemblies specify another file */
-                Status = RtlDosApplyFileIsolationRedirection_Ustr(TRUE,
-                                                                  &TempUString,
-                                                                  &LdrApiDefaultExtension,
-                                                                  &StaticString,
-                                                                  NULL,
-                                                                  &RedirectedImportName,
-                                                                  NULL,
-                                                                  NULL,
-                                                                  NULL);
-                if (NT_SUCCESS(Status))
+                Status = LdrpApplyFileNameRedirection(
+                    &TempUString, &LdrApiDefaultExtension, &StaticString, NULL, &RedirectedImportName, &Redirected);
+
+                if (NT_SUCCESS(Status) && Redirected)
                 {
                     if (ShowSnaps)
-                    {
                         DPRINT1("LDR: %Z got redirected to %wZ\n", &ForwarderName, RedirectedImportName);
-                    }
-                    /* Let Ldrp know */
-                    Redirected = TRUE;
                 }
                 else
                 {

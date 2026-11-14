@@ -42,23 +42,20 @@ PspCatchCriticalBreak(IN PCHAR Message,
             /* If a debugger isn't present, don't prompt */
             if (KdDebuggerNotPresent) break;
 
-            /* A debuger is active, prompt for action */
-            DbgPrompt("Break, or Ignore (bi)?", Action, sizeof(Action));
+            /* A debugger is active, prompt for action */
+            DbgPrompt("Break, or Ignore (bi)? ", Action, sizeof(Action));
             switch (Action[0])
             {
                 /* Break */
                 case 'B': case 'b':
-
-                    /* Do a breakpoint */
                     DbgBreakPoint();
+                    /* Fall through */
 
-                /* Ignore */
+                /* Ignore: Handle it */
                 case 'I': case 'i':
-
-                    /* Handle it */
                     Handled = TRUE;
 
-                /* Unrecognized */
+                /* Unrecognized: Prompt again */
                 default:
                     break;
             }
@@ -135,7 +132,7 @@ PsTerminateProcess(IN PEPROCESS Process,
 
 VOID
 NTAPI
-PspShutdownProcessManager(VOID)
+PsShutdownSystem(VOID)
 {
     PEPROCESS Process = NULL;
 
@@ -285,7 +282,7 @@ PspDeleteProcess(IN PVOID ObjectBody)
     if (Process->Job)
     {
         /* Remove the process from the job */
-        PspRemoveProcessFromJob(Process, Process->Job);
+        PspRemoveProcessFromJob(Process);
 
         /* Dereference it */
         ObDereferenceObject(Process->Job);
@@ -381,8 +378,23 @@ PspDeleteProcess(IN PVOID ObjectBody)
     /* Dereference the Device Map */
     ObDereferenceDeviceMap(Process);
 
-    /* Destroy the Quota Block */
-    PspDestroyQuotaBlock(Process);
+#if defined(_WIN64) && defined(BUILD_WOW64_ENABLED)
+    /* Check if this is a WOW64 process */
+    if (Process->Wow64Process && !IS_WOW64_PROCESS_INITIALIZING(Process))
+    {
+        /* Free WOW64_PROCESS structure */
+        ExFreePoolWithTag(Process->Wow64Process, TAG_PS_WOW64);
+
+        PsReturnProcessNonPagedPoolQuota(Process, sizeof(WOW64_PROCESS));
+    }
+#endif
+
+    /*
+     * Dereference the quota block, the function
+     * will invoke a quota block cleanup if the
+     * block itself is no longer used by anybody.
+     */
+    PspDereferenceQuotaBlock(Process, Process->QuotaBlock);
 }
 
 VOID
@@ -415,11 +427,19 @@ PspDeleteThread(IN PVOID ObjectBody)
         }
     }
 
-    /* Cleanup impersionation information */
+    /* Cleanup impersonation information */
     PspDeleteThreadSecurity(Thread);
 
+    /* Free the thread name if set */
+    if (Thread->ThreadName)
+    {
+        ExFreePoolWithTag(Thread->ThreadName, TAG_THREAD_NAME);
+        Thread->ThreadName = NULL;
+    }
+
     /* Make sure the thread was inserted, before continuing */
-    if (!Process) return;
+    if (!Process)
+        return;
 
     /* Check if the thread list is valid */
     if (Thread->ThreadListEntry.Flink)
@@ -622,7 +642,7 @@ PspExitThread(IN NTSTATUS ExitStatus)
         if (KdDebuggerEnabled)
         {
             /* Break to debugger */
-            PspCatchCriticalBreak("Critical  process 0x%p (in %s) exited\n",
+            PspCatchCriticalBreak("Critical process 0x%p (%s) exited\n",
                                   CurrentProcess,
                                   CurrentProcess->ImageFileName);
         }
@@ -776,6 +796,11 @@ PspExitThread(IN NTSTATUS ExitStatus)
         /* Check if the thread is still alive */
         if (!Thread->DeadThread)
         {
+#if (NTDDI_VERSION < NTDDI_LONGHORN)
+            /*
+             * See Geoff's comment on FreeStackOnTermination here.
+             * https://www.geoffchappell.com/studies/windows/km/ntoskrnl/inc/api/pebteb/teb/index.htm
+             */
             /* Check if we need to free its stack */
             if (Teb->FreeStackOnTermination)
             {
@@ -789,7 +814,7 @@ PspExitThread(IN NTSTATUS ExitStatus)
                                     &Dummy,
                                     MEM_RELEASE);
             }
-
+#endif
             /* Free the debug handle */
             if (Teb->DbgSsReserved[1]) ObCloseHandle(Teb->DbgSsReserved[1],
                                                      UserMode);
@@ -848,7 +873,7 @@ PspExitThread(IN NTSTATUS ExitStatus)
         if (CurrentProcess->Job)
         {
             /* Remove the process from the job */
-            PspExitProcessFromJob(CurrentProcess->Job, CurrentProcess);
+            PspExitProcessFromJob(CurrentProcess);
         }
     }
 
@@ -927,7 +952,7 @@ PsExitSpecialApc(IN PKAPC Apc,
     NTSTATUS Status;
     PAGED_CODE();
     PSTRACE(PS_KILL_DEBUG,
-            "Apc: %p SystemArgument2: %p \n", Apc, SystemArgument2);
+            "Apc: %p SystemArgument2: %p\n", Apc, SystemArgument2);
 
     /* Don't do anything unless we are in User-Mode */
     if (Apc->SystemArgument2)
@@ -950,7 +975,7 @@ PspExitNormalApc(IN PVOID NormalContext,
     PKAPC Apc = (PKAPC)SystemArgument1;
     PETHREAD Thread = PsGetCurrentThread();
     PAGED_CODE();
-    PSTRACE(PS_KILL_DEBUG, "SystemArgument2: %p \n", SystemArgument2);
+    PSTRACE(PS_KILL_DEBUG, "SystemArgument2: %p\n", SystemArgument2);
 
     /* This should never happen */
     ASSERT(!(((ULONG_PTR)SystemArgument2) & 1));
@@ -999,7 +1024,7 @@ PspTerminateThreadByPointer(IN PETHREAD Thread,
     if (Thread->BreakOnTermination)
     {
         /* Break to debugger */
-        PspCatchCriticalBreak("Terminating critical thread 0x%p (%s)\n",
+        PspCatchCriticalBreak("Terminating critical thread 0x%p (in %s)\n",
                               Thread,
                               Thread->ThreadsProcess->ImageFileName);
     }
@@ -1119,10 +1144,22 @@ PspExitProcess(IN BOOLEAN LastThread,
             ZwSetTimerResolution(KeMaximumIncrement, 0, &Actual);
         }
 
-        /* Check if we are part of a Job that has a completion port */
-        if ((Process->Job) && (Process->Job->CompletionPort))
+        if (Process->Job)
         {
-            /* FIXME: Check job status code and do I/O completion if needed */
+            ExEnterCriticalRegionAndAcquireResourceExclusive(&Process->Job->JobLock);
+
+            /* Check if we are part of a job that has a completion port
+               and do I/O completion if needed */
+            if (Process->Job->CompletionPort &&
+                !FlagOn(Process->JobStatus, PSP_JOB_NOT_REALLY_ACTIVE))
+            {
+                (VOID)PspSendJobMessageLocked(Process->Job,
+                                              JOB_OBJECT_MSG_EXIT_PROCESS,
+                                              Process->UniqueProcessId,
+                                              FALSE);
+            }
+
+            ExReleaseResourceAndLeaveCriticalRegion(&Process->Job->JobLock);
         }
 
         /* FIXME: Notify the Prefetcher */

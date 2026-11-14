@@ -34,14 +34,14 @@ Pc98HwIdle(VOID)
 VOID
 Pc98PrepareForReactOS(VOID)
 {
-    Pc98DiskPrepareForReactOS();
     Pc98VideoPrepareForReactOS();
     DiskStopFloppyMotor();
     DebugDisableScreenPort();
 }
 
 ULONG
-Pc98GetBootSectorLoadAddress(IN UCHAR DriveNumber)
+Pc98GetBootSectorLoadAddress(
+    _In_ UCHAR DriveNumber)
 {
     PPC98_DISK_DRIVE DiskDrive;
 
@@ -58,7 +58,7 @@ Pc98GetBootSectorLoadAddress(IN UCHAR DriveNumber)
         /* 1.44 MB floppy */
         return 0x1FE00;
     }
-    else if (DiskDrive->Type & DRIVE_FDD)
+    else if (DiskDrive->Type == DRIVE_TYPE_FDD)
     {
         return 0x1FC00;
     }
@@ -118,6 +118,9 @@ MachInit(const char *CmdLine)
 {
     if (!Pc98ArchTest())
     {
+        ERR("This is not a supported PC98!\n");
+
+        /* Disable and halt the CPU */
         _disable();
         __halt();
 
@@ -126,7 +129,7 @@ MachInit(const char *CmdLine)
     }
 
     /* Setup vtbl */
-    RtlZeroMemory(&MachVtbl, sizeof(MACHVTBL));
+    RtlZeroMemory(&MachVtbl, sizeof(MachVtbl));
     MachVtbl.ConsPutChar = Pc98ConsPutChar;
     MachVtbl.ConsKbHit = Pc98ConsKbHit;
     MachVtbl.ConsGetCh = Pc98ConsGetCh;

@@ -32,6 +32,11 @@ INT
 LengthOfStrResource(IN HINSTANCE hInst,
                     IN UINT uID);
 
+INT
+AllocAndLoadString(OUT LPTSTR *lpTarget,
+                   IN HINSTANCE hInst,
+                   IN UINT uID);
+
 DWORD
 LoadAndFormatString(IN HINSTANCE hInstance,
                     IN UINT uID,
@@ -44,5 +49,9 @@ extern HINSTANCE hAppInstance;
 extern HANDLE hAppHeap;
 extern HWND hwndMainConsole;
 extern HWND hwndMDIClient;
+
+/* mscfile.c */
+
+EXTERN_C BOOL HandleRosMscLaunch(PCWSTR pszCmdLine);
 
 #endif /* _MMC_PCH_ */

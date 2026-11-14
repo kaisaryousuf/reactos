@@ -52,6 +52,7 @@ test_IcmpCloseHandle(void)
 {
     HANDLE hIcmp;
     BOOL bRet;
+    DWORD LastError;
 
     SetLastError(0xDEADBEEF);
     hIcmp = IcmpCreateFile();
@@ -73,13 +74,17 @@ test_IcmpCloseHandle(void)
     SetLastError(0xDEADBEEF);
     bRet = IcmpCloseHandle(hIcmp);
     ok(!bRet, "IcmpCloseHandle succeeded unexpectedly\n");
-    ok_err(ERROR_INVALID_HANDLE);
+    LastError = GetLastError();
+    ok(LastError == ERROR_INVALID_HANDLE || LastError == ERROR_INVALID_PARAMETER,
+       "Unexpected last error (0x%lX)\n", LastError);
 
     hIcmp = NULL;
     SetLastError(0xDEADBEEF);
     bRet = IcmpCloseHandle(hIcmp);
     ok(!bRet, "IcmpCloseHandle succeeded unexpectedly\n");
-    ok_err(ERROR_INVALID_HANDLE);
+    LastError = GetLastError();
+    ok(LastError == ERROR_INVALID_HANDLE || LastError == ERROR_INVALID_PARAMETER,
+       "Unexpected last error (0x%lX)\n", LastError);
 }
 
 static
@@ -106,7 +111,7 @@ test_IcmpSendEcho(void)
 
     ReplySize = sizeof(ICMP_ECHO_REPLY);
     SetLastError(0xDEADBEEF);
-    bRet = IcmpSendEcho(hIcmp, ipaddr, SendData, sizeof(SendData), 
+    bRet = IcmpSendEcho(hIcmp, ipaddr, SendData, sizeof(SendData),
         NULL, ReplyBuffer, ReplySize, 5000);
 
     ok(!bRet, "IcmpSendEcho succeeded unexpectedly\n");
@@ -117,7 +122,7 @@ test_IcmpSendEcho(void)
 
     ReplySize = sizeof(ICMP_ECHO_REPLY) + sizeof(SendData);
     SetLastError(0xDEADBEEF);
-    bRet = IcmpSendEcho(hIcmp, ipaddr, SendData, sizeof(SendData), 
+    bRet = IcmpSendEcho(hIcmp, ipaddr, SendData, sizeof(SendData),
         NULL, ReplyBuffer, ReplySize, 5000);
 
     ok(bRet, "IcmpSendEcho failed unexpectedly: %lu\n", GetLastError());

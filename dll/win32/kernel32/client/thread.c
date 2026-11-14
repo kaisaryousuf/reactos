@@ -18,6 +18,8 @@
 
 typedef NTSTATUS (NTAPI *PCSR_CREATE_REMOTE_THREAD)(IN HANDLE ThreadHandle, IN PCLIENT_ID ClientId);
 
+#define THREAD_ALL_ACCESS_NT6 (STANDARD_RIGHTS_REQUIRED|SYNCHRONIZE|0xFFFF)
+
 /* FUNCTIONS ******************************************************************/
 
 NTSTATUS
@@ -50,11 +52,12 @@ BasepNotifyCsrOfThread(IN HANDLE ThreadHandle,
     return STATUS_SUCCESS;
 }
 
-__declspec(noreturn)
+DECLSPEC_NORETURN
 VOID
 WINAPI
-BaseThreadStartup(IN LPTHREAD_START_ROUTINE lpStartAddress,
-                  IN LPVOID lpParameter)
+BaseThreadStartup(
+    _In_ LPTHREAD_START_ROUTINE lpStartAddress,
+    _In_ LPVOID lpParameter)
 {
     /* Attempt to call the Thread Start Address */
     _SEH2_TRY
@@ -67,7 +70,7 @@ BaseThreadStartup(IN LPTHREAD_START_ROUTINE lpStartAddress,
         }
 
         /* Get the exit code from the Thread Start */
-        ExitThread((lpStartAddress)((PVOID)lpParameter));
+        ExitThread(lpStartAddress(lpParameter));
     }
     _SEH2_EXCEPT(UnhandledExceptionFilter(_SEH2_GetExceptionInformation()))
     {
@@ -216,7 +219,7 @@ CreateRemoteThread(IN HANDLE hProcess,
 
     /* Create the Kernel Thread Object */
     Status = NtCreateThread(&hThread,
-                            THREAD_ALL_ACCESS,
+                            THREAD_ALL_ACCESS_NT6,
                             ObjectAttributes,
                             hProcess,
                             &ClientId,
@@ -384,9 +387,10 @@ ExitThread(IN DWORD uExitCode)
 
     /* Notify DLLs and TLS Callbacks of termination */
     LdrShutdownThread();
-
+#if (NTDDI_VERSION < NTDDI_LONGHORN)
     /* Tell the Kernel to free the Stack */
     NtCurrentTeb()->FreeStackOnTermination = TRUE;
+#endif
     NtTerminateThread(NULL, uExitCode);
 
     /* We should never reach this place */
@@ -691,6 +695,64 @@ SetThreadAffinityMask(IN HANDLE hThread,
     return ThreadBasic.AffinityMask;
 }
 
+#define THEONLYGROUP 0 // Fake support for a single group
+
+/*
+ * @implemented
+ */
+BOOL
+WINAPI
+GetThreadGroupAffinity(IN HANDLE hThread,
+                       OUT PGROUP_AFFINITY GroupAffinity)
+{
+    NTSTATUS Status;
+    THREAD_BASIC_INFORMATION ThreadBasic;
+
+    STUB; // FIXME: Real group support
+    Status = NtQueryInformationThread(hThread,
+                                      ThreadBasicInformation,
+                                      &ThreadBasic,
+                                      sizeof(ThreadBasic),
+                                      NULL);
+    if (!NT_SUCCESS(Status))
+    {
+        BaseSetLastNTError(Status);
+        return FALSE;
+    }
+    ZeroMemory(GroupAffinity, sizeof(*GroupAffinity)); // For Reserved
+    GroupAffinity->Mask = ThreadBasic.AffinityMask;
+    GroupAffinity->Group = THEONLYGROUP;
+    return TRUE;
+}
+
+/*
+ * @implemented
+ */
+BOOL
+WINAPI
+SetThreadGroupAffinity(IN HANDLE hThread,
+                       IN const GROUP_AFFINITY *GroupAffinity,
+                       OUT OPTIONAL PGROUP_AFFINITY PreviousGroupAffinity)
+{
+    DWORD_PTR OldMask;
+
+    STUB; // FIXME: Real group support
+    if (!GroupAffinity || GroupAffinity->Group != THEONLYGROUP)
+    {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+
+    OldMask = SetThreadAffinityMask(hThread, GroupAffinity->Mask);
+    if (OldMask && PreviousGroupAffinity)
+    {
+        ZeroMemory(PreviousGroupAffinity, sizeof(*PreviousGroupAffinity)); // For Reserved
+        PreviousGroupAffinity->Mask = OldMask;
+        PreviousGroupAffinity->Group = THEONLYGROUP;
+    }
+    return OldMask != 0;
+}
+
 /*
  * @implemented
  */
@@ -935,8 +997,19 @@ LANGID
 WINAPI
 SetThreadUILanguage(IN LANGID LangId)
 {
+#if (NTDDI_VERSION < NTDDI_LONGHORN)
+    /* We only support LangId == 0, for selecting a language
+     * identifier that best supports the NT Console. */
+    if (LangId != 0)
+    {
+        BaseSetLastNTError(STATUS_NOT_SUPPORTED);
+        return 0;
+    }
+#endif
+
     UNIMPLEMENTED;
-    return (LANGID)NtCurrentTeb()->CurrentLocale;
+
+    return LANGIDFROMLCID(NtCurrentTeb()->CurrentLocale);
 }
 
 /*

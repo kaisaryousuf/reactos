@@ -11,7 +11,7 @@
 class CTaskbarList :
     public CComCoClass<CTaskbarList, &CLSID_TaskbarList>,
     public CComObjectRootEx<CComMultiThreadModelNoCS>,
-    public ITaskbarList2
+    public ITaskbarList4
 {
     HWND m_hTaskWnd;
     UINT m_ShellHookMsg;
@@ -23,16 +23,32 @@ public:
     CTaskbarList();
     virtual ~CTaskbarList();
 
+    /*** ITaskbarList4 methods ***/
+    STDMETHOD(SetTabProperties)(HWND hwnd, STPFLAG stpFlags) override;
+
+    /*** ITaskbarList3 methods ***/
+    STDMETHOD(SetProgressValue)(HWND hwnd, ULONGLONG ullCompleted, ULONGLONG ullTotal) override;
+    STDMETHOD(SetProgressState)(HWND hwnd, TBPFLAG tbpFlags) override;
+    STDMETHOD(RegisterTab)(HWND hwnd, HWND hwndMDI) override;
+    STDMETHOD(UnregisterTab)(HWND hwndTab) override;
+    STDMETHOD(SetTabOrder)(HWND hwndTab, HWND hwndInsertBefore) override;
+    STDMETHOD(SetTabActive)(HWND hwndTab, HWND hwndMDI, DWORD dwReserved) override;
+    STDMETHOD(ThumbBarAddButtons)(HWND hwnd, UINT cButtons, LPTHUMBBUTTON pButton) override;
+    STDMETHOD(ThumbBarUpdateButtons)(HWND hwnd, UINT cButtons, LPTHUMBBUTTON pButton) override;
+    STDMETHOD(ThumbBarSetImageList)(HWND hwnd, HIMAGELIST himl) override;
+    STDMETHOD(SetOverlayIcon)(HWND hwnd, HICON hIcon, LPCWSTR pszDescription) override;
+    STDMETHOD(SetThumbnailTooltip)(HWND hwnd, LPCWSTR pszTip) override;
+    STDMETHOD(SetThumbnailClip)(HWND hwnd, RECT* prcClip) override;
+
     /*** ITaskbarList2 methods ***/
-    virtual HRESULT WINAPI MarkFullscreenWindow(HWND hwnd, BOOL fFullscreen);
+    STDMETHOD(MarkFullscreenWindow)(HWND hwnd, BOOL fFullscreen) override;
 
     /*** ITaskbarList methods ***/
-    virtual HRESULT STDMETHODCALLTYPE HrInit();
-    virtual HRESULT STDMETHODCALLTYPE AddTab(HWND hwnd);
-    virtual HRESULT STDMETHODCALLTYPE DeleteTab(HWND hwnd);
-    virtual HRESULT STDMETHODCALLTYPE ActivateTab(HWND hwnd);
-    virtual HRESULT STDMETHODCALLTYPE SetActiveAlt(HWND hwnd);
-
+    STDMETHOD(HrInit)() override;
+    STDMETHOD(AddTab)(HWND hwnd) override;
+    STDMETHOD(DeleteTab)(HWND hwnd) override;
+    STDMETHOD(ActivateTab)(HWND hwnd) override;
+    STDMETHOD(SetActiveAlt)(HWND hwnd) override;
 
     DECLARE_REGISTRY_RESOURCEID(IDR_TASKBARLIST)
     DECLARE_NOT_AGGREGATABLE(CTaskbarList)
@@ -40,6 +56,8 @@ public:
     DECLARE_PROTECT_FINAL_CONSTRUCT()
 
     BEGIN_COM_MAP(CTaskbarList)
+        COM_INTERFACE_ENTRY_IID(IID_ITaskbarList4, ITaskbarList4)
+        COM_INTERFACE_ENTRY_IID(IID_ITaskbarList3, ITaskbarList3)
         COM_INTERFACE_ENTRY_IID(IID_ITaskbarList2, ITaskbarList2)
         COM_INTERFACE_ENTRY_IID(IID_ITaskbarList, ITaskbarList)
     END_COM_MAP()

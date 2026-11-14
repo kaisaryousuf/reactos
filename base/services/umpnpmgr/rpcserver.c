@@ -22,7 +22,7 @@
  * FILE:             base/services/umpnpmgr/rpcserver.c
  * PURPOSE:          RPC server
  * PROGRAMMER:       Eric Kohl (eric.kohl@reactos.org)
- *                   Hervé Poussineau (hpoussin@reactos.org)
+ *                   HervÃ© Poussineau (hpoussin@reactos.org)
  *                   Colin Finck (colin@reactos.org)
  */
 
@@ -37,7 +37,10 @@
 /* GLOBALS ******************************************************************/
 
 static WCHAR szRootDeviceInstanceID[] = L"HTREE\\ROOT\\0";
+LUID LoadDriverPrivilege = {SE_LOAD_DRIVER_PRIVILEGE, 0};
 
+LIST_ENTRY NotificationListHead;
+RTL_RESOURCE NotificationListLock;
 
 /* FUNCTIONS *****************************************************************/
 
@@ -50,6 +53,9 @@ RpcServerThread(LPVOID lpParameter)
     UNREFERENCED_PARAMETER(lpParameter);
 
     DPRINT("RpcServerThread() called\n");
+
+    InitializeListHead(&NotificationListHead);
+    RtlInitializeResource(&NotificationListLock);
 
 #if 0
     /* 2k/XP/2k3-compatible protocol sequence/endpoint */
@@ -411,12 +417,25 @@ IsRootDeviceInstanceID(
 
 
 static
+BOOL
+IsPresentDeviceInstanceID(
+    _In_ LPWSTR pszDeviceInstanceID)
+{
+    DWORD ulStatus, ulProblem;
+
+    return (GetDeviceStatus(pszDeviceInstanceID, &ulStatus, &ulProblem) == CR_SUCCESS);
+}
+
+
+static
 CONFIGRET
 OpenConfigurationKey(
     _In_ LPCWSTR pszDeviceID,
+    _In_ DWORD ulLogConfType,
     _Out_ PHKEY phKey)
 {
     WCHAR szKeyName[MAX_PATH];
+    PCWSTR pszSubKeyName;
     HKEY hInstanceKey;
     DWORD dwError;
 
@@ -433,9 +452,26 @@ OpenConfigurationKey(
     if (dwError != ERROR_SUCCESS)
         return CR_INVALID_DEVINST;
 
+    switch (ulLogConfType)
+    {
+        case BOOT_LOG_CONF:
+        case BASIC_LOG_CONF:
+            pszSubKeyName = L"LogConf";
+            break;
+
+        case ALLOC_LOG_CONF:
+        case FILTERED_LOG_CONF:
+            pszSubKeyName = L"Control";
+            break;
+
+        default:
+            DPRINT1("Unsupported configuration type!\n");
+            return CR_FAILURE;
+    }
+
     /* Create or open the LogConf key */
     dwError = RegCreateKeyExW(hInstanceKey,
-                              L"LogConf",
+                              pszSubKeyName,
                               0,
                               NULL,
                               REG_OPTION_NON_VOLATILE,
@@ -461,7 +497,9 @@ GetConfigurationData(
     _In_ ULONG ulLogConfType,
     _Out_ PULONG pulRegDataType,
     _Out_ PULONG pulDataSize,
-    _Out_ LPBYTE *ppBuffer)
+    _Out_ LPBYTE *ppBuffer,
+    _In_ ULONG ulValueNameBufferSize,
+    _Out_opt_ LPWSTR pszValueNameBuffer)
 {
     LPCWSTR pszValueName;
 
@@ -502,6 +540,11 @@ GetConfigurationData(
             return CR_FAILURE;
     }
 
+    /* Return the selected configuration value name */
+    if ((ulValueNameBufferSize > 0) && (pszValueNameBuffer != NULL) &&
+        (wcslen(pszValueName) + 1 <= ulValueNameBufferSize))
+        wcscpy(pszValueNameBuffer, pszValueName);
+
     /* Get the configuration data size */
     if (RegQueryValueExW(hKey,
                          pszValueName,
@@ -532,6 +575,120 @@ GetConfigurationData(
     }
 
     return CR_SUCCESS;
+}
+
+
+static
+PCM_FULL_RESOURCE_DESCRIPTOR
+NextResourceDescriptor(
+    _In_ PCM_FULL_RESOURCE_DESCRIPTOR pDescriptor)
+{
+    PBYTE pNext = NULL;
+    ULONG ulLastIndex = 0;
+
+    if (pDescriptor == NULL)
+        return NULL;
+
+    /* Skip the full resource descriptor */
+    pNext = (LPBYTE)pDescriptor + sizeof(CM_FULL_RESOURCE_DESCRIPTOR);
+
+    /* Skip the partial resource descriptors */
+    pNext += (pDescriptor->PartialResourceList.Count - 1) *
+         sizeof(CM_PARTIAL_RESOURCE_DESCRIPTOR);
+
+    /* Skip the device specific data, if present */
+    if (pDescriptor->PartialResourceList.Count > 0)
+    {
+        ulLastIndex = pDescriptor->PartialResourceList.Count - 1;
+
+        if (pDescriptor->PartialResourceList.PartialDescriptors[ulLastIndex].Type ==
+            CmResourceTypeDeviceSpecific)
+        {
+            pNext += pDescriptor->PartialResourceList.PartialDescriptors[ulLastIndex].
+                     u.DeviceSpecificData.DataSize;
+        }
+    }
+
+    return (PCM_FULL_RESOURCE_DESCRIPTOR)pNext;
+}
+
+
+static
+PIO_RESOURCE_LIST
+NextResourceRequirement(
+    _In_ PIO_RESOURCE_LIST pResourceList)
+{
+    LPBYTE pNext = NULL;
+
+    if (pResourceList == NULL)
+        return NULL;
+
+    /* Skip the resource list */
+    pNext = (LPBYTE)pResourceList + sizeof(IO_RESOURCE_LIST);
+
+    /* Skip the resource descriptors */
+    pNext += (pResourceList->Count - 1) * sizeof(IO_RESOURCE_DESCRIPTOR);
+
+    return (PIO_RESOURCE_LIST)pNext;
+}
+
+
+static
+BOOL
+IsCallerInteractive(
+    _In_ handle_t hBinding)
+{
+    SID_IDENTIFIER_AUTHORITY NtAuthority = {SECURITY_NT_AUTHORITY};
+    HANDLE hToken;
+    PSID pInteractiveSid = NULL;
+    BOOL bInteractive = FALSE;
+    RPC_STATUS RpcStatus;
+
+    DPRINT("IsCallerInteractive(%p)\n", hBinding);
+
+    /* Allocate an interactive user sid */
+    if (!AllocateAndInitializeSid(&NtAuthority,
+                                  1,
+                                  SECURITY_INTERACTIVE_RID,
+                                  0, 0, 0, 0, 0, 0, 0,
+                                  &pInteractiveSid))
+    {
+        DPRINT1("AllocateAndInitializeSid failed\n");
+        return FALSE;
+    }
+
+    /* Impersonate the client */
+    RpcStatus = RpcImpersonateClient(hBinding);
+    if (RpcStatus != RPC_S_OK)
+    {
+        DPRINT1("RpcImpersonateClient failed (Status 0x%08lx)\n", RpcStatus);
+        goto done;
+    }
+
+    /* Open the thread token and check for interactive user membership */
+    if (OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, FALSE, &hToken))
+    {
+        CheckTokenMembership(hToken, pInteractiveSid, &bInteractive);
+        CloseHandle(hToken);
+    }
+
+    /* Revert the impersonation */
+    RpcRevertToSelf();
+
+done:
+    if (pInteractiveSid)
+        FreeSid(pInteractiveSid);
+
+    return bInteractive;
+}
+
+
+VOID
+__RPC_USER
+PNP_NOTIFY_HANDLE_rundown(
+    PNP_NOTIFY_HANDLE pHandle)
+{
+    DPRINT1("PNP_NOTIFY_HANDLE_rundown(%p)\n", pHandle);
 }
 
 
@@ -571,7 +728,7 @@ PNP_GetVersion(
     DPRINT("PNP_GetVersion(%p %p)\n",
            hBinding, pVersion);
 
-    *pVersion = 0x0400;
+    *pVersion = CONFIGMG_VERSION;
 
     return CR_SUCCESS;
 }
@@ -586,12 +743,17 @@ PNP_GetGlobalState(
     DWORD ulFlags)
 {
     UNREFERENCED_PARAMETER(hBinding);
-    UNREFERENCED_PARAMETER(ulFlags);
 
     DPRINT("PNP_GetGlobalState(%p %p 0x%08lx)\n",
            hBinding, pulState, ulFlags);
 
+    if (ulFlags != 0)
+        return CR_INVALID_FLAG;
+
     *pulState = CM_GLOBAL_STATE_CAN_DO_UI | CM_GLOBAL_STATE_SERVICES_AVAILABLE;
+
+    if (g_ShuttingDown)
+        *pulState |= CM_GLOBAL_STATE_SHUTTING_DOWN;
 
     return CR_SUCCESS;
 }
@@ -621,13 +783,16 @@ PNP_ReportLogOn(
     DWORD ProcessId)
 {
     DWORD ReturnValue = CR_FAILURE;
-    HANDLE hProcess;
+    HANDLE hProcess = NULL;
 
-    UNREFERENCED_PARAMETER(hBinding);
     UNREFERENCED_PARAMETER(Admin);
 
     DPRINT("PNP_ReportLogOn(%p %u, %u)\n",
            hBinding, Admin, ProcessId);
+
+    /* Fail, if the caller is not an interactive user */
+    if ((g_IsMiniNT == FALSE) && (IsCallerInteractive(hBinding) == FALSE))
+        goto cleanup;
 
     /* Get the users token */
     hProcess = OpenProcess(PROCESS_ALL_ACCESS, TRUE, ProcessId);
@@ -768,6 +933,33 @@ PNP_GetRelatedDeviceInstance(
 
     if (!IsValidDeviceInstanceID(pDeviceID))
         return CR_INVALID_DEVINST;
+
+    if (ulRelationship == PNP_GET_PARENT_DEVICE_INSTANCE)
+    {
+        /* The root device does not have a parent */
+        if (IsRootDeviceInstanceID(pDeviceID))
+            return CR_NO_SUCH_DEVINST;
+
+        /* Return the root device for non existing devices */
+        if (!IsPresentDeviceInstanceID(pDeviceID))
+        {
+            if ((wcslen(szRootDeviceInstanceID) + 1) > *pulLength)
+            {
+                *pulLength = wcslen(szRootDeviceInstanceID) + 1;
+                return CR_BUFFER_SMALL;
+            }
+
+            wcscpy(pRelatedDeviceId, szRootDeviceInstanceID);
+            *pulLength = wcslen(szRootDeviceInstanceID) + 1;
+            return CR_SUCCESS;
+        }
+    }
+    else if (ulRelationship == PNP_GET_SIBLING_DEVICE_INSTANCE)
+    {
+        /* The root device does not have siblings */
+        if (IsRootDeviceInstanceID(pDeviceID))
+            return CR_NO_SUCH_DEVINST;
+    }
 
     RtlInitUnicodeString(&PlugPlayData.TargetDeviceInstance,
                          pDeviceID);
@@ -2466,8 +2658,45 @@ PNP_GetInterfaceDeviceAlias(
     PNP_RPC_STRING_LEN *pulTransferLen,
     DWORD ulFlags)
 {
-    UNIMPLEMENTED;
-    return CR_CALL_NOT_IMPLEMENTED;
+    NTSTATUS Status;
+    PLUGPLAY_CONTROL_INTERFACE_ALIAS_DATA PlugPlayData;
+    DWORD ret = CR_SUCCESS;
+
+    UNREFERENCED_PARAMETER(hBinding);
+
+    DPRINT("PNP_GetInterfaceDeviceAlias(%p %S %p %p %p %p 0x%08lx)\n",
+           hBinding, pszInterfaceDevice, AliasInterfaceGuid, pszAliasInterfaceDevice, pulLength,
+           pulTransferLen, ulFlags);
+
+    if ((AliasInterfaceGuid == NULL) ||
+        (pulLength == NULL))
+        return  CR_INVALID_POINTER;
+
+    if (ulFlags != 0)
+        return CR_INVALID_FLAG;
+
+    RtlInitUnicodeString(&PlugPlayData.SymbolicLinkName, pszInterfaceDevice);
+    PlugPlayData.AliasInterfaceClassGuid = AliasInterfaceGuid;
+    PlugPlayData.AliasSymbolicLinkName = pszAliasInterfaceDevice;
+    PlugPlayData.AliasSymbolicLinkNameLength = *pulTransferLen;
+
+    Status = NtPlugPlayControl(PlugPlayControlGetInterfaceDeviceAlias,
+                               &PlugPlayData,
+                               sizeof(PLUGPLAY_CONTROL_INTERFACE_ALIAS_DATA));
+    if (NT_SUCCESS(Status))
+    {
+        *pulLength = PlugPlayData.AliasSymbolicLinkNameLength;
+        *pulTransferLen = *pulLength + 1;
+    }
+    else
+    {
+        *pulLength = 0;
+        *pulTransferLen = 0;
+        ret = NtStatusToCrError(Status);
+    }
+
+    DPRINT("PNP_GetInterfaceDeviceAlias() done (returns %lx)\n", ret);
+    return ret;
 }
 
 
@@ -2579,8 +2808,50 @@ PNP_RegisterDeviceClassAssociation(
     PNP_RPC_STRING_LEN *pulTransferLen,
     DWORD ulFlags)
 {
-    UNIMPLEMENTED;
-    return CR_CALL_NOT_IMPLEMENTED;
+    PLUGPLAY_CONTROL_CLASS_ASSOCIATION_DATA PlugPlayData;
+    NTSTATUS Status;
+    CONFIGRET ret = CR_SUCCESS;
+
+    UNREFERENCED_PARAMETER(hBinding);
+
+    DPRINT1("PNP_RegisterDeviceClassAssociation(%p %S %p %S %S %p %p 0x%08lx)\n",
+           hBinding, pszDeviceID, InterfaceGuid, pszReference, pszSymLink,
+           pulLength, pulTransferLen, ulFlags);
+
+    if ((InterfaceGuid == NULL) ||
+        (pszSymLink == NULL) ||
+        (pulLength == NULL) ||
+        (pulTransferLen == NULL))
+        return CR_INVALID_POINTER;
+
+    if (ulFlags != 0)
+        return CR_INVALID_FLAG;
+
+    if (!IsValidDeviceInstanceID(pszDeviceID))
+        return CR_INVALID_DEVINST;
+
+    RtlInitUnicodeString(&PlugPlayData.DeviceInstance, pszDeviceID);
+    PlugPlayData.InterfaceGuid = InterfaceGuid;
+    RtlInitUnicodeString(&PlugPlayData.Reference, pszReference);
+    PlugPlayData.Register = TRUE;
+    PlugPlayData.SymbolicLinkName = pszSymLink;
+    PlugPlayData.SymbolicLinkNameLength = *pulLength;
+
+    Status = NtPlugPlayControl(PlugPlayControlDeviceClassAssociation,
+                               &PlugPlayData,
+                               sizeof(PLUGPLAY_CONTROL_CLASS_ASSOCIATION_DATA));
+    if (NT_SUCCESS(Status))
+    {
+        *pulLength = PlugPlayData.SymbolicLinkNameLength;
+        *pulTransferLen = *pulLength;
+    }
+    else
+    {
+        *pulLength = 0;
+        ret = NtStatusToCrError(Status);
+    }
+
+    return ret;
 }
 
 
@@ -2592,8 +2863,33 @@ PNP_UnregisterDeviceClassAssociation(
     LPWSTR pszInterfaceDevice,
     DWORD ulFlags)
 {
-    UNIMPLEMENTED;
-    return CR_CALL_NOT_IMPLEMENTED;
+    PLUGPLAY_CONTROL_CLASS_ASSOCIATION_DATA PlugPlayData;
+    NTSTATUS Status;
+    CONFIGRET ret = CR_SUCCESS;
+
+    UNREFERENCED_PARAMETER(hBinding);
+
+    DPRINT1("PNP_UnregisterDeviceClassAssociation(%p %S 0x%08lx)\n",
+           hBinding, pszInterfaceDevice, ulFlags);
+
+    if (pszInterfaceDevice == NULL)
+        return CR_INVALID_POINTER;
+
+    if (ulFlags != 0)
+        return CR_INVALID_FLAG;
+
+    ZeroMemory(&PlugPlayData, sizeof(PlugPlayData));
+    PlugPlayData.Register = FALSE;
+    PlugPlayData.SymbolicLinkName = pszInterfaceDevice;
+    PlugPlayData.SymbolicLinkNameLength = wcslen(pszInterfaceDevice) + 1;
+
+    Status = NtPlugPlayControl(PlugPlayControlDeviceClassAssociation,
+                               &PlugPlayData,
+                               sizeof(PLUGPLAY_CONTROL_CLASS_ASSOCIATION_DATA));
+    if (!NT_SUCCESS(Status))
+        ret = NtStatusToCrError(Status);
+
+    return ret;
 }
 
 
@@ -2827,8 +3123,11 @@ done:
 }
 
 
-static CONFIGRET
-CreateDeviceInstance(LPWSTR pszDeviceID)
+static
+CONFIGRET
+CreateDeviceInstance(
+    _In_ LPWSTR pszDeviceID,
+    _In_ BOOL bPhantomDevice)
 {
     WCHAR szEnumerator[MAX_DEVICE_ID_LEN];
     WCHAR szDevice[MAX_DEVICE_ID_LEN];
@@ -2912,6 +3211,17 @@ CreateDeviceInstance(LPWSTR pszDeviceID)
         return CR_REGISTRY_ERROR;
     }
 
+    if (bPhantomDevice)
+    {
+        DWORD dwPhantomValue = 1;
+        RegSetValueExW(hKeyInstance,
+                       L"Phantom",
+                       0,
+                       REG_DWORD,
+                       (PBYTE)&dwPhantomValue,
+                       sizeof(dwPhantomValue));
+    }
+
     /* Create the 'Control' sub key */
     lError = RegCreateKeyExW(hKeyInstance,
                              L"Control",
@@ -2933,6 +3243,55 @@ CreateDeviceInstance(LPWSTR pszDeviceID)
 }
 
 
+static
+CONFIGRET
+GenerateDeviceID(
+    _Inout_ LPWSTR pszDeviceID,
+    _In_ PNP_RPC_STRING_LEN ulLength)
+{
+    WCHAR szGeneratedInstance[MAX_DEVICE_ID_LEN];
+    HKEY hKey;
+    DWORD dwInstanceNumber;
+    DWORD dwError = ERROR_SUCCESS;
+    CONFIGRET ret = CR_SUCCESS;
+
+    /* Fail, if the device name contains backslashes */
+    if (wcschr(pszDeviceID, L'\\') != NULL)
+        return CR_INVALID_DEVICE_ID;
+
+    /* Generated ID is: Root\<Device ID>\<Instance number> */
+    dwInstanceNumber = 0;
+    while (dwError == ERROR_SUCCESS)
+    {
+        if (dwInstanceNumber >= 10000)
+            return CR_FAILURE;
+
+        _swprintf(szGeneratedInstance, L"Root\\%ls\\%04lu",
+                  pszDeviceID, dwInstanceNumber);
+
+        /* Try to open the enum key of the device instance */
+        dwError = RegOpenKeyEx(hEnumKey, szGeneratedInstance, 0, KEY_QUERY_VALUE, &hKey);
+        if (dwError == ERROR_SUCCESS)
+        {
+            RegCloseKey(hKey);
+            dwInstanceNumber++;
+        }
+    }
+
+    /* pszDeviceID is an out parameter too for generated IDs */
+    if (wcslen(szGeneratedInstance) > ulLength)
+    {
+        ret = CR_BUFFER_SMALL;
+    }
+    else
+    {
+        wcscpy(pszDeviceID, szGeneratedInstance);
+    }
+
+    return ret;
+}
+
+
 /* Function 28 */
 DWORD
 WINAPI
@@ -2943,6 +3302,10 @@ PNP_CreateDevInst(
     PNP_RPC_STRING_LEN ulLength,
     DWORD ulFlags)
 {
+    PLUGPLAY_CONTROL_DEVICE_CONTROL_DATA ControlData;
+    HKEY hKey = NULL;
+    DWORD dwSize, dwPhantom;
+    NTSTATUS Status;
     CONFIGRET ret = CR_SUCCESS;
 
     DPRINT("PNP_CreateDevInst(%p %S %S %lu 0x%08lx)\n",
@@ -2960,41 +3323,72 @@ PNP_CreateDevInst(
 
     if (ulFlags & CM_CREATE_DEVNODE_GENERATE_ID)
     {
-        WCHAR szGeneratedInstance[MAX_DEVICE_ID_LEN];
-        DWORD dwInstanceNumber;
+        ret = GenerateDeviceID(pszDeviceID,
+                               ulLength);
+        if (ret != CR_SUCCESS)
+            return ret;
+    }
 
-        /* Generated ID is: Root\<Device ID>\<Instance number> */
-        dwInstanceNumber = 0;
-        do
+    /* Try to open the device instance key */
+    RegOpenKeyEx(hEnumKey, pszDeviceID, 0, KEY_READ | KEY_WRITE, &hKey);
+
+    if (ulFlags & CM_CREATE_DEVNODE_PHANTOM)
+    {
+        /* Fail, if the device already exists */
+        if (hKey != NULL)
         {
-            swprintf(szGeneratedInstance, L"Root\\%ls\\%04lu",
-                     pszDeviceID, dwInstanceNumber);
-
-            /* Try to create a device instance with this ID */
-            ret = CreateDeviceInstance(szGeneratedInstance);
-
-            dwInstanceNumber++;
+            ret = CR_ALREADY_SUCH_DEVINST;
+            goto done;
         }
-        while (ret == CR_ALREADY_SUCH_DEVINST);
 
-        if (ret == CR_SUCCESS)
-        {
-            /* pszDeviceID is an out parameter too for generated IDs */
-            if (wcslen(szGeneratedInstance) > ulLength)
-            {
-                ret = CR_BUFFER_SMALL;
-            }
-            else
-            {
-                wcscpy(pszDeviceID, szGeneratedInstance);
-            }
-        }
+        /* Create the phantom device instance */
+        ret = CreateDeviceInstance(pszDeviceID, TRUE);
     }
     else
     {
-        /* Create the device instance */
-        ret = CreateDeviceInstance(pszDeviceID);
+        /* Fail, if the device exists and is present */
+        if ((hKey != NULL) && (IsPresentDeviceInstanceID(pszDeviceID)))
+        {
+            ret = CR_ALREADY_SUCH_DEVINST;
+            goto done;
+        }
+
+        /* If it does not already exist ... */
+        if (hKey == NULL)
+        {
+            /* Create the device instance */
+            ret = CreateDeviceInstance(pszDeviceID, FALSE);
+
+            /* Open the device instance key */
+            RegOpenKeyEx(hEnumKey, pszDeviceID, 0, KEY_READ | KEY_WRITE, &hKey);
+        }
+
+        /* Create a device node for the device */
+        RtlInitUnicodeString(&ControlData.DeviceInstance, pszDeviceID);
+        Status = NtPlugPlayControl(PlugPlayControlInitializeDevice,
+                                   &ControlData,
+                                   sizeof(ControlData));
+        if (!NT_SUCCESS(Status))
+        {
+            ret = CR_FAILURE;
+            goto done;
+        }
+
+        /* If the device is a phantom device, turn it into a normal device */
+        if (hKey != NULL)
+        {
+            dwPhantom = 0;
+            dwSize = sizeof(DWORD);
+            RegQueryValueEx(hKey, L"Phantom", NULL, NULL, (PBYTE)&dwPhantom, &dwSize);
+
+            if (dwPhantom != 0)
+                RegDeleteValue(hKey, L"Phantom");
+        }
     }
+
+done:
+    if (hKey)
+        RegCloseKey(hKey);
 
     DPRINT("PNP_CreateDevInst() done (returns %lx)\n", ret);
 
@@ -3007,11 +3401,13 @@ SetupDeviceInstance(
     _In_ LPWSTR pszDeviceInstance,
     _In_ DWORD ulMinorAction)
 {
+    PLUGPLAY_CONTROL_DEVICE_CONTROL_DATA ControlData;
     HKEY hDeviceKey = NULL;
     DWORD dwDisableCount, dwSize;
     DWORD ulStatus, ulProblem;
     DWORD dwError;
     CONFIGRET ret = CR_SUCCESS;
+    NTSTATUS Status;
 
     DPRINT1("SetupDeviceInstance(%S 0x%08lx)\n",
             pszDeviceInstance, ulMinorAction);
@@ -3066,8 +3462,14 @@ SetupDeviceInstance(
     if (ret != CR_SUCCESS)
         goto done;
 
-
-    /* FIXME: Start the device */
+    /* Start the device */
+    RtlInitUnicodeString(&ControlData.DeviceInstance,
+                         pszDeviceInstance);
+    Status = NtPlugPlayControl(PlugPlayControlStartDevice,
+                               &ControlData,
+                               sizeof(PLUGPLAY_CONTROL_DEVICE_CONTROL_DATA));
+    if (!NT_SUCCESS(Status))
+        ret = NtStatusToCrError(Status);
 
 done:
     if (hDeviceKey != NULL)
@@ -3185,16 +3587,71 @@ PNP_GetDeviceStatus(
     DWORD *pulProblem,
     DWORD ulFlags)
 {
+    DWORD ulDataType, ulTransferLength, ulLength;
+    DWORD ulCapabilities, ulConfigFlags;
+    CONFIGRET ret;
+
     UNREFERENCED_PARAMETER(hBinding);
     UNREFERENCED_PARAMETER(ulFlags);
 
-    DPRINT("PNP_GetDeviceStatus(%p %S %p %p)\n",
+    DPRINT("PNP_GetDeviceStatus(%p %S %p %p 0x%08lx)\n",
            hBinding, pDeviceID, pulStatus, pulProblem, ulFlags);
+
+    if (ulFlags != 0)
+        return CR_INVALID_FLAG;
+
+    if ((pulStatus == NULL) || (pulProblem == NULL))
+        return CR_INVALID_POINTER;
 
     if (!IsValidDeviceInstanceID(pDeviceID))
         return CR_INVALID_DEVINST;
 
-    return GetDeviceStatus(pDeviceID, pulStatus, pulProblem);
+    ret = GetDeviceStatus(pDeviceID, pulStatus, pulProblem);
+    if (ret != CR_SUCCESS)
+        return ret;
+
+    /* Check for DN_REMOVABLE */
+    ulTransferLength = sizeof(ulCapabilities);
+    ulLength = sizeof(ulCapabilities);
+    ret = PNP_GetDeviceRegProp(NULL,
+                               pDeviceID,
+                               CM_DRP_CAPABILITIES,
+                               &ulDataType,
+                               (PBYTE)&ulCapabilities,
+                               &ulTransferLength,
+                               &ulLength,
+                               0);
+    if (ret != CR_SUCCESS)
+        ulCapabilities = 0;
+
+    if (ulCapabilities & CM_DEVCAP_REMOVABLE)
+        *pulStatus |= DN_REMOVABLE;
+
+    /* Check for DN_MANUAL */
+    ulTransferLength = sizeof(ulConfigFlags);
+    ulLength = sizeof(ulConfigFlags);
+    ret = PNP_GetDeviceRegProp(NULL,
+                               pDeviceID,
+                               CM_DRP_CONFIGFLAGS,
+                               &ulDataType,
+                               (PBYTE)&ulConfigFlags,
+                               &ulTransferLength,
+                               &ulLength,
+                               0);
+    if (ret != CR_SUCCESS)
+        ulConfigFlags = 0;
+
+    if (ulConfigFlags & CONFIGFLAG_MANUAL_INSTALL)
+        *pulStatus |= DN_MANUAL;
+
+    /* Check for failed install */
+    if (((*pulStatus & DN_HAS_PROBLEM) == 0) && (ulConfigFlags & CONFIGFLAG_FAILEDINSTALL))
+    {
+        *pulStatus |= DN_HAS_PROBLEM;
+        *pulProblem = CM_PROB_FAILED_INSTALL;
+    }
+
+    return CR_SUCCESS;
 }
 
 
@@ -3207,8 +3664,47 @@ PNP_SetDeviceProblem(
     DWORD ulProblem,
     DWORD ulFlags)
 {
-    UNIMPLEMENTED;
-    return CR_CALL_NOT_IMPLEMENTED;
+    ULONG ulOldStatus, ulOldProblem;
+    CONFIGRET ret = CR_SUCCESS;
+
+    UNREFERENCED_PARAMETER(hBinding);
+
+    DPRINT1("PNP_SetDeviceProblem(%p %S %lu 0x%08lx)\n",
+           hBinding, pDeviceID, ulProblem, ulFlags);
+
+    if (ulFlags & ~CM_SET_DEVNODE_PROBLEM_BITS)
+        return CR_INVALID_FLAG;
+
+    if (!IsValidDeviceInstanceID(pDeviceID))
+        return CR_INVALID_DEVINST;
+
+    ret = GetDeviceStatus(pDeviceID,
+                          &ulOldStatus,
+                          &ulOldProblem);
+    if (ret != CR_SUCCESS)
+        return ret;
+
+    if (((ulFlags & CM_SET_DEVNODE_PROBLEM_OVERRIDE) == 0) &&
+        (ulOldProblem != 0) &&
+        (ulOldProblem != ulProblem))
+    {
+        return CR_FAILURE;
+    }
+
+    if (ulProblem == 0)
+    {
+        ret = ClearDeviceStatus(pDeviceID,
+                                DN_HAS_PROBLEM,
+                                ulOldProblem);
+    }
+    else
+    {
+        ret = SetDeviceStatus(pDeviceID,
+                              DN_HAS_PROBLEM,
+                              ulProblem);
+    }
+
+    return ret;
 }
 
 
@@ -3646,9 +4142,9 @@ PNP_HwProfFlags(
     }
     else
     {
-        swprintf(szKeyName,
-                 L"System\\CurrentControlSet\\HardwareProfiles\\%04lu\\System\\CurrentControlSet\\Enum",
-                 ulConfig);
+        _swprintf(szKeyName,
+                  L"System\\CurrentControlSet\\HardwareProfiles\\%04lu\\System\\CurrentControlSet\\Enum",
+                  ulConfig);
     }
 
     if (RegOpenKeyExW(HKEY_LOCAL_MACHINE,
@@ -3660,29 +4156,29 @@ PNP_HwProfFlags(
 
     if (ulAction == PNP_GET_HWPROFFLAGS)
     {
-         if (RegOpenKeyExW(hKey,
-                           pDeviceID,
-                           0,
-                           KEY_QUERY_VALUE,
-                           &hDeviceKey) != ERROR_SUCCESS)
-         {
-            *pulValue = 0;
-         }
-         else
-         {
-             dwSize = sizeof(DWORD);
-             if (RegQueryValueExW(hDeviceKey,
-                                  L"CSConfigFlags",
-                                  NULL,
-                                  NULL,
-                                  (LPBYTE)pulValue,
-                                  &dwSize) != ERROR_SUCCESS)
-             {
-                 *pulValue = 0;
-             }
+        if (RegOpenKeyExW(hKey,
+                          pDeviceID,
+                          0,
+                          KEY_QUERY_VALUE,
+                          &hDeviceKey) != ERROR_SUCCESS)
+        {
+           *pulValue = 0;
+        }
+        else
+        {
+            dwSize = sizeof(DWORD);
+            if (RegQueryValueExW(hDeviceKey,
+                                 L"CSConfigFlags",
+                                 NULL,
+                                 NULL,
+                                 (LPBYTE)pulValue,
+                                 &dwSize) != ERROR_SUCCESS)
+            {
+                *pulValue = 0;
+            }
 
-             RegCloseKey(hDeviceKey);
-         }
+            RegCloseKey(hDeviceKey);
+        }
     }
     else if (ulAction == PNP_SET_HWPROFFLAGS)
     {
@@ -3791,7 +4287,7 @@ PNP_GetHwProfInfo(
         goto done;
     }
 
-    swprintf(szProfileName, L"%04lu", pHWProfileInfo->HWPI_ulHWProfile);
+    _swprintf(szProfileName, L"%04lu", pHWProfileInfo->HWPI_ulHWProfile);
 
     lError = RegOpenKeyExW(hKeyProfiles,
                            szProfileName,
@@ -3841,8 +4337,210 @@ PNP_AddEmptyLogConf(
     DWORD *pulLogConfTag,
     DWORD ulFlags)
 {
-    UNIMPLEMENTED;
-    return CR_CALL_NOT_IMPLEMENTED;
+    HKEY hConfigKey = NULL;
+    DWORD RegDataType = 0;
+    ULONG ulDataSize = 0, ulNewSize = 0;
+    PBYTE pDataBuffer = NULL;
+    WCHAR szValueNameBuffer[LOGCONF_NAME_BUFFER_SIZE];
+    CONFIGRET ret = CR_SUCCESS;
+
+    DPRINT("PNP_AddEmptyLogConf(%p %S %lu %p 0x%08lx)\n",
+           hBinding, pDeviceID, ulPriority, pulLogConfTag, ulFlags);
+
+    if (pulLogConfTag == NULL)
+        return CR_INVALID_POINTER;
+
+    *pulLogConfTag = 0;
+
+    if (ulFlags & ~(LOG_CONF_BITS | PRIORITY_BIT))
+        return CR_INVALID_FLAG;
+
+    if (!IsValidDeviceInstanceID(pDeviceID) || IsRootDeviceInstanceID(pDeviceID))
+        return CR_INVALID_DEVNODE;
+
+    ret = OpenConfigurationKey(pDeviceID,
+                               ulFlags & LOG_CONF_BITS,
+                               &hConfigKey);
+    if (ret != CR_SUCCESS)
+    {
+        DPRINT1("OpenConfigurationKey() failed (Error %lu)\n", ret);
+        ret = CR_NO_MORE_LOG_CONF;
+        goto done;
+    }
+
+    ret = GetConfigurationData(hConfigKey,
+                               ulFlags & LOG_CONF_BITS,
+                               &RegDataType,
+                               &ulDataSize,
+                               &pDataBuffer,
+                               LOGCONF_NAME_BUFFER_SIZE,
+                               szValueNameBuffer);
+
+    if (ret != CR_SUCCESS || ulDataSize == 0)
+    {
+        ret = CR_SUCCESS;
+
+        if (RegDataType == REG_RESOURCE_LIST)
+        {
+            PCM_RESOURCE_LIST pResourceList = NULL;
+            PCM_FULL_RESOURCE_DESCRIPTOR pResource = NULL;
+
+            /* Allocate a buffer for the new configuration */
+            ulDataSize = sizeof(CM_RESOURCE_LIST) - sizeof(CM_PARTIAL_RESOURCE_DESCRIPTOR);
+            pDataBuffer = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, ulDataSize);
+            if (pDataBuffer == NULL)
+            {
+                ret = CR_OUT_OF_MEMORY;
+                goto done;
+            }
+
+            pResourceList = (PCM_RESOURCE_LIST)pDataBuffer;
+            pResourceList->Count = 1;
+
+            pResource = (PCM_FULL_RESOURCE_DESCRIPTOR)&pResourceList->List[0];
+            pResource->InterfaceType = InterfaceTypeUndefined;
+            pResource->BusNumber = 0;
+            pResource->PartialResourceList.Version = 1;
+            pResource->PartialResourceList.Revision = 1;
+            pResource->PartialResourceList.Count = 0;
+        }
+        else if (RegDataType == REG_RESOURCE_REQUIREMENTS_LIST)
+        {
+            PIO_RESOURCE_REQUIREMENTS_LIST pRequirementsList = NULL;
+            PIO_RESOURCE_LIST pResourceList = NULL;
+
+            ulDataSize = sizeof(IO_RESOURCE_REQUIREMENTS_LIST);
+            pDataBuffer = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, ulDataSize);
+            if (pDataBuffer == NULL)
+            {
+                ret = CR_OUT_OF_MEMORY;
+                goto done;
+            }
+
+            pRequirementsList = (PIO_RESOURCE_REQUIREMENTS_LIST)pDataBuffer;
+            pRequirementsList->ListSize = ulDataSize;
+            pRequirementsList->InterfaceType = InterfaceTypeUndefined;
+            pRequirementsList->BusNumber = 0;
+            pRequirementsList->SlotNumber = 0;
+            pRequirementsList->AlternativeLists = 1;
+
+            pResourceList = (PIO_RESOURCE_LIST)&pRequirementsList->List[0];
+            pResourceList->Version = 1;
+            pResourceList->Revision = 1;
+            pResourceList->Count = 1;
+
+            pResourceList->Descriptors[0].Option = IO_RESOURCE_PREFERRED;
+            pResourceList->Descriptors[0].Type = CmResourceTypeConfigData;
+            pResourceList->Descriptors[0].u.ConfigData.Priority = ulPriority;
+        }
+        else
+        {
+            ret = CR_FAILURE;
+            goto done;
+        }
+    }
+    else
+    {
+        if (RegDataType == REG_RESOURCE_LIST)
+        {
+            PCM_RESOURCE_LIST pResourceList = NULL;
+            PCM_FULL_RESOURCE_DESCRIPTOR pResource = NULL;
+            ULONG ulIndex;
+
+            /* Reallocate a larger buffer in order to add the new configuration */
+            ulNewSize = sizeof(CM_FULL_RESOURCE_DESCRIPTOR) - sizeof(CM_PARTIAL_RESOURCE_DESCRIPTOR);
+            pDataBuffer = HeapReAlloc(GetProcessHeap(),
+                                      0,
+                                      pDataBuffer,
+                                      ulDataSize + ulNewSize);
+            if (pDataBuffer == NULL)
+            {
+                ret = CR_OUT_OF_MEMORY;
+                goto done;
+            }
+
+            pResourceList = (PCM_RESOURCE_LIST)pDataBuffer;
+
+            /* Get a pointer to the new (uninitialized) resource descriptor */
+            pResource = (PCM_FULL_RESOURCE_DESCRIPTOR)&pResourceList->List[0];
+            for (ulIndex = 0; ulIndex < pResourceList->Count; ulIndex++)
+                pResource = NextResourceDescriptor(pResource);
+
+            /* Initialize the new resource descriptor */
+            pResourceList->Count++;
+            pResource->InterfaceType= InterfaceTypeUndefined;
+            pResource->BusNumber = 0;
+            pResource->PartialResourceList.Version = 1;
+            pResource->PartialResourceList.Revision = 1;
+            pResource->PartialResourceList.Count = 0;
+
+            *pulLogConfTag = ulIndex;
+        }
+        else if (RegDataType == REG_RESOURCE_REQUIREMENTS_LIST)
+        {
+            PIO_RESOURCE_REQUIREMENTS_LIST pRequirementsList = NULL;
+            PIO_RESOURCE_LIST pResourceList = NULL;
+            ULONG ulIndex;
+
+            /* Reallocate a larger buffer in order to add the new configuration */
+            ulNewSize = sizeof(IO_RESOURCE_REQUIREMENTS_LIST);
+            pDataBuffer = HeapReAlloc(GetProcessHeap(),
+                                      0,
+                                      pDataBuffer,
+                                      ulDataSize + ulNewSize);
+            if (pDataBuffer == NULL)
+            {
+                ret = CR_OUT_OF_MEMORY;
+                goto done;
+            }
+
+            pRequirementsList = (PIO_RESOURCE_REQUIREMENTS_LIST)pDataBuffer;
+            pResourceList = (PIO_RESOURCE_LIST)&pRequirementsList->List[0];
+            for (ulIndex = 0; ulIndex < pRequirementsList->AlternativeLists - 1; ulIndex++)
+                pResourceList = NextResourceRequirement(pResourceList);
+
+            pRequirementsList->ListSize = ulDataSize + ulNewSize;
+            pRequirementsList->AlternativeLists++;
+
+            pResourceList->Version = 1;
+            pResourceList->Revision = 1;
+            pResourceList->Count = 1;
+
+            pResourceList->Descriptors[0].Option = IO_RESOURCE_PREFERRED;
+            pResourceList->Descriptors[0].Type = CmResourceTypeConfigData;
+            pResourceList->Descriptors[0].u.ConfigData.Priority = ulPriority;
+
+            *pulLogConfTag = ulIndex;
+        }
+        else
+        {
+            ret = CR_FAILURE;
+            goto done;
+        }
+    }
+
+    /* Store the configuration */
+    if (RegSetValueEx(hConfigKey,
+                      szValueNameBuffer,
+                      0,
+                      RegDataType,
+                      pDataBuffer,
+                      ulDataSize + ulNewSize) != ERROR_SUCCESS)
+    {
+        ret = CR_REGISTRY_ERROR;
+        goto done;
+    }
+
+done:
+    if (pDataBuffer != NULL)
+        HeapFree(GetProcessHeap(), 0, pDataBuffer);
+
+    if (hConfigKey != NULL)
+        RegCloseKey(hConfigKey);
+
+    DPRINT("PNP_AddEmptyLogConf() returns %lu\n", ret);
+
+    return ret;
 }
 
 
@@ -3856,8 +4554,182 @@ PNP_FreeLogConf(
     DWORD ulLogConfTag,
     DWORD ulFlags)
 {
-    UNIMPLEMENTED;
-    return CR_CALL_NOT_IMPLEMENTED;
+    HKEY hConfigKey = NULL;
+    DWORD RegDataType = 0;
+    ULONG ulDataSize = 0;
+    LPBYTE pDataBuffer = NULL;
+    WCHAR szValueNameBuffer[LOGCONF_NAME_BUFFER_SIZE];
+    CONFIGRET ret = CR_SUCCESS;
+
+    DPRINT("PNP_FreeLogConf(%p %S %lu %lu 0x%08lx)\n",
+           hBinding, pDeviceID, ulLogConfType, ulLogConfTag, ulFlags);
+
+    if (ulFlags != 0)
+        return CR_INVALID_FLAG;
+
+    if (!IsValidDeviceInstanceID(pDeviceID))
+        return CR_INVALID_DEVNODE;
+
+    ret = OpenConfigurationKey(pDeviceID,
+                               ulLogConfType,
+                               &hConfigKey);
+    if (ret != CR_SUCCESS)
+    {
+        DPRINT1("OpenConfigurationKey() failed (Error %lu)\n", ret);
+        ret = CR_NO_MORE_LOG_CONF;
+        goto done;
+    }
+
+    ret = GetConfigurationData(hConfigKey,
+                               ulLogConfType,
+                               &RegDataType,
+                               &ulDataSize,
+                               &pDataBuffer,
+                               LOGCONF_NAME_BUFFER_SIZE,
+                               szValueNameBuffer);
+    if (ret != CR_SUCCESS)
+    {
+        ret = CR_INVALID_LOG_CONF;
+        goto done;
+    }
+
+    if (RegDataType == REG_RESOURCE_LIST)
+    {
+        PCM_RESOURCE_LIST pResourceList = (PCM_RESOURCE_LIST)pDataBuffer;
+
+        if (pResourceList->Count <= 1)
+        {
+            /* Delete the key if there is only one or no configuration in the key */
+            DPRINT("Delete value %S\n", szValueNameBuffer);
+            RegDeleteValue(hConfigKey, szValueNameBuffer);
+        }
+        else
+        {
+            PCM_FULL_RESOURCE_DESCRIPTOR pResource = NULL, pNextResource = NULL;
+            ULONG ulIndex, ulMoveSize;
+            DWORD dwError;
+
+            /* Fail if we try to delete an entry outside of our resource list */
+            if (ulLogConfTag >= pResourceList->Count)
+            {
+                ret = CR_INVALID_LOG_CONF;
+                goto done;
+            }
+
+            /* Get a pointer to the resource descriptor to be deleted */
+            pResource = (PCM_FULL_RESOURCE_DESCRIPTOR)&pResourceList->List[0];
+            for (ulIndex = 0; ulIndex < ulLogConfTag; ulIndex++)
+                pResource = NextResourceDescriptor(pResource);
+
+            /* Delete the resource descriptor */
+            if (ulLogConfTag == pResourceList->Count - 1)
+            {
+                /* Delete the last resource descriptor */
+                ulDataSize = (ULONG)((ULONG_PTR)pResource - (ULONG_PTR)pResourceList);
+            }
+            else
+            {
+                pNextResource = NextResourceDescriptor(pResource);
+
+                ulMoveSize = ulDataSize - (DWORD)((ULONG_PTR)pNextResource - (ULONG_PTR)pResourceList);
+                MoveMemory(pResource, pNextResource, ulMoveSize);
+
+                ulDataSize -= (DWORD)((ULONG_PTR)pNextResource - (ULONG_PTR)pResource);
+            }
+
+            pResourceList->Count--;
+
+            /* Store the new configuration */
+            dwError = RegSetValueEx(hConfigKey,
+                                    szValueNameBuffer,
+                                    0,
+                                    RegDataType,
+                                    pDataBuffer,
+                                    ulDataSize);
+            if (dwError != ERROR_SUCCESS)
+            {
+                ret = CR_REGISTRY_ERROR;
+                goto done;
+            }
+        }
+    }
+    else if (RegDataType == REG_RESOURCE_REQUIREMENTS_LIST)
+    {
+        PIO_RESOURCE_REQUIREMENTS_LIST pRequirementsList = (PIO_RESOURCE_REQUIREMENTS_LIST)pDataBuffer;
+
+        if (pRequirementsList->AlternativeLists <= 1)
+        {
+            /* Delete the key if there is only one or no configuration in the key */
+            DPRINT("Delete value %S\n", szValueNameBuffer);
+            RegDeleteValue(hConfigKey, szValueNameBuffer);
+        }
+        else
+        {
+            PIO_RESOURCE_LIST pResourceList = NULL, pNextResourceList = NULL;
+            ULONG ulIndex, ulMoveSize;
+            DWORD dwError;
+
+            /* Fail if we try to delete an entry outside of our requirements list */
+            if (ulLogConfTag >= pRequirementsList->AlternativeLists)
+            {
+                ret = CR_INVALID_LOG_CONF;
+                goto done;
+            }
+
+            /* Get a pointer to the resource list to be deleted */
+            pResourceList = (PIO_RESOURCE_LIST)(&pRequirementsList->List[0]);
+            for (ulIndex = 0; ulIndex < ulLogConfTag; ulIndex++)
+                pResourceList = NextResourceRequirement(pResourceList);
+
+            /* Delete the resource list */
+            if (ulLogConfTag == pRequirementsList->AlternativeLists - 1)
+            {
+                /* Delete the last resource descriptor */
+                ulDataSize = (ULONG)((ULONG_PTR)pResourceList - (ULONG_PTR)pRequirementsList);
+            }
+            else
+            {
+                pNextResourceList = NextResourceRequirement(pResourceList);
+
+                ulMoveSize = ulDataSize - (DWORD)((ULONG_PTR)pNextResourceList - (ULONG_PTR)pRequirementsList);
+                MoveMemory(pResourceList, pNextResourceList, ulMoveSize);
+
+                ulDataSize -= (DWORD)((ULONG_PTR)pNextResourceList - (ULONG_PTR)pResourceList);
+            }
+
+            pRequirementsList->AlternativeLists--;
+            pRequirementsList->ListSize = ulDataSize;
+
+            /* Store the new configuration */
+            dwError = RegSetValueEx(hConfigKey,
+                                    szValueNameBuffer,
+                                    0,
+                                    RegDataType,
+                                    pDataBuffer,
+                                    ulDataSize);
+            if (dwError != ERROR_SUCCESS)
+            {
+                ret = CR_REGISTRY_ERROR;
+                goto done;
+            }
+        }
+    }
+    else
+    {
+        ret = CR_FAILURE;
+        goto done;
+    }
+
+done:
+    if (pDataBuffer != NULL)
+        HeapFree(GetProcessHeap(), 0, pDataBuffer);
+
+    if (hConfigKey != NULL)
+        RegCloseKey(hConfigKey);
+
+    DPRINT("PNP_FreeLogConf() returns %lu\n", ret);
+
+    return ret;
 }
 
 
@@ -3892,6 +4764,7 @@ PNP_GetFirstLogConf(
         return CR_INVALID_DEVINST;
 
     ret = OpenConfigurationKey(pDeviceID,
+                               ulLogConfType,
                                &hConfigKey);
     if (ret != CR_SUCCESS)
     {
@@ -3904,7 +4777,9 @@ PNP_GetFirstLogConf(
                                ulLogConfType,
                                &RegDataType,
                                &ulDataSize,
-                               &lpData);
+                               &lpData,
+                               0,
+                               NULL);
     if (ret != CR_SUCCESS)
     {
         DPRINT1("GetConfigurationData() failed (Error %lu)\n", ret);
@@ -3912,7 +4787,7 @@ PNP_GetFirstLogConf(
         goto done;
     }
 
-    DPRINT("Data size %lu\n", ulDataSize);
+    DPRINT1("Data size %lu\n", ulDataSize);
     if (ulDataSize == 0 || lpData == NULL)
     {
         DPRINT1("No config data available!\n");
@@ -3923,28 +4798,27 @@ PNP_GetFirstLogConf(
     /* Get the first tag */
     if (RegDataType == REG_RESOURCE_LIST)
     {
-        DPRINT("REG_RESOURCE_LIST\n");
+        DPRINT("REG_RESOURCE_LIST->Count %lu\n", ((PCM_RESOURCE_LIST)lpData)->Count);
 
-        DPRINT("ResourceList->Count %lu\n", ((PCM_RESOURCE_LIST)lpData)->Count);
+        /* Fail, if we do not have any resource */
         if (((PCM_RESOURCE_LIST)lpData)->Count == 0)
         {
             DPRINT1("No resource descriptors!\n");
             ret = CR_NO_MORE_LOG_CONF;
             goto done;
         }
-
-        DPRINT("lpData %p\n", lpData);
-        DPRINT("&List[0] %p\n", &(((PCM_RESOURCE_LIST)lpData)->List[0]));
-
-        *pulLogConfTag = (DWORD)((DWORD_PTR)&(((PCM_RESOURCE_LIST)lpData)->List[0]) - (DWORD_PTR)lpData);
-        DPRINT("Offset (Tag): 0x%08lx\n", *pulLogConfTag);
     }
     else if (RegDataType == REG_RESOURCE_REQUIREMENTS_LIST)
     {
-        DPRINT1("FIXME: REG_RESOURCE_REQUIREMENTS_LIST\n");
-        /* FIXME */
-        ret = CR_NO_MORE_LOG_CONF;
-        goto done;
+        DPRINT("REG_RESOURCE_REQUIREMENTS_LIST->AlternativeLists %lu\n",
+               ((PIO_RESOURCE_REQUIREMENTS_LIST)lpData)->AlternativeLists);
+
+        /* Fail, if we do not have any requirements */
+        if (((PIO_RESOURCE_REQUIREMENTS_LIST)lpData)->AlternativeLists == 0)
+        {
+            ret = CR_NO_MORE_LOG_CONF;
+            goto done;
+        }
     }
 
 done:
@@ -3977,7 +4851,7 @@ PNP_GetNextLogConf(
     LPBYTE lpData = NULL;
     CONFIGRET ret = CR_SUCCESS;
 
-    DPRINT("PNP_GetNextLogConf(%p %S %lu %ul %p 0x%08lx)\n",
+    DPRINT("PNP_GetNextLogConf(%p %S %lu %lu %p 0x%08lx)\n",
            hBinding, pDeviceID, ulLogConfType, ulCurrentTag, pulNextTag, ulFlags);
 
     if (pulNextTag == NULL)
@@ -3992,6 +4866,7 @@ PNP_GetNextLogConf(
         return CR_INVALID_DEVINST;
 
     ret = OpenConfigurationKey(pDeviceID,
+                               ulLogConfType,
                                &hConfigKey);
     if (ret != CR_SUCCESS)
     {
@@ -4004,7 +4879,9 @@ PNP_GetNextLogConf(
                                ulLogConfType,
                                &RegDataType,
                                &ulDataSize,
-                               &lpData);
+                               &lpData,
+                               0,
+                               NULL);
     if (ret != CR_SUCCESS)
     {
         DPRINT1("GetConfigurationData() failed (Error %lu)\n", ret);
@@ -4021,21 +4898,47 @@ PNP_GetNextLogConf(
         goto done;
     }
 
-    /* FIXME: Get the next tag */
+    /* Check if the next entry is available */
     if (RegDataType == REG_RESOURCE_LIST)
     {
-        DPRINT1("FIXME: REG_RESOURCE_LIST\n");
-        /* FIXME */
-        ret = CR_NO_MORE_LOG_CONF;
-        goto done;
+        DPRINT("REG_RESOURCE_LIST->Count %lu\n", ((PCM_RESOURCE_LIST)lpData)->Count);
+
+        /* Fail, if we are beyond the end of the list */
+        if (ulCurrentTag >= ((PCM_RESOURCE_LIST)lpData)->Count)
+        {
+            ret = CR_INVALID_LOG_CONF;
+            goto done;
+        }
+
+        /* Indicate that we reached the end of the list */
+        if (ulCurrentTag == ((PCM_RESOURCE_LIST)lpData)->Count - 1)
+        {
+            ret = CR_NO_MORE_LOG_CONF;
+            goto done;
+        }
     }
     else if (RegDataType == REG_RESOURCE_REQUIREMENTS_LIST)
     {
-        DPRINT1("FIXME: REG_RESOURCE_REQUIREMENTS_LIST\n");
-        /* FIXME */
-        ret = CR_NO_MORE_LOG_CONF;
-        goto done;
+        DPRINT("REG_RESOURCE_REQUIREMENTS_LIST->AlternativeLists %lu\n",
+               ((PIO_RESOURCE_REQUIREMENTS_LIST)lpData)->AlternativeLists);
+
+        /* Fail, if we are beyond the end of the list */
+        if (ulCurrentTag >= ((PIO_RESOURCE_REQUIREMENTS_LIST)lpData)->AlternativeLists)
+        {
+            ret = CR_INVALID_LOG_CONF;
+            goto done;
+        }
+
+        /* Indicate that we reached the end of the list */
+        if (ulCurrentTag == ((PIO_RESOURCE_REQUIREMENTS_LIST)lpData)->AlternativeLists - 1)
+        {
+            ret = CR_NO_MORE_LOG_CONF;
+            goto done;
+        }
     }
+
+    /* Return the next tag value */
+    *pulNextTag = ulCurrentTag + 1;
 
 done:
     if (lpData != NULL)
@@ -4140,6 +5043,7 @@ PNP_GetNextResDes(
         return CR_INVALID_DEVINST;
 
     ret = OpenConfigurationKey(pDeviceID,
+                               ulLogConfType,
                                &hConfigKey);
     if (ret != CR_SUCCESS)
     {
@@ -4152,7 +5056,9 @@ PNP_GetNextResDes(
                                ulLogConfType,
                                &RegDataType,
                                &ulDataSize,
-                               &lpData);
+                               &lpData,
+                               0,
+                               NULL);
     if (ret != CR_SUCCESS)
     {
         DPRINT1("GetConfigurationData() failed (Error %lu)\n", ret);
@@ -4354,27 +5260,30 @@ DWORD
 WINAPI
 PNP_RegisterNotification(
     handle_t hBinding,
-    DWORD ulUnknown2,
+    DWORD_PTR hRecipient,
     LPWSTR pszName,
     BYTE *pNotificationFilter,
     DWORD ulNotificationFilterSize,
     DWORD ulFlags,
-    DWORD *pulNotify,
-    DWORD ulUnknown8,
+    PNP_NOTIFY_HANDLE *pNotifyHandle,
+    DWORD ulProcessId,
     DWORD *pulUnknown9)
 {
     PDEV_BROADCAST_DEVICEINTERFACE_W pBroadcastDeviceInterface;
     PDEV_BROADCAST_HANDLE pBroadcastDeviceHandle;
-#if 0
-    PNOTIFY_DATA pNotifyData;
-#endif
+    PNOTIFY_ENTRY pNotifyData = NULL;
+    DWORD ret = CR_SUCCESS;
 
-    DPRINT1("PNP_RegisterNotification(%p %lx '%S' %p %lu 0x%lx %p %lx %p)\n",
-           hBinding, ulUnknown2, pszName, pNotificationFilter,
-           ulNotificationFilterSize, ulFlags, pulNotify, ulUnknown8, pulUnknown9);
+    DPRINT1("PNP_RegisterNotification(%p %p '%S' %p %lu 0x%lx %p %lx %p)\n",
+           hBinding, hRecipient, pszName, pNotificationFilter,
+           ulNotificationFilterSize, ulFlags, pNotifyHandle, ulProcessId, pulUnknown9);
+
+    if (pNotifyHandle == NULL)
+        return CR_INVALID_POINTER;
+
+    *pNotifyHandle = NULL;
 
     if (pNotificationFilter == NULL ||
-        pulNotify == NULL ||
         pulUnknown9 == NULL)
         return CR_INVALID_POINTER;
 
@@ -4393,6 +5302,65 @@ PNP_RegisterNotification(
         if ((ulNotificationFilterSize < sizeof(DEV_BROADCAST_DEVICEINTERFACE_W)) ||
             (pBroadcastDeviceInterface->dbcc_size < sizeof(DEV_BROADCAST_DEVICEINTERFACE_W)))
             return CR_INVALID_DATA;
+
+        pNotifyData = RtlAllocateHeap(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(NOTIFY_ENTRY));
+        if (pNotifyData == NULL)
+        {
+            ret = CR_OUT_OF_MEMORY;
+            goto done;
+        }
+
+        pNotifyData->dwType = CLASS_NOTIFICATION;
+
+        if (pszName != NULL)
+        {
+            pNotifyData->pszName = RtlAllocateHeap(GetProcessHeap(),
+                                                   HEAP_ZERO_MEMORY,
+                                                   (wcslen(pszName) + 1) * sizeof(WCHAR));
+            if (pNotifyData->pszName == NULL)
+            {
+                ret = CR_OUT_OF_MEMORY;
+                goto done;
+            }
+
+            wcscpy(pNotifyData->pszName, pszName);
+        }
+
+        if ((ulFlags & DEVICE_NOTIFY_SERVICE_HANDLE) == DEVICE_NOTIFY_WINDOW_HANDLE)
+        {
+            pNotifyData->hRecipient = hRecipient;
+        }
+        else
+        {
+            DPRINT("Validate service: %S\n", pszName);
+            if (I_ScValidatePnpService(NULL,
+                                       pszName,
+                                       (SERVICE_STATUS_HANDLE *)&pNotifyData->hRecipient) != ERROR_SUCCESS)
+            {
+                DPRINT1("I_ScValidatePnpService failed!\n");
+                ret = CR_INVALID_DATA;
+                goto done;
+            }
+
+            DPRINT("Service status handle: %p\n", pNotifyData->hRecipient);
+        }
+
+        pNotifyData->ulFlags = ulFlags;
+
+        if ((ulFlags & DEVICE_NOTIFY_ALL_INTERFACE_CLASSES) == 0)
+        {
+            CopyMemory(&pNotifyData->ClassGuid,
+                       &pBroadcastDeviceInterface->dbcc_classguid,
+                       sizeof(GUID));
+        }
+
+        /* Add the entry to the notification list */
+        RtlAcquireResourceExclusive(&NotificationListLock, TRUE);
+        InsertTailList(&NotificationListHead, &pNotifyData->ListEntry);
+        RtlReleaseResource(&NotificationListLock);
+
+        DPRINT("pNotifyData: %p\n", pNotifyData);
+        *pNotifyHandle = (PNP_NOTIFY_HANDLE)pNotifyData;
     }
     else if (((PDEV_BROADCAST_HDR)pNotificationFilter)->dbch_devicetype == DBT_DEVTYP_HANDLE)
     {
@@ -4401,29 +5369,38 @@ PNP_RegisterNotification(
 
         if ((ulNotificationFilterSize < sizeof(DEV_BROADCAST_HANDLE)) ||
             (pBroadcastDeviceHandle->dbch_size < sizeof(DEV_BROADCAST_HANDLE)))
-            return CR_INVALID_DATA;
+        {
+            ret = CR_INVALID_DATA;
+            goto done;
+        }
 
         if (ulFlags & DEVICE_NOTIFY_ALL_INTERFACE_CLASSES)
-            return CR_INVALID_FLAG;
+        {
+            ret = CR_INVALID_FLAG;
+            goto done;
+        }
+
+        /* FIXME */
     }
     else
     {
         DPRINT1("Invalid device type %lu\n", ((PDEV_BROADCAST_HDR)pNotificationFilter)->dbch_devicetype);
-        return CR_INVALID_DATA;
+        ret = CR_INVALID_DATA;
     }
 
+done:
+    if (ret != CR_SUCCESS)
+    {
+        if (pNotifyData)
+        {
+            if (pNotifyData->pszName)
+                RtlFreeHeap(GetProcessHeap(), 0, pNotifyData->pszName);
 
-#if 0
-    pNotifyData = RtlAllocateHeap(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(NOTIFY_DATA));
-    if (pNotifyData == NULL)
-        return CR_OUT_OF_MEMORY;
+            RtlFreeHeap(GetProcessHeap(), 0, pNotifyData);
+        }
+    }
 
-    *pulNotify = (DWORD)pNotifyData;
-#endif
-
-    *pulNotify = 1;
-
-    return CR_SUCCESS;
+    return ret;
 }
 
 
@@ -4432,15 +5409,25 @@ DWORD
 WINAPI
 PNP_UnregisterNotification(
     handle_t hBinding,
-    DWORD ulNotify)
+    PNP_NOTIFY_HANDLE *pNotifyHandle)
 {
-    DPRINT1("PNP_UnregisterNotification(%p 0x%lx)\n",
-           hBinding, ulNotify);
+    PNOTIFY_ENTRY pEntry;
 
-#if 0
-    UNIMPLEMENTED;
-    return CR_CALL_NOT_IMPLEMENTED;
-#endif
+    DPRINT1("PNP_UnregisterNotification(%p %p)\n",
+           hBinding, pNotifyHandle);
+
+    pEntry = (PNOTIFY_ENTRY)*pNotifyHandle;
+    if (pEntry == NULL)
+        return CR_INVALID_DATA;
+
+    RtlAcquireResourceExclusive(&NotificationListLock, TRUE);
+    RemoveEntryList(&pEntry->ListEntry);
+    RtlReleaseResource(&NotificationListLock);
+
+    if (pEntry->pszName)
+        RtlFreeHeap(RtlGetProcessHeap(), 0, pEntry->pszName);
+    RtlFreeHeap(RtlGetProcessHeap(), 0, pEntry);
+    *pNotifyHandle = NULL;
 
     return CR_SUCCESS;
 }
@@ -4554,7 +5541,7 @@ PNP_GetVersionInternal(
 {
     UNREFERENCED_PARAMETER(hBinding);
 
-    *pwVersion = 0x501;
+    *pwVersion = WINVER;
     return CR_SUCCESS;
 }
 

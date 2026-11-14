@@ -569,7 +569,7 @@ ScsiPortGetPhysicalAddress(IN PVOID HwDeviceExtension,
     else
     {
         /* Nothing */
-        PhysicalAddress.QuadPart = (LONGLONG)(SP_UNINITIALIZED_VALUE);
+        PhysicalAddress.QuadPart = (LONGLONG)SP_UNINITIALIZED_VALUE;
     }
 
     *Length = (ULONG)BufferLength;
@@ -852,7 +852,6 @@ ScsiPortInitialize(
     BOOLEAN FirstConfigCall = TRUE;
     ULONG Result;
     NTSTATUS Status;
-    ULONG MaxBus;
     PCI_SLOT_NUMBER SlotNumber;
 
     PDEVICE_OBJECT PortDeviceObject;
@@ -861,7 +860,7 @@ ScsiPortInitialize(
 
     PCM_RESOURCE_LIST ResourceList;
 
-    DPRINT ("ScsiPortInitialize() called!\n");
+    DPRINT("ScsiPortInitialize() called!\n");
 
     /* Check params for validity */
     if ((HwInitializationData->HwInitialize == NULL) ||
@@ -945,16 +944,16 @@ ScsiPortInitialize(
     DeviceExtensionSize = sizeof(SCSI_PORT_DEVICE_EXTENSION) +
         HwInitializationData->DeviceExtensionSize;
 
-    MaxBus = (HwInitializationData->AdapterInterfaceType == PCIBus) ? 8 : 1;
-    DPRINT("MaxBus: %lu\n", MaxBus);
+    DPRINT("AdapterInterfaceType: %lu\n",
+           HwInitializationData->AdapterInterfaceType);
 
     while (TRUE)
     {
         WCHAR NameBuffer[27];
         /* Create a unicode device name */
-        swprintf(NameBuffer,
-                 L"\\Device\\ScsiPort%lu",
-                 SystemConfig->ScsiPortCount);
+        _swprintf(NameBuffer,
+                  L"\\Device\\ScsiPort%lu",
+                  SystemConfig->ScsiPortCount);
         if (!RtlCreateUnicodeString(&DeviceName, NameBuffer))
         {
             DPRINT1("Failed to allocate memory for device name!\n");
@@ -980,8 +979,6 @@ ScsiPortInitialize(
             PortDeviceObject = NULL;
             break;
         }
-
-        DPRINT1("Created device: %wZ (%p)\n", &DeviceName, PortDeviceObject);
 
         /* Set the buffering strategy here... */
         PortDeviceObject->Flags |= DO_DIRECT_IO;
@@ -1082,7 +1079,8 @@ CreatePortConfig:
         if ((HwInitializationData->AdapterInterfaceType == PCIBus) &&
             (HwInitializationData->VendorIdLength > 0) &&
             (HwInitializationData->VendorId != NULL) &&
-            (HwInitializationData->DeviceIdLength > 0) && (HwInitializationData->DeviceId != NULL))
+            (HwInitializationData->DeviceIdLength > 0) &&
+            (HwInitializationData->DeviceId != NULL))
         {
             PortConfig->BusInterruptLevel = 0;
 
@@ -1205,9 +1203,9 @@ CreatePortConfig:
 
         /* Copy all stuff which we ever need from PortConfig to the DeviceExtension */
         if (PortConfig->MaximumNumberOfTargets > SCSI_MAXIMUM_TARGETS_PER_BUS)
-            DeviceExtension->MaxTargedIds = SCSI_MAXIMUM_TARGETS_PER_BUS;
+            DeviceExtension->MaxTargetIds = SCSI_MAXIMUM_TARGETS_PER_BUS;
         else
-            DeviceExtension->MaxTargedIds = PortConfig->MaximumNumberOfTargets;
+            DeviceExtension->MaxTargetIds = PortConfig->MaximumNumberOfTargets;
 
         DeviceExtension->NumberOfBuses = PortConfig->NumberOfBuses;
         DeviceExtension->CachesData = PortConfig->CachesData;
@@ -1362,7 +1360,7 @@ CreatePortConfig:
         if (!Again)
             ConfigInfo.BusNumber++;
 
-        DPRINT("Bus: %lu  MaxBus: %lu\n", ConfigInfo.BusNumber, MaxBus);
+        DPRINT("  Bus: %lu\n", ConfigInfo.BusNumber);
 
         DeviceFound = TRUE;
     }
@@ -2404,7 +2402,7 @@ SpiCreatePortConfig(PSCSI_PORT_DEVICE_EXTENSION DeviceExtension,
         ConfigInfo->DmaPort2 = SP_UNINITIALIZED_VALUE;
         ConfigInfo->MaximumTransferLength = SP_UNINITIALIZED_VALUE;
         ConfigInfo->NumberOfAccessRanges = HwInitData->NumberOfAccessRanges;
-        ConfigInfo->MaximumNumberOfTargets = 8;
+        ConfigInfo->MaximumNumberOfTargets = SCSI_MAXIMUM_TARGETS; // NOTE: Using legacy value.
 
         /* Store parameters */
         ConfigInfo->NeedPhysicalAddresses = HwInitData->NeedPhysicalAddresses;
@@ -2420,8 +2418,10 @@ SpiCreatePortConfig(PSCSI_PORT_DEVICE_EXTENSION DeviceExtension,
         ConfigInfo->AtdiskSecondaryClaimed = DdkConfigInformation->AtDiskSecondaryAddressClaimed;
 
         /* Initiator bus id is not set */
-        for (Bus = 0; Bus < 8; Bus++)
+        for (Bus = 0; Bus < RTL_NUMBER_OF(ConfigInfo->InitiatorBusId); Bus++)
+        {
             ConfigInfo->InitiatorBusId[Bus] = (CCHAR)SP_UNINITIALIZED_VALUE;
+        }
     }
 
     ConfigInfo->NumberOfPhysicalBreaks = 17;
@@ -2451,7 +2451,7 @@ TryNextAd:
         if (NT_SUCCESS(Status))
         {
             /* Create name for it */
-            swprintf(StrBuffer, L"ScsiAdapter\\%lu",
+            _swprintf(StrBuffer, L"ScsiAdapter\\%lu",
                 InternalConfigInfo->AdapterNumber);
 
             RtlInitUnicodeString(&UnicodeString, StrBuffer);
@@ -2494,7 +2494,7 @@ TryNextAd:
             else
             {
                 /* Info was not found, exit */
-                DPRINT1("ZwOpenKey() failed with Status=0x%08X\n", Status);
+                DPRINT("ZwOpenKey() failed with Status=0x%08X\n", Status);
                 return STATUS_DEVICE_DOES_NOT_EXIST;
             }
         }
@@ -2514,7 +2514,7 @@ TryNextAd:
 
     if (InternalConfigInfo->ServiceKey != NULL)
     {
-        swprintf(DeviceBuffer, L"Device%lu", InternalConfigInfo->AdapterNumber);
+        _swprintf(DeviceBuffer, L"Device%lu", InternalConfigInfo->AdapterNumber);
         RtlInitUnicodeString(&UnicodeString, DeviceBuffer);
 
         /* Open the service key */
@@ -2692,7 +2692,7 @@ SpiParseDeviceInfo(IN PSCSI_PORT_DEVICE_EXTENSION DeviceExtension,
 
             /* Check / reset if needed */
             if (ConfigInfo->InitiatorBusId[0] > ConfigInfo->MaximumNumberOfTargets - 1)
-                ConfigInfo->InitiatorBusId[0] = (CCHAR)-1;
+                ConfigInfo->InitiatorBusId[0] = (CCHAR)SP_UNINITIALIZED_VALUE;
 
             DPRINT("InitiatorTargetId = %d\n", ConfigInfo->InitiatorBusId[0]);
         }

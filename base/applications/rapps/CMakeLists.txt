@@ -1,38 +1,41 @@
 project(rapps)
 
-include_directories(${REACTOS_SOURCE_DIR}/sdk/lib/cryptlib)
-include_directories(${REACTOS_SOURCE_DIR}/sdk/lib/conutils)
-include_directories(include)
+include_directories(
+    include
+    ${REACTOS_SOURCE_DIR}/sdk/lib/cryptlib)
 
 list(APPEND SOURCE
+    appdb.cpp
+    appinfo.cpp
     appview.cpp
     asyncinet.cpp
-    available.cpp
     cabinet.cpp
+    configparser.cpp
+    geninst.cpp
     gui.cpp
-    installed.cpp
     integrity.cpp
     loaddlg.cpp
     misc.cpp
     settings.cpp
     settingsdlg.cpp
-    winmain.cpp
     unattended.cpp
-    include/rapps.h
+    winmain.cpp
+    include/appdb.h
+    include/appinfo.h
     include/appview.h
     include/asyncinet.h
-    include/available.h
-    include/dialogs.h
-    include/gui.h
-    include/installed.h
+    include/configparser.h
     include/crichedit.h
     include/defines.h
+    include/dialogs.h
+    include/gui.h
     include/misc.h
-    include/settings.h
+    include/rapps.h
     include/resource.h
     include/rosui.h
-    include/winmain.h
+    include/settings.h
     include/unattended.h
+    include/winmain.h
 )
 
 add_definitions(
@@ -41,10 +44,10 @@ add_definitions(
 file(GLOB_RECURSE rapps_rc_deps res/*.*)
 add_rc_deps(rapps.rc ${rapps_rc_deps})
 add_executable(rapps ${SOURCE} rapps.rc)
-set_module_type(rapps win32gui UNICODE)
-target_link_libraries(rapps conutils ${PSEH_LIB} uuid wine cpprt atl_classes)
-add_importlibs(rapps advapi32 comctl32 gdi32 wininet user32 shell32 shlwapi ole32 setupapi gdiplus msvcrt kernel32 ntdll)
 add_pch(rapps include/rapps.h SOURCE)
+set_module_type(rapps win32gui UNICODE)
+target_link_libraries(rapps conutils uuid cpprt atl_classes minizip zlib)
+add_importlibs(rapps advapi32 comctl32 gdi32 wininet crypt32 cryptui user32 shell32 shlwapi ole32 setupapi gdiplus msvcrt kernel32 ntdll)
 add_dependencies(rapps rappsmsg)
 add_message_headers(ANSI rappsmsg.mc)
 add_cd_file(TARGET rapps DESTINATION reactos/system32 FOR all)

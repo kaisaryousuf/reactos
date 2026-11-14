@@ -1,9 +1,8 @@
 
 add_definitions(
-    -DNDIS50_MINIPORT
+    -DNDIS51_MINIPORT
     -DNDIS_MINIPORT_DRIVER
-    -DNDIS_LEGACY_MINIPORT
-    -DNDIS51_MINIPORT)
+    -DNDIS_LEGACY_MINIPORT=1)
 
 list(APPEND SOURCE
     pcnet.c
@@ -15,4 +14,4 @@ add_pch(pcnet pcnet.h SOURCE)
 set_module_type(pcnet kernelmodedriver)
 add_importlibs(pcnet ndis ntoskrnl hal)
 add_cd_file(TARGET pcnet DESTINATION reactos/system32/drivers FOR all)
-add_driver_inf(pcnet netpcnet.inf)
+add_driver_inf(pcnet netamd.inf)

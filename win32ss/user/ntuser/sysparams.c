@@ -17,6 +17,7 @@ DBG_DEFAULT_CHANNEL(UserSysparams);
 SPIVALUES gspv;
 BOOL gbSpiInitialized = FALSE;
 BOOL g_PaintDesktopVersion = FALSE;
+BOOL g_bWindowSnapEnabled = TRUE;
 
 // HACK! We initialize SPI before we have a proper surface to get this from.
 #define dpi 96
@@ -73,10 +74,13 @@ static const WCHAR* VAL_SCRLLLINES = L"WheelScrollLines";
 static const WCHAR* VAL_CLICKLOCKTIME = L"ClickLockTime";
 static const WCHAR* VAL_PAINTDESKVER = L"PaintDesktopVersion";
 static const WCHAR* VAL_CARETRATE = L"CursorBlinkRate";
+static const WCHAR* VAL_CARETWIDTH = L"CaretWidth";
 #if (_WIN32_WINNT >= 0x0600)
 static const WCHAR* VAL_SCRLLCHARS = L"WheelScrollChars";
 #endif
 static const WCHAR* VAL_USERPREFMASK = L"UserPreferencesMask";
+static const WCHAR* VAL_SNAP_ENABLED = L"WindowArrangementActive";
+static const WCHAR* VAL_SNAP_DOCKMOVING = L"DockMoving";
 
 static const WCHAR* KEY_MDALIGN = L"Software\\Microsoft\\Windows NT\\CurrentVersion\\Windows";
 static const WCHAR* VAL_MDALIGN = L"MenuDropAlignment";
@@ -94,12 +98,18 @@ static const WCHAR* KEY_KBD = L"Control Panel\\Keyboard";
 static const WCHAR* VAL_KBDSPD = L"KeyboardSpeed";
 static const WCHAR* VAL_KBDDELAY = L"KeyboardDelay";
 
+static const WCHAR* KEY_INPUT_METHOD = L"Control Panel\\Input Method";
+// static const WCHAR* VAL_ENABLE_HEXNUMPAD = L"EnableHexNumpad";
+
 static const WCHAR* KEY_SHOWSNDS = L"Control Panel\\Accessibility\\ShowSounds";
 static const WCHAR* KEY_KDBPREF = L"Control Panel\\Accessibility\\Keyboard Preference";
 static const WCHAR* KEY_SCRREAD = L"Control Panel\\Accessibility\\Blind Access";
 static const WCHAR* VAL_ON = L"On";
 
-
+static const WCHAR* KEY_MOUSEKEYS = L"Control Panel\\Accessibility\\MouseKeys";
+static const WCHAR* VAL_MOUSEKEYS_FLAGS = L"Flags";
+static const WCHAR* VAL_MOUSEKEYS_MAX = L"MaximumSpeed";
+static const WCHAR* VAL_MOUSEKEYS_TIMETOMAX = L"TimeToMaximumSpeed";
 
 /** Loading the settings ******************************************************/
 
@@ -287,7 +297,9 @@ SpiUpdatePerUserSystemParameters(VOID)
     gspv.bDragFullWindows = SpiLoadInt(KEY_DESKTOP, VAL_DRAG, 0);
     gspv.iWheelScrollLines = SpiLoadInt(KEY_DESKTOP, VAL_SCRLLLINES, 3);
     gspv.dwMouseClickLockTime = SpiLoadDWord(KEY_DESKTOP, VAL_CLICKLOCKTIME, 1200);
-    gpsi->dtCaretBlink = SpiLoadInt(KEY_DESKTOP, VAL_CARETRATE, 530);
+    if (gpsi)
+        gpsi->dtCaretBlink = SpiLoadInt(KEY_DESKTOP, VAL_CARETRATE, 530);
+    gspv.dwCaretWidth = SpiLoadDWord(KEY_DESKTOP, VAL_CARETWIDTH, 1);
     gspv.dwUserPrefMask = SpiLoadUserPrefMask(UPM_DEFAULT);
     gspv.bMouseClickLock = (gspv.dwUserPrefMask & UPM_CLICKLOCK) != 0;
     gspv.bMouseCursorShadow = (gspv.dwUserPrefMask & UPM_CURSORSHADOW) != 0;
@@ -322,11 +334,18 @@ SpiUpdatePerUserSystemParameters(VOID)
     gspv.filterkeys.cbSize = sizeof(FILTERKEYS);
     gspv.togglekeys.cbSize = sizeof(TOGGLEKEYS);
     gspv.mousekeys.cbSize = sizeof(MOUSEKEYS);
+    gspv.mousekeys.dwFlags = SpiLoadInt(KEY_MOUSEKEYS, VAL_MOUSEKEYS_FLAGS, 62);
+    gspv.mousekeys.iMaxSpeed = SpiLoadInt(KEY_MOUSEKEYS, VAL_MOUSEKEYS_MAX, 80);
+    gspv.mousekeys.iTimeToMaxSpeed = SpiLoadInt(KEY_MOUSEKEYS, VAL_MOUSEKEYS_TIMETOMAX, 3000);
+    gspv.mousekeys.iCtrlSpeed = 8; // FIXME
     gspv.stickykeys.cbSize = sizeof(STICKYKEYS);
     gspv.serialkeys.cbSize = sizeof(SERIALKEYS);
     gspv.soundsentry.cbSize = sizeof(SOUNDSENTRYW);
     gspv.highcontrast.cbSize = sizeof(HIGHCONTRASTW);
     gspv.animationinfo.cbSize = sizeof(ANIMATIONINFO);
+
+    g_bWindowSnapEnabled = SpiLoadInt(KEY_DESKTOP, VAL_SNAP_ENABLED, TRUE);
+    gspv.bDockMoving = SpiLoadInt(KEY_DESKTOP, VAL_SNAP_DOCKMOVING, TRUE);
 
     /* Make sure we don't use broken values */
     SpiFixupValues();
@@ -336,12 +355,16 @@ SpiUpdatePerUserSystemParameters(VOID)
 
     if (gbSpiInitialized && gpsi)
     {
-       if (gspv.bKbdPref) gpsi->dwSRVIFlags |= SRVINFO_KBDPREF;
-       if (SPITESTPREF(UPM_KEYBOARDCUES)) gpsi->PUSIFlags |= PUSIF_KEYBOARDCUES;
-       if (SPITESTPREF(UPM_COMBOBOXANIMATION)) gpsi->PUSIFlags |= PUSIF_COMBOBOXANIMATION;
-       if (SPITESTPREF(UPM_LISTBOXSMOOTHSCROLLING)) gpsi->PUSIFlags |= PUSIF_LISTBOXSMOOTHSCROLLING;
+        if (gspv.bKbdPref) gpsi->dwSRVIFlags |= SRVINFO_KBDPREF;
+        if (SPITESTPREF(UPM_KEYBOARDCUES)) gpsi->PUSIFlags |= PUSIF_KEYBOARDCUES;
+        if (SPITESTPREF(UPM_COMBOBOXANIMATION)) gpsi->PUSIFlags |= PUSIF_COMBOBOXANIMATION;
+        if (SPITESTPREF(UPM_LISTBOXSMOOTHSCROLLING)) gpsi->PUSIFlags |= PUSIF_LISTBOXSMOOTHSCROLLING;
     }
-    gdwLanguageToggleKey = UserGetLanguageToggle();
+
+    gbEnableHexNumpad = SpiLoadInt(KEY_INPUT_METHOD, L"EnableHexNumpad", FALSE);
+
+    gdwLanguageToggleKey = UserGetLanguageToggle(L"Language Hotkey", 1);
+    gdwLayoutToggleKey = UserGetLanguageToggle(L"Layout Hotkey", 2);
 }
 
 BOOL
@@ -620,6 +643,11 @@ SpiGetUserPref(DWORD dwMask, PVOID pvParam, FLONG fl)
     return SpiGetInt(pvParam, &iValue, fl);
 }
 
+HBITMAP
+IntStretchWallpaper(
+    _In_ PWND pwndDesktop,
+    _In_ HBITMAP hBitmap);
+
 static
 UINT_PTR
 SpiSetWallpaper(PVOID pvParam, FLONG fl)
@@ -680,7 +708,7 @@ SpiSetWallpaper(PVOID pvParam, FLONG fl)
         ustr.Length = 0;
         if (!W32kDosPathNameToNtPathName(gspv.awcWallpaper, &ustr))
         {
-            ERR("RtlDosPathNameToNtPathName_U failed\n");
+            ERR("W32kDosPathNameToNtPathName failed\n");
             return 0;
         }
 
@@ -739,7 +767,7 @@ SpiSetWallpaper(PVOID pvParam, FLONG fl)
         /* Remove wallpaper */
         gspv.cxWallpaper = 0;
         gspv.cyWallpaper = 0;
-        hbmp = 0;
+        hbmp = NULL;
     }
 
     /* Take care of the old wallpaper, if any */
@@ -752,7 +780,16 @@ SpiSetWallpaper(PVOID pvParam, FLONG fl)
     }
 
     /* Set the new wallpaper */
-    gspv.hbmWallpaper = hbmp;
+    if (gspv.WallpaperMode == wmStretch ||
+        gspv.WallpaperMode == wmFit ||
+        gspv.WallpaperMode == wmFill)
+    {
+        gspv.hbmWallpaper = IntStretchWallpaper(UserGetDesktopWindow(), hbmp);
+    }
+    else
+    {
+        gspv.hbmWallpaper = hbmp;
+    }
 
     NtUserRedrawWindow(UserGetShellWindow(), NULL, NULL, RDW_INVALIDATE | RDW_ERASE);
 
@@ -949,7 +986,7 @@ SpiGetSet(UINT uiAction, UINT uiParam, PVOID pvParam, FLONG fl)
 
             /* Fixup user's structure size */
             metrics->cbSize = sizeof(NONCLIENTMETRICSW);
-            
+
             if (!SpiSet(&gspv.ncm, metrics, sizeof(NONCLIENTMETRICSW), fl))
                 return 0;
 
@@ -1180,7 +1217,9 @@ SpiGetSet(UINT uiAction, UINT uiParam, PVOID pvParam, FLONG fl)
 
             if (fl & SPIF_UPDATEINIFILE)
             {
-                // FIXME: What to do?
+                SpiStoreSzInt(KEY_MOUSEKEYS, VAL_MOUSEKEYS_FLAGS, gspv.mousekeys.dwFlags);
+                SpiStoreSzInt(KEY_MOUSEKEYS, VAL_MOUSEKEYS_MAX, gspv.mousekeys.iMaxSpeed);
+                SpiStoreSzInt(KEY_MOUSEKEYS, VAL_MOUSEKEYS_TIMETOMAX, gspv.mousekeys.iTimeToMaxSpeed);
             }
             return (UINT_PTR)KEY_DESKTOP;
         }
@@ -1388,10 +1427,10 @@ SpiGetSet(UINT uiAction, UINT uiParam, PVOID pvParam, FLONG fl)
             return SpiGetInt(pvParam, &gspv.bFontSmoothing, fl);
 
         case SPI_SETFONTSMOOTHING:
-            gspv.bFontSmoothing = (uiParam == 2);
+            gspv.bFontSmoothing = !!uiParam;
             if (fl & SPIF_UPDATEINIFILE)
             {
-                SpiStoreSz(KEY_DESKTOP, VAL_FONTSMOOTHING, (uiParam == 2) ? L"2" : L"0");
+                SpiStoreSzInt(KEY_DESKTOP, VAL_FONTSMOOTHING, gspv.bFontSmoothing ? 2 : 0);
             }
             return (UINT_PTR)KEY_DESKTOP;
 
@@ -1417,7 +1456,7 @@ SpiGetSet(UINT uiAction, UINT uiParam, PVOID pvParam, FLONG fl)
             return SpiSetInt(&gspv.iPwrOffTimeout, uiParam, KEY_DESKTOP, L"PowerOffTimeOut", fl);
 
         case SPI_GETLOWPOWERACTIVE:
-            return SpiGetInt(pvParam, &gspv.iPwrOffTimeout, fl);
+            return SpiGetInt(pvParam, &gspv.bLowPwrActive, fl);
 
         case SPI_GETPOWEROFFACTIVE:
             return SpiGetInt(pvParam, &gspv.bPwrOffActive, fl);
@@ -1454,9 +1493,9 @@ SpiGetSet(UINT uiAction, UINT uiParam, PVOID pvParam, FLONG fl)
         }
 
         case SPI_SETLANGTOGGLE:
-            gdwLanguageToggleKey = UserGetLanguageToggle();
+            gdwLayoutToggleKey = UserGetLanguageToggle(L"Layout Hotkey", 2);
+            gdwLanguageToggleKey = UserGetLanguageToggle(L"Language Hotkey", 1);
             return gdwLanguageToggleKey;
-            break;
 
         case SPI_GETWINDOWSEXTENSION:
             ERR("SPI_GETWINDOWSEXTENSION is unimplemented\n");
@@ -1490,7 +1529,7 @@ SpiGetSet(UINT uiAction, UINT uiParam, PVOID pvParam, FLONG fl)
             return SpiGetInt(pvParam, &gspv.iMouseHoverTime, fl);
 
         case SPI_SETMOUSEHOVERTIME:
-           /* See http://msdn2.microsoft.com/en-us/library/ms724947.aspx
+           /* See https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-systemparametersinfoa
             * copy text from it, if some agument why xp and 2003 behovir diffent
             * only if they do not have SP install
             * " Windows Server 2003 and Windows XP: The operating system does not
@@ -1738,7 +1777,7 @@ SpiGetSet(UINT uiAction, UINT uiParam, PVOID pvParam, FLONG fl)
             return SpiGetInt(pvParam, &gspv.dwCaretWidth, fl);
 
         case SPI_SETCARETWIDTH:
-            return SpiSetInt(&gspv.dwCaretWidth, uiParam, KEY_MOUSE, L"", fl);
+            return SpiSetDWord(&gspv.dwCaretWidth, PtrToUlong(pvParam), KEY_DESKTOP, VAL_CARETWIDTH, fl);
 
         case SPI_GETMOUSECLICKLOCKTIME:
             return SpiGetInt(pvParam, &gspv.dwMouseClickLockTime, fl);
@@ -1775,6 +1814,16 @@ SpiGetSet(UINT uiAction, UINT uiParam, PVOID pvParam, FLONG fl)
 
         case SPI_SETFONTSMOOTHINGORIENTATION:
             return SpiSetDWord(&gspv.uiFontSmoothingOrientation, PtrToUlong(pvParam), KEY_DESKTOP, VAL_FONTSMOOTHINGORIENTATION, fl);
+
+        case SPI_GETWINARRANGING:
+            return SpiGetInt(pvParam, &g_bWindowSnapEnabled, fl);
+        case SPI_SETWINARRANGING:
+            return SpiSetInt(&g_bWindowSnapEnabled, uiParam, KEY_DESKTOP, VAL_SNAP_ENABLED, fl);
+
+        case SPI_GETDOCKMOVING:
+            return SpiGetInt(pvParam, &gspv.bDockMoving, fl);
+        case SPI_SETDOCKMOVING:
+            return SpiSetInt(&gspv.bDockMoving, uiParam, KEY_DESKTOP, VAL_SNAP_DOCKMOVING, fl);
 
         /* The following are undocumented, but valid SPI values */
         case 0x1010:

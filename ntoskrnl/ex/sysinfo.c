@@ -208,7 +208,7 @@ ExLockUserBuffer(
     PMDL *OutMdl)
 {
     PMDL Mdl;
-    PAGED_CODE();
+    ASSERT(KeGetCurrentIrql() <= DISPATCH_LEVEL);
 
     *MappedSystemVa = NULL;
     *OutMdl = NULL;
@@ -342,17 +342,17 @@ ExGetCurrentProcessorCpuUsage(PULONG CpuUsage)
  */
 VOID
 NTAPI
-ExGetCurrentProcessorCounts(PULONG ThreadKernelTime,
-                            PULONG TotalCpuTime,
+ExGetCurrentProcessorCounts(PULONG IdleTime,
+                            PULONG KernelAndUserTime,
                             PULONG ProcessorNumber)
 {
     PKPRCB Prcb;
 
     Prcb = KeGetCurrentPrcb();
 
-    *ThreadKernelTime = Prcb->KernelTime + Prcb->UserTime;
-    *TotalCpuTime = Prcb->CurrentThread->KernelTime;
-    *ProcessorNumber = KeGetCurrentProcessorNumber();
+    *IdleTime = Prcb->IdleThread->KernelTime;
+    *KernelAndUserTime = Prcb->KernelTime + Prcb->UserTime;
+    *ProcessorNumber = (ULONG)Prcb->Number;
 }
 
 /*
@@ -564,11 +564,12 @@ NtEnumerateSystemEnvironmentValuesEx(IN ULONG InformationClass,
 
 NTSTATUS
 NTAPI
-NtQuerySystemEnvironmentValueEx(IN PUNICODE_STRING VariableName,
-                                IN LPGUID VendorGuid,
-                                IN PVOID Value,
-                                IN OUT PULONG ReturnLength,
-                                IN OUT PULONG Attributes)
+NtQuerySystemEnvironmentValueEx(
+    _In_ PUNICODE_STRING VariableName,
+    _In_ LPGUID VendorGuid,
+    _Out_opt_ PVOID Value,
+    _Inout_ PULONG ReturnLength,
+    _Out_opt_ PULONG Attributes)
 {
     UNIMPLEMENTED;
     return STATUS_NOT_IMPLEMENTED;
@@ -576,11 +577,12 @@ NtQuerySystemEnvironmentValueEx(IN PUNICODE_STRING VariableName,
 
 NTSTATUS
 NTAPI
-NtSetSystemEnvironmentValueEx(IN PUNICODE_STRING VariableName,
-                              IN LPGUID VendorGuid,
-                              IN PVOID Value,
-                              IN OUT PULONG ReturnLength,
-                              IN OUT PULONG Attributes)
+NtSetSystemEnvironmentValueEx(
+    _In_ PUNICODE_STRING VariableName,
+    _In_ LPGUID VendorGuid,
+    _In_reads_bytes_opt_(ValueLength) PVOID Value,
+    _In_ ULONG ValueLength,
+    _In_ ULONG Attributes)
 {
     UNIMPLEMENTED;
     return STATUS_NOT_IMPLEMENTED;
@@ -662,7 +664,13 @@ QSI_DEF(SystemProcessorInformation)
 #else
     Spi->MaximumProcessors = 0;
 #endif
-    Spi->ProcessorFeatureBits = KeFeatureBits;
+
+    /* According to Geoff Chappell, on Win 8.1 x64 / Win 10 x86, where this
+       field is extended to 64 bits, it continues to produce only the low 32
+       bits. For the full value, use SYSTEM_PROCESSOR_FEATURES_INFORMATION.
+       See https://www.geoffchappell.com/studies/windows/km/ntoskrnl/api/ex/sysinfo/processor.htm
+     */
+    Spi->ProcessorFeatureBits = (ULONG)KeFeatureBits;
 
     DPRINT("Arch %u Level %u Rev 0x%x\n", Spi->ProcessorArchitecture,
         Spi->ProcessorLevel, Spi->ProcessorRevision);
@@ -714,13 +722,8 @@ QSI_DEF(SystemPerformanceInformation)
     }
 
     Spi->AvailablePages = (ULONG)MmAvailablePages;
-    /*
-     *   Add up all the used "Committed" memory + pagefile.
-     *   Not sure this is right. 8^\
-     */
-    Spi->CommittedPages = MiMemoryConsumers[MC_SYSTEM].PagesUsed +
-                          MiMemoryConsumers[MC_USER].PagesUsed +
-                          MiUsedSwapPages;
+
+    Spi->CommittedPages = MmTotalCommittedPages;
     /*
      *  Add up the full system total + pagefile.
      *  All this make Taskmgr happy but not sure it is the right numbers.
@@ -728,7 +731,7 @@ QSI_DEF(SystemPerformanceInformation)
      */
     Spi->CommitLimit = MmNumberOfPhysicalPages + MiFreeSwapPages + MiUsedSwapPages;
 
-    Spi->PeakCommitment = 0; /* FIXME */
+    Spi->PeakCommitment = MmPeakCommitment;
     Spi->PageFaultCount = 0; /* FIXME */
     Spi->CopyOnWriteCount = 0; /* FIXME */
     Spi->TransitionCount = 0; /* FIXME */
@@ -861,20 +864,36 @@ QSI_DEF(SystemTimeOfDayInformation)
     return STATUS_SUCCESS;
 }
 
-/* Class 4 - Path Information */
+/* Class 4 - Path Information (DEPRECATED) */
 QSI_DEF(SystemPathInformation)
 {
-    /* FIXME: QSI returns STATUS_BREAKPOINT. Why? */
-    DPRINT1("NtQuerySystemInformation - SystemPathInformation not implemented\n");
-
-    return STATUS_BREAKPOINT;
+    /*
+     * Since NT 3.51, this information class is trivially implemented.
+     * The path to the NT directory is now stored in KUSER_SHARED_DATA
+     * as the NtSystemRoot member.
+     * Windows Checked builds show the following message and break to
+     * the debugger before failing the function as not implemented.
+     */
+#if DBG
+    DPRINT1("EX: SystemPathInformation now available via SharedUserData\n");
+    // DbgBreakPoint(); // Not needed in ReactOS.
+#endif
+    return STATUS_NOT_IMPLEMENTED;
 }
 
-/* Class 5 - Process Information */
-QSI_DEF(SystemProcessInformation)
+/* Class 5 - Process Information / 57 - SystemExtendedProcessInformation  */
+static
+NTSTATUS
+ExpQuerySystemProcessInformation(
+    _Out_writes_bytes_(Size) PVOID Buffer,
+    _In_ ULONG Size,
+    _Out_ PULONG ReqSize,
+    _In_ BOOLEAN Extended)
 {
+    const ULONG ThreadInfoSize = Extended ? sizeof(SYSTEM_EXTENDED_THREAD_INFORMATION) : sizeof(SYSTEM_THREAD_INFORMATION);
     PSYSTEM_PROCESS_INFORMATION SpiCurrent;
     PSYSTEM_THREAD_INFORMATION ThreadInfo;
+    PSYSTEM_EXTENDED_THREAD_INFORMATION ThreadInfoEx;
     PEPROCESS Process = NULL, SystemProcess;
     PETHREAD CurrentThread;
     ANSI_STRING ImageName;
@@ -941,12 +960,13 @@ QSI_DEF(SystemProcessInformation)
             CurrentEntry = Process->Pcb.ThreadListHead.Flink;
             while (CurrentEntry != &Process->Pcb.ThreadListHead)
             {
+                CurrentThread = CONTAINING_RECORD(CurrentEntry, ETHREAD, Tcb.ThreadListEntry);
                 ThreadsCount++;
                 CurrentEntry = CurrentEntry->Flink;
             }
 
             // size of the structure for every process
-            CurrentSize = sizeof(SYSTEM_PROCESS_INFORMATION) + sizeof(SYSTEM_THREAD_INFORMATION) * ThreadsCount;
+            CurrentSize = sizeof(SYSTEM_PROCESS_INFORMATION) + ThreadInfoSize * ThreadsCount;
             ImageNameLength = 0;
             Status = SeLocateProcessImageName(Process, &TempProcessImageName);
             ProcessImageName = TempProcessImageName;
@@ -1008,7 +1028,11 @@ QSI_DEF(SystemProcessInformation)
                     else
                     {
                         RtlInitAnsiString(&ImageName, Process->ImageFileName);
-                        RtlAnsiStringToUnicodeString(&SpiCurrent->ImageName, &ImageName, FALSE);
+                        Status = RtlAnsiStringToUnicodeString(&SpiCurrent->ImageName, &ImageName, FALSE);
+                        if (!NT_SUCCESS(Status))
+                        {
+                            SpiCurrent->ImageName.Length = 0;
+                        }
                     }
                 }
                 else
@@ -1019,7 +1043,11 @@ QSI_DEF(SystemProcessInformation)
                 SpiCurrent->BasePriority = Process->Pcb.BasePriority;
                 SpiCurrent->UniqueProcessId = Process->UniqueProcessId;
                 SpiCurrent->InheritedFromUniqueProcessId = Process->InheritedFromUniqueProcessId;
-                SpiCurrent->HandleCount = ObGetProcessHandleCount(Process);
+
+                /* PsIdleProcess shares its handle table with PsInitialSystemProcess,
+                 * so return the handle count for System only, not Idle one. */
+                SpiCurrent->HandleCount = (Process == PsIdleProcess) ? 0 : ObGetProcessHandleCount(Process);
+
                 SpiCurrent->PeakVirtualSize = Process->PeakVirtualSize;
                 SpiCurrent->VirtualSize = Process->VirtualSize;
                 SpiCurrent->PageFaultCount = Process->Vm.PageFaultCount;
@@ -1032,10 +1060,12 @@ QSI_DEF(SystemProcessInformation)
                 SpiCurrent->PagefileUsage = Process->QuotaUsage[PsPageFile];
                 SpiCurrent->PeakPagefileUsage = Process->QuotaPeak[PsPageFile];
                 SpiCurrent->PrivatePageCount = Process->CommitCharge;
-                ThreadInfo = (PSYSTEM_THREAD_INFORMATION)(SpiCurrent + 1);
 
-                CurrentEntry = Process->Pcb.ThreadListHead.Flink;
-                while (CurrentEntry != &Process->Pcb.ThreadListHead)
+                /* Now do the threads */
+                ThreadInfo = (PSYSTEM_THREAD_INFORMATION)(SpiCurrent + 1);
+                for (CurrentEntry = Process->Pcb.ThreadListHead.Flink;
+                     CurrentEntry != &Process->Pcb.ThreadListHead;
+                     CurrentEntry = CurrentEntry->Flink)
                 {
                     CurrentThread = CONTAINING_RECORD(CurrentEntry, ETHREAD, Tcb.ThreadListEntry);
 
@@ -1050,9 +1080,17 @@ QSI_DEF(SystemProcessInformation)
                     ThreadInfo->ContextSwitches = CurrentThread->Tcb.ContextSwitches;
                     ThreadInfo->ThreadState = CurrentThread->Tcb.State;
                     ThreadInfo->WaitReason = CurrentThread->Tcb.WaitReason;
+                    if (Extended)
+                    {
+                        ThreadInfoEx = (PSYSTEM_EXTENDED_THREAD_INFORMATION)ThreadInfo;
+                        ThreadInfoEx->StackBase = CurrentThread->Tcb.StackBase;
+                        ThreadInfoEx->StackLimit = (PVOID)CurrentThread->Tcb.StackLimit;
+                        ThreadInfoEx->Win32StartAddress = (CurrentThread->Win32StartAddress ?
+                            CurrentThread->Win32StartAddress : CurrentThread->StartAddress);
+                        ThreadInfoEx->TebBase = CurrentThread->Tcb.Teb;
+                    }
 
-                    ThreadInfo++;
-                    CurrentEntry = CurrentEntry->Flink;
+                    ThreadInfo = (PSYSTEM_THREAD_INFORMATION)((PUCHAR)ThreadInfo + ThreadInfoSize);
                 }
 
                 /* Query total user/kernel times of a process */
@@ -1111,6 +1149,12 @@ Skip:
 
     *ReqSize = TotalSize;
     return Status;
+}
+
+/* Class 5 - Process Information */
+QSI_DEF(SystemProcessInformation)
+{
+    return ExpQuerySystemProcessInformation(Buffer, Size, ReqSize, FALSE);
 }
 
 /* Class 6 - Call Count Information */
@@ -1214,7 +1258,11 @@ SSI_DEF(SystemFlagsInformation)
 
     if (!SeSinglePrivilegeCheck(SeDebugPrivilege, ExGetPreviousMode()))
     {
+#if (NTDDI_VERSION < NTDDI_WIN7)
+        return STATUS_ACCESS_VIOLATION;
+#else
         return STATUS_ACCESS_DENIED;
+#endif
     }
 
     NtGlobalFlag = ((PSYSTEM_FLAGS_INFORMATION) Buffer)->Flags;
@@ -1282,7 +1330,6 @@ QSI_DEF(SystemNonPagedPoolInformation)
     DPRINT1("NtQuerySystemInformation - SystemNonPagedPoolInformation not implemented\n");
     return STATUS_NOT_IMPLEMENTED;
 }
-
 
 /* Class 16 - Handle Information */
 QSI_DEF(SystemHandleInformation)
@@ -1370,7 +1417,7 @@ QSI_DEF(SystemHandleInformation)
 
                         HandleInformation->Handles[Index].CreatorBackTraceIndex = 0;
 
-#if 0 /* FIXME!!! Type field currupted */
+#if 0 /* FIXME!!! Type field corrupted */
                         HandleInformation->Handles[Index].ObjectTypeIndex =
                             (UCHAR) ObjectHeader->Type->Index;
 #else
@@ -1397,7 +1444,7 @@ QSI_DEF(SystemHandleInformation)
             }
 
             /* Go to the next entry */
-            Handle.Value += sizeof(HANDLE);
+            Handle.Index++;
         }
     }
 
@@ -1514,7 +1561,8 @@ QSI_DEF(SystemInterruptInformation)
     ULONG ti;
     PSYSTEM_INTERRUPT_INFORMATION sii = (PSYSTEM_INTERRUPT_INFORMATION)Buffer;
 
-    if(Size < KeNumberProcessors * sizeof(SYSTEM_INTERRUPT_INFORMATION))
+    *ReqSize = KeNumberProcessors * sizeof(SYSTEM_INTERRUPT_INFORMATION);
+    if (Size < *ReqSize)
     {
         return STATUS_INFO_LENGTH_MISMATCH;
     }
@@ -1525,7 +1573,7 @@ QSI_DEF(SystemInterruptInformation)
     {
         Prcb = KiProcessorBlock[i];
         sii->ContextSwitches = KeGetContextSwitches(Prcb);
-        sii->DpcCount = Prcb->DpcData[0].DpcCount;
+        sii->DpcCount = Prcb->DpcData[DPC_NORMAL].DpcCount;
         sii->DpcRate = Prcb->DpcRequestRate;
         sii->TimeIncrement = ti;
         sii->DpcBypassCount = 0;
@@ -1537,7 +1585,7 @@ QSI_DEF(SystemInterruptInformation)
 }
 
 /* Class 24 - DPC Behaviour Information */
-QSI_DEF(SystemDpcBehaviourInformation)
+QSI_DEF(SystemDpcBehaviorInformation)
 {
     PSYSTEM_DPC_BEHAVIOR_INFORMATION sdbi = (PSYSTEM_DPC_BEHAVIOR_INFORMATION)Buffer;
 
@@ -1554,10 +1602,10 @@ QSI_DEF(SystemDpcBehaviourInformation)
     return STATUS_SUCCESS;
 }
 
-SSI_DEF(SystemDpcBehaviourInformation)
+SSI_DEF(SystemDpcBehaviorInformation)
 {
     /* FIXME */
-    DPRINT1("NtSetSystemInformation - SystemDpcBehaviourInformation not implemented\n");
+    DPRINT1("NtSetSystemInformation - SystemDpcBehaviorInformation not implemented\n");
     return STATUS_NOT_IMPLEMENTED;
 }
 
@@ -1671,9 +1719,9 @@ QSI_DEF(SystemTimeAdjustmentInformation)
         (PSYSTEM_QUERY_TIME_ADJUST_INFORMATION)Buffer;
 
     /* Check if enough storage was provided */
-    if (sizeof(SYSTEM_QUERY_TIME_ADJUST_INFORMATION) > Size)
+    *ReqSize = sizeof(SYSTEM_QUERY_TIME_ADJUST_INFORMATION);
+    if (Size != *ReqSize)
     {
-        * ReqSize = sizeof(SYSTEM_QUERY_TIME_ADJUST_INFORMATION);
         return STATUS_INFO_LENGTH_MISMATCH;
     }
 
@@ -1733,11 +1781,11 @@ QSI_DEF(SystemSummaryMemoryInformation)
     return STATUS_NOT_IMPLEMENTED;
 }
 
-/* Class 30 - Next Event Id Information */
-QSI_DEF(SystemNextEventIdInformation)
+/* Class 30 - Memory mirroring Information */
+QSI_DEF(SystemMirrorMemoryInformation)
 {
     /* FIXME */
-    DPRINT1("NtQuerySystemInformation - SystemNextEventIdInformation not implemented\n");
+    DPRINT1("NtQuerySystemInformation - SystemMirrorMemoryInformation not implemented\n");
     return STATUS_NOT_IMPLEMENTED;
 }
 
@@ -1749,11 +1797,11 @@ QSI_DEF(SystemPerformanceTraceInformation)
     return STATUS_NOT_IMPLEMENTED;
 }
 
-/* Class 32 - Crash Dump Information */
-QSI_DEF(SystemCrashDumpInformation)
+/* Class 32 - Obsolete (previously: Crash Dump Information) */
+QSI_DEF(SystemObsolete0)
 {
     /* FIXME */
-    DPRINT1("NtQuerySystemInformation - SystemCrashDumpInformation not implemented\n");
+    DPRINT1("NtQuerySystemInformation - SystemObsolete0 not implemented\n");
     return STATUS_NOT_IMPLEMENTED;
 }
 
@@ -2066,7 +2114,6 @@ QSI_DEF(SystemCurrentTimeZoneInformation)
     return STATUS_SUCCESS;
 }
 
-
 SSI_DEF(SystemCurrentTimeZoneInformation)
 {
     /* Check user buffer's size */
@@ -2099,7 +2146,7 @@ ExpCopyLookasideInformation(
     /* Loop as long as we have lookaside lists and free array elements */
     for (ListEntry = ListHead->Flink;
          (ListEntry != ListHead) && (Remaining > 0);
-         ListEntry = ListEntry->Flink, Remaining--)
+         ListEntry = ListEntry->Flink, Info++, Remaining--)
     {
         LookasideList = CONTAINING_RECORD(ListEntry, GENERAL_LOOKASIDE, ListEntry);
 
@@ -2144,6 +2191,13 @@ QSI_DEF(SystemLookasideInformation)
     KIRQL OldIrql;
     NTSTATUS Status;
 
+    /* Calculate how many items we can store */
+    Remaining = MaxCount = Size / sizeof(SYSTEM_LOOKASIDE_INFORMATION);
+    if (Remaining == 0)
+    {
+        return STATUS_INFO_LENGTH_MISMATCH;
+    }
+
     /* First we need to lock down the memory, since we are going to access it
        at high IRQL */
     PreviousMode = ExGetPreviousMode();
@@ -2157,13 +2211,6 @@ QSI_DEF(SystemLookasideInformation)
     {
         DPRINT1("Failed to lock the user buffer: 0x%lx\n", Status);
         return Status;
-    }
-
-    /* Calculate how many items we can store */
-    Remaining = MaxCount = Size / sizeof(SYSTEM_LOOKASIDE_INFORMATION);
-    if (Remaining == 0)
-    {
-        goto Leave;
     }
 
     /* Copy info from pool lookaside lists */
@@ -2225,7 +2272,6 @@ Leave:
     return STATUS_SUCCESS;
 }
 
-
 /* Class 46 - Set time slip event */
 SSI_DEF(SystemTimeSlipNotification)
 {
@@ -2267,7 +2313,6 @@ SSI_DEF(SystemSessionCreate)
     return Status;
 }
 
-
 /* Class 48 - Delete an existing session (TSE) */
 SSI_DEF(SystemSessionDetach)
 {
@@ -2289,7 +2334,6 @@ SSI_DEF(SystemSessionDetach)
     return MmSessionDelete(SessionId);
 }
 
-
 /* Class 49 - UNKNOWN */
 QSI_DEF(SystemSessionInformation)
 {
@@ -2297,7 +2341,6 @@ QSI_DEF(SystemSessionInformation)
     DPRINT1("NtQuerySystemInformation - SystemSessionInformation not implemented\n");
     return STATUS_NOT_IMPLEMENTED;
 }
-
 
 /* Class 50 - System range start address */
 QSI_DEF(SystemRangeStartInformation)
@@ -2320,14 +2363,12 @@ QSI_DEF(SystemVerifierInformation)
     return STATUS_NOT_IMPLEMENTED;
 }
 
-
 SSI_DEF(SystemVerifierInformation)
 {
     /* FIXME */
     DPRINT1("NtSetSystemInformation - SystemVerifierInformation not implemented\n");
     return STATUS_NOT_IMPLEMENTED;
 }
-
 
 /* Class 52 */
 SSI_DEF(SystemVerifierThunkExtend)
@@ -2337,26 +2378,22 @@ SSI_DEF(SystemVerifierThunkExtend)
     return STATUS_NOT_IMPLEMENTED;
 }
 
-
-/* Class 53 - A session's processes  */
-QSI_DEF(SystemSessionProcessesInformation)
+/* Class 53 - A session's processes */
+QSI_DEF(SystemSessionProcessInformation)
 {
     /* FIXME */
     DPRINT1("NtQuerySystemInformation - SystemSessionProcessInformation not implemented\n");
     return STATUS_NOT_IMPLEMENTED;
 }
 
-
 /* Class 54 - Load & map in system space */
-SSI_DEF(SystemLoadGdiDriverInSystemSpaceInformation)
+SSI_DEF(SystemLoadGdiDriverInSystemSpace)
 {
-    /* FIXME */
-    DPRINT1("NtSetSystemInformation - SystemLoadGdiDriverInSystemSpaceInformation not implemented\n");
-    return STATUS_NOT_IMPLEMENTED;
+    /* Similar to SystemLoadGdiDriverInformation */
+    return SSI_USE(SystemLoadGdiDriverInformation)(Buffer, Size);
 }
 
-
-/* Class 55 - NUMA processor information  */
+/* Class 55 - NUMA processor information */
 QSI_DEF(SystemNumaProcessorMap)
 {
     ULONG MaxEntries, Node;
@@ -2402,8 +2439,7 @@ QSI_DEF(SystemNumaProcessorMap)
     return STATUS_SUCCESS;
 }
 
-
-/* Class 56 - Prefetcher information  */
+/* Class 56 - Prefetcher information */
 QSI_DEF(SystemPrefetcherInformation)
 {
     /* FIXME */
@@ -2411,26 +2447,29 @@ QSI_DEF(SystemPrefetcherInformation)
     return STATUS_NOT_IMPLEMENTED;
 }
 
-
-/* Class 57 - Extended process information  */
+/* Class 57 - Extended process information */
 QSI_DEF(SystemExtendedProcessInformation)
 {
-    /* FIXME */
-    DPRINT1("NtQuerySystemInformation - SystemExtendedProcessInformation not implemented\n");
-    return STATUS_NOT_IMPLEMENTED;
+    return ExpQuerySystemProcessInformation(Buffer, Size, ReqSize, TRUE);
 }
 
-
-/* Class 58 - Recommended shared ata alignment  */
+/* Class 58 - Recommended shared data alignment */
 QSI_DEF(SystemRecommendedSharedDataAlignment)
 {
-    /* FIXME */
-    DPRINT1("NtQuerySystemInformation - SystemRecommendedSharedDataAlignment not implemented\n");
-    return STATUS_NOT_IMPLEMENTED;
+    PULONG Alignment = (PULONG)Buffer;
+
+    /* Check user buffer's size */
+    *ReqSize = sizeof(ULONG);
+    if (Size < *ReqSize)
+    {
+        return STATUS_INFO_LENGTH_MISMATCH;
+    }
+
+    *Alignment = KeGetRecommendedSharedDataAlignment();
+    return STATUS_SUCCESS;
 }
 
-
-/* Class 60 - NUMA memory information  */
+/* Class 60 - NUMA memory information */
 QSI_DEF(SystemNumaAvailableMemory)
 {
     ULONG MaxEntries, Node;
@@ -2484,7 +2523,62 @@ QSI_DEF(SystemNumaAvailableMemory)
     return STATUS_SUCCESS;
 }
 
-/* Class 64 - Extended handle information  */
+/* Class 62 - Emulation Basic Information */
+QSI_DEF(SystemEmulationBasicInformation)
+{
+#if defined(_WIN64) && defined(BUILD_WOW64_ENABLED)
+    PSYSTEM_BASIC_INFORMATION Sbi = (PSYSTEM_BASIC_INFORMATION)Buffer;
+
+    *ReqSize = sizeof(SYSTEM_BASIC_INFORMATION);
+
+    /* Check user buffer's size */
+    if (Size != sizeof(SYSTEM_BASIC_INFORMATION))
+    {
+        return STATUS_INFO_LENGTH_MISMATCH;
+    }
+
+    RtlZeroMemory(Sbi, Size);
+    Sbi->Reserved = 0;
+    Sbi->TimerResolution = KeMaximumIncrement;
+    Sbi->PageSize = PAGE_SIZE;
+    Sbi->NumberOfPhysicalPages = MmNumberOfPhysicalPages;
+    Sbi->LowestPhysicalPageNumber = (ULONG)MmLowestPhysicalPage;
+    Sbi->HighestPhysicalPageNumber = (ULONG)MmHighestPhysicalPage;
+    Sbi->AllocationGranularity = MM_VIRTMEM_GRANULARITY; /* hard coded on Intel? */
+    Sbi->MinimumUserModeAddress = 0x10000; /* Top of 64k */
+    Sbi->MaximumUserModeAddress = (ULONG_PTR)0xFFFFFFFF; /* FIXME */
+    Sbi->ActiveProcessorsAffinityMask = KeActiveProcessors;
+    Sbi->NumberOfProcessors = KeNumberProcessors;
+
+    return STATUS_SUCCESS;
+#else
+    return QSISystemBasicInformation(Buffer, Size, ReqSize);
+#endif
+}
+
+/* Class 63 - Emulation Processor Information */
+QSI_DEF(SystemEmulationProcessorInformation)
+{
+    NTSTATUS Status;
+
+    /* Query native information */
+    Status = QSISystemProcessorInformation(Buffer, Size, ReqSize);
+#if defined(_M_AMD64) || defined(_M_ARM64)
+    if (NT_SUCCESS(Status))
+    {
+        PSYSTEM_PROCESSOR_INFORMATION Spi = (PSYSTEM_PROCESSOR_INFORMATION)Buffer;
+#if defined(_M_AMD64)
+        Spi->ProcessorArchitecture = PROCESSOR_ARCHITECTURE_INTEL;
+#elif defined(_M_ARM64)
+        Spi->ProcessorArchitecture = PROCESSOR_ARCHITECTURE_ARM;
+#endif /* _M_AMD64 | _M_ARM64 */
+    }
+#endif /* defined(_M_AMD64) || defined(_M_ARM64) */
+
+    return Status;
+}
+
+/* Class 64 - Extended handle information */
 QSI_DEF(SystemExtendedHandleInformation)
 {
     PSYSTEM_HANDLE_INFORMATION_EX HandleInformation;
@@ -2500,7 +2594,7 @@ QSI_DEF(SystemExtendedHandleInformation)
     DPRINT("NtQuerySystemInformation - SystemExtendedHandleInformation\n");
 
     /* Set initial required buffer size */
-    *ReqSize = FIELD_OFFSET(SYSTEM_HANDLE_INFORMATION_EX, Handle);
+    *ReqSize = FIELD_OFFSET(SYSTEM_HANDLE_INFORMATION_EX, Handles);
 
     /* Check user's buffer size */
     if (Size < *ReqSize)
@@ -2522,7 +2616,7 @@ QSI_DEF(SystemExtendedHandleInformation)
     }
 
     /* Reset of count of handles */
-    HandleInformation->Count = 0;
+    HandleInformation->NumberOfHandles = 0;
 
     /* Enter a critical region */
     KeEnterCriticalRegion();
@@ -2547,7 +2641,7 @@ QSI_DEF(SystemExtendedHandleInformation)
                 (HandleTableEntry->NextFreeTableEntry != -2))
             {
                 /* Increase of count of handles */
-                ++HandleInformation->Count;
+                ++HandleInformation->NumberOfHandles;
 
                 /* Lock the entry */
                 if (ExpLockHandleTableEntry(HandleTable, HandleTableEntry))
@@ -2565,30 +2659,30 @@ QSI_DEF(SystemExtendedHandleInformation)
                         POBJECT_HEADER ObjectHeader = ObpGetHandleObject(HandleTableEntry);
 
                         /* Filling handle information */
-                        HandleInformation->Handle[Index].UniqueProcessId =
+                        HandleInformation->Handles[Index].UniqueProcessId =
                             (USHORT)(ULONG_PTR) HandleTable->UniqueProcessId;
 
-                        HandleInformation->Handle[Index].CreatorBackTraceIndex = 0;
+                        HandleInformation->Handles[Index].CreatorBackTraceIndex = 0;
 
-#if 0 /* FIXME!!! Type field currupted */
+#if 0 /* FIXME!!! Type field corrupted */
                         HandleInformation->Handles[Index].ObjectTypeIndex =
                             (UCHAR) ObjectHeader->Type->Index;
 #else
-                        HandleInformation->Handle[Index].ObjectTypeIndex = 0;
+                        HandleInformation->Handles[Index].ObjectTypeIndex = 0;
 #endif
 
-                        HandleInformation->Handle[Index].HandleAttributes =
+                        HandleInformation->Handles[Index].HandleAttributes =
                             HandleTableEntry->ObAttributes & OBJ_HANDLE_ATTRIBUTES;
 
-                        HandleInformation->Handle[Index].HandleValue =
+                        HandleInformation->Handles[Index].HandleValue =
                             (USHORT)(ULONG_PTR) Handle.GenericHandleOverlay;
 
-                        HandleInformation->Handle[Index].Object = &ObjectHeader->Body;
+                        HandleInformation->Handles[Index].Object = &ObjectHeader->Body;
 
-                        HandleInformation->Handle[Index].GrantedAccess =
+                        HandleInformation->Handles[Index].GrantedAccess =
                             HandleTableEntry->GrantedAccess;
 
-                        HandleInformation->Handle[Index].Reserved = 0;
+                        HandleInformation->Handles[Index].Reserved = 0;
 
                         ++Index;
                     }
@@ -2599,7 +2693,7 @@ QSI_DEF(SystemExtendedHandleInformation)
             }
 
             /* Go to the next entry */
-            Handle.Value += sizeof(HANDLE);
+            Handle.Index++;
         }
     }
 
@@ -2615,7 +2709,7 @@ QSI_DEF(SystemExtendedHandleInformation)
     return Status;
 }
 
-/* Class 70 - System object security mode information  */
+/* Class 70 - System object security mode information */
 QSI_DEF(SystemObjectSecurityMode)
 {
     PULONG ObjectSecurityInfo = (PULONG)Buffer;
@@ -2631,7 +2725,7 @@ QSI_DEF(SystemObjectSecurityMode)
     return STATUS_SUCCESS;
 }
 
-/* Class 73 - Logical processor information  */
+/* Class 73 - Logical processor information */
 QSI_DEF(SystemLogicalProcessorInformation)
 {
     LONG i;
@@ -2715,12 +2809,12 @@ QSI_DEF(SystemLogicalProcessorInformation)
     return Status;
 }
 
-/* Class 76 - System firmware table information  */
+/* Class 76 - System firmware table information */
 QSI_DEF(SystemFirmwareTableInformation)
 {
     PSYSTEM_FIRMWARE_TABLE_INFORMATION SysFirmwareInfo = (PSYSTEM_FIRMWARE_TABLE_INFORMATION)Buffer;
     NTSTATUS Status = STATUS_SUCCESS;
-    ULONG InputBufSize;
+    ULONG DataBufSize;
     ULONG DataSize = 0;
     ULONG TableCount = 0;
 
@@ -2735,7 +2829,7 @@ QSI_DEF(SystemFirmwareTableInformation)
         return STATUS_INFO_LENGTH_MISMATCH;
     }
 
-    InputBufSize = SysFirmwareInfo->TableBufferLength;
+    DataBufSize = Size - *ReqSize;
     switch (SysFirmwareInfo->ProviderSignature)
     {
         /*
@@ -2765,17 +2859,18 @@ QSI_DEF(SystemFirmwareTableInformation)
                 if (SysFirmwareInfo->Action == SystemFirmwareTable_Enumerate)
                 {
                     DataSize = TableCount * sizeof(ULONG);
-                    if (DataSize <= InputBufSize)
+                    if (DataSize <= DataBufSize)
                     {
                         *(ULONG *)SysFirmwareInfo->TableBuffer = 0;
                     }
                 }
                 else if (SysFirmwareInfo->Action == SystemFirmwareTable_Get
-                         && DataSize <= InputBufSize)
+                         && DataSize <= DataBufSize)
                 {
-                    Status = ExpGetRawSMBiosTable(SysFirmwareInfo->TableBuffer, &DataSize, InputBufSize);
+                    Status = ExpGetRawSMBiosTable(SysFirmwareInfo->TableBuffer, &DataSize, DataBufSize);
                 }
                 SysFirmwareInfo->TableBufferLength = DataSize;
+                *ReqSize += DataSize;
             }
             break;
         }
@@ -2783,7 +2878,8 @@ QSI_DEF(SystemFirmwareTableInformation)
         {
             DPRINT1("SystemFirmwareTableInformation: Unsupported provider (0x%x)\n",
                     SysFirmwareInfo->ProviderSignature);
-            Status = STATUS_ILLEGAL_FUNCTION;
+            *ReqSize = 0;
+            Status = STATUS_NOT_IMPLEMENTED;
         }
     }
 
@@ -2794,7 +2890,7 @@ QSI_DEF(SystemFirmwareTableInformation)
             case SystemFirmwareTable_Enumerate:
             case SystemFirmwareTable_Get:
             {
-                if (SysFirmwareInfo->TableBufferLength > InputBufSize)
+                if (SysFirmwareInfo->TableBufferLength > DataBufSize)
                 {
                     Status = STATUS_BUFFER_TOO_SMALL;
                 }
@@ -2815,6 +2911,66 @@ QSI_DEF(SystemFirmwareTableInformation)
     return Status;
 }
 
+/* Class 77 - Extended module information */
+QSI_DEF(SystemModuleInformationEx)
+{
+    /* For now return STATUS_INVALID_INFO_CLASS to avoid crashing in wine tests */
+    return STATUS_INVALID_INFO_CLASS;
+}
+
+/* Class 83 - Processor Idle Cycles */
+QSI_DEF(SystemProcessorIdleCycleTimeInformation)
+{
+    PSYSTEM_PROCESSOR_IDLE_CYCLE_TIME_INFORMATION Info =
+            (PSYSTEM_PROCESSOR_IDLE_CYCLE_TIME_INFORMATION)Buffer;
+    ULONG ProcessorIndex;
+    PKPRCB Prcb;
+
+    *ReqSize = KeNumberProcessors * sizeof(*Info);
+    if (Size < *ReqSize)
+    {
+        DPRINT1("Buffer too small for SystemProcessorIdleCycleTimeInformation\n");
+        return STATUS_BUFFER_TOO_SMALL;
+    }
+
+    for (ProcessorIndex = 0; ProcessorIndex < KeNumberProcessors; ++ProcessorIndex)
+    {
+        Prcb = KiProcessorBlock[ProcessorIndex];
+        Info[ProcessorIndex].CycleTime = KeQueryTotalCycleTimeThread(Prcb->IdleThread, NULL);
+    }
+
+    return STATUS_SUCCESS;
+}
+
+/* Class 105 - Processor Brand String */
+QSI_DEF(SystemProcessorBrandString)
+{
+    CHAR BrandString[128];
+    NTSTATUS Status;
+
+    /* Call hal to query the brand string */
+    Status = HalQuerySystemInformation(HalProcessorBrandString,
+                                       sizeof(BrandString),
+                                       BrandString,
+                                       ReqSize);
+    if (!NT_SUCCESS(Status))
+    {
+        DPRINT1("HalQuerySystemInformation failed: 0x%lx\n", Status);
+        return Status;
+    }
+
+    if (Size < *ReqSize)
+    {
+        DPRINT1("Buffer too small for processor brand string\n");
+        return STATUS_INFO_LENGTH_MISMATCH;
+    }
+
+    /* Copy the brand string to the user buffer */
+    RtlCopyMemory(Buffer, BrandString, *ReqSize);
+
+    return STATUS_SUCCESS;
+}
+
 /* Query/Set Calls Table */
 typedef
 struct _QSSI_CALLS
@@ -2828,20 +2984,20 @@ struct _QSSI_CALLS
 // XS    Set
 // XX    unknown behaviour
 //
-#define SI_QS(n) {QSI_USE(n),SSI_USE(n)}
-#define SI_QX(n) {QSI_USE(n),NULL}
-#define SI_XS(n) {NULL,SSI_USE(n)}
-#define SI_XX(n) {NULL,NULL}
+#define SI_QS(n) [n] = {QSI_USE(n),SSI_USE(n)}
+#define SI_QX(n) [n] = {QSI_USE(n),NULL}
+#define SI_XS(n) [n] = {NULL,SSI_USE(n)}
+#define SI_XX(n) [n] = {NULL,NULL}
 
 static
 QSSI_CALLS
-CallQS [] =
+CallQS[] =
 {
     SI_QX(SystemBasicInformation),
     SI_QX(SystemProcessorInformation),
     SI_QX(SystemPerformanceInformation),
     SI_QX(SystemTimeOfDayInformation),
-    SI_QX(SystemPathInformation), /* should be SI_XX */
+    SI_QX(SystemPathInformation),
     SI_QX(SystemProcessInformation),
     SI_QX(SystemCallCountInformation),
     SI_QX(SystemDeviceInformation),
@@ -2861,15 +3017,15 @@ CallQS [] =
     SI_QS(SystemFileCacheInformation),
     SI_QX(SystemPoolTagInformation),
     SI_QX(SystemInterruptInformation),
-    SI_QS(SystemDpcBehaviourInformation),
+    SI_QS(SystemDpcBehaviorInformation),
     SI_QX(SystemFullMemoryInformation), /* it should be SI_XX */
     SI_XS(SystemLoadGdiDriverInformation),
     SI_XS(SystemUnloadGdiDriverInformation),
     SI_QS(SystemTimeAdjustmentInformation),
     SI_QX(SystemSummaryMemoryInformation), /* it should be SI_XX */
-    SI_QX(SystemNextEventIdInformation), /* it should be SI_XX */
+    SI_QX(SystemMirrorMemoryInformation), /* it should be SI_XX */
     SI_QX(SystemPerformanceTraceInformation), /* it should be SI_XX */
-    SI_QX(SystemCrashDumpInformation),
+    SI_QX(SystemObsolete0),
     SI_QX(SystemExceptionInformation),
     SI_QX(SystemCrashDumpStateInformation),
     SI_QX(SystemKernelDebuggerInformation),
@@ -2890,8 +3046,8 @@ CallQS [] =
     SI_QX(SystemRangeStartInformation),
     SI_QS(SystemVerifierInformation),
     SI_XS(SystemVerifierThunkExtend),
-    SI_QX(SystemSessionProcessesInformation),
-    SI_XS(SystemLoadGdiDriverInSystemSpaceInformation),
+    SI_QX(SystemSessionProcessInformation),
+    SI_XS(SystemLoadGdiDriverInSystemSpace),
     SI_QX(SystemNumaProcessorMap),
     SI_QX(SystemPrefetcherInformation),
     SI_QX(SystemExtendedProcessInformation),
@@ -2899,8 +3055,8 @@ CallQS [] =
     SI_XX(SystemComPlusPackage),
     SI_QX(SystemNumaAvailableMemory),
     SI_XX(SystemProcessorPowerInformation), /* FIXME: not implemented */
-    SI_XX(SystemEmulationBasicInformation), /* FIXME: not implemented */
-    SI_XX(SystemEmulationProcessorInformation), /* FIXME: not implemented */
+    SI_QX(SystemEmulationBasicInformation),
+    SI_QX(SystemEmulationProcessorInformation),
     SI_QX(SystemExtendedHandleInformation),
     SI_XX(SystemLostDelayedWriteInformation), /* FIXME: not implemented */
     SI_XX(SystemBigPoolInformation), /* FIXME: not implemented */
@@ -2911,14 +3067,19 @@ CallQS [] =
     SI_XX(SystemWatchdogTimerHandler), /* FIXME: not implemented */
     SI_XX(SystemWatchdogTimerInformation), /* FIXME: not implemented */
     SI_QX(SystemLogicalProcessorInformation),
-    SI_XX(SystemWow64SharedInformation), /* FIXME: not implemented */
+    SI_XX(SystemWow64SharedInformationObsolete), /* FIXME: not implemented */
     SI_XX(SystemRegisterFirmwareTableInformationHandler), /* FIXME: not implemented */
     SI_QX(SystemFirmwareTableInformation),
+
+    // Vista and later
+    SI_QX(SystemModuleInformationEx),
+    SI_QX(SystemProcessorIdleCycleTimeInformation),
+    SI_QX(SystemProcessorBrandString),
 };
 
 C_ASSERT(SystemBasicInformation == 0);
 #define MIN_SYSTEM_INFO_CLASS (SystemBasicInformation)
-#define MAX_SYSTEM_INFO_CLASS (sizeof(CallQS) / sizeof(CallQS[0]))
+#define MAX_SYSTEM_INFO_CLASS RTL_NUMBER_OF(CallQS)
 
 /*
  * @implemented
@@ -2929,13 +3090,13 @@ NTAPI
 NtQuerySystemInformation(
     _In_ SYSTEM_INFORMATION_CLASS SystemInformationClass,
     _Out_writes_bytes_to_opt_(SystemInformationLength, *ReturnLength) PVOID SystemInformation,
-    _In_ ULONG Length,
-    _Out_opt_ PULONG UnsafeResultLength)
+    _In_ ULONG SystemInformationLength,
+    _Out_opt_ PULONG ReturnLength)
 {
-    KPROCESSOR_MODE PreviousMode;
-    ULONG ResultLength = 0;
+    NTSTATUS Status = STATUS_NOT_IMPLEMENTED;
+    ULONG CapturedResultLength = 0;
     ULONG Alignment = TYPE_ALIGNMENT(ULONG);
-    NTSTATUS FStatus = STATUS_NOT_IMPLEMENTED;
+    KPROCESSOR_MODE PreviousMode;
 
     PAGED_CODE();
 
@@ -2945,7 +3106,7 @@ NtQuerySystemInformation(
     {
 #if (NTDDI_VERSION >= NTDDI_VISTA)
         /*
-         * Check if the request is valid.
+         * Check whether the request is valid.
          */
         if (SystemInformationClass < MIN_SYSTEM_INFO_CLASS ||
             SystemInformationClass >= MAX_SYSTEM_INFO_CLASS)
@@ -2960,17 +3121,17 @@ NtQuerySystemInformation(
             if (SystemInformationClass == SystemKernelDebuggerInformation)
                 Alignment = TYPE_ALIGNMENT(BOOLEAN);
 
-            ProbeForWrite(SystemInformation, Length, Alignment);
-            if (UnsafeResultLength != NULL)
-                ProbeForWriteUlong(UnsafeResultLength);
+            ProbeForWrite(SystemInformation, SystemInformationLength, Alignment);
+            if (ReturnLength != NULL)
+                ProbeForWriteUlong(ReturnLength);
         }
 
-        if (UnsafeResultLength)
-            *UnsafeResultLength = 0;
+        if (ReturnLength)
+            *ReturnLength = 0;
 
 #if (NTDDI_VERSION < NTDDI_VISTA)
         /*
-         * Check if the request is valid.
+         * Check whether the request is valid.
          */
         if (SystemInformationClass < MIN_SYSTEM_INFO_CLASS ||
             SystemInformationClass >= MAX_SYSTEM_INFO_CLASS)
@@ -2979,35 +3140,34 @@ NtQuerySystemInformation(
         }
 #endif
 
-        if (NULL != CallQS [SystemInformationClass].Query)
+        if (CallQS[SystemInformationClass].Query != NULL)
         {
-            /*
-             * Hand the request to a subhandler.
-             */
-            FStatus = CallQS [SystemInformationClass].Query(SystemInformation,
-                                                            Length,
-                                                            &ResultLength);
+            /* Hand the request to a subhandler */
+            Status = CallQS[SystemInformationClass].Query(SystemInformation,
+                                                          SystemInformationLength,
+                                                          &CapturedResultLength);
 
             /* Save the result length to the caller */
-            if (UnsafeResultLength)
-                *UnsafeResultLength = ResultLength;
+            if (ReturnLength)
+                *ReturnLength = CapturedResultLength;
         }
     }
     _SEH2_EXCEPT(ExSystemExceptionFilter())
     {
-        FStatus = _SEH2_GetExceptionCode();
+        Status = _SEH2_GetExceptionCode();
     }
     _SEH2_END;
 
-    return FStatus;
+    return Status;
 }
 
-
+__kernel_entry
 NTSTATUS
 NTAPI
-NtSetSystemInformation (IN SYSTEM_INFORMATION_CLASS SystemInformationClass,
-                        IN PVOID SystemInformation,
-                        IN ULONG SystemInformationLength)
+NtSetSystemInformation(
+    _In_ SYSTEM_INFORMATION_CLASS SystemInformationClass,
+    _In_reads_bytes_(SystemInformationLength) PVOID SystemInformation,
+    _In_ ULONG SystemInformationLength)
 {
     NTSTATUS Status = STATUS_INVALID_INFO_CLASS;
     KPROCESSOR_MODE PreviousMode;
@@ -3019,8 +3179,7 @@ NtSetSystemInformation (IN SYSTEM_INFORMATION_CLASS SystemInformationClass,
     _SEH2_TRY
     {
         /*
-         * If called from user mode, check
-         * possible unsafe arguments.
+         * If called from user mode, check possible unsafe arguments.
          */
         if (PreviousMode != KernelMode)
         {
@@ -3028,18 +3187,16 @@ NtSetSystemInformation (IN SYSTEM_INFORMATION_CLASS SystemInformationClass,
         }
 
         /*
-         * Check the request is valid.
+         * Check whether the request is valid.
          */
         if ((SystemInformationClass >= MIN_SYSTEM_INFO_CLASS) &&
             (SystemInformationClass < MAX_SYSTEM_INFO_CLASS))
         {
-            if (NULL != CallQS [SystemInformationClass].Set)
+            if (CallQS[SystemInformationClass].Set != NULL)
             {
-                /*
-                 * Hand the request to a subhandler.
-                 */
-                Status = CallQS [SystemInformationClass].Set(SystemInformation,
-                                                             SystemInformationLength);
+                /* Hand the request to a subhandler */
+                Status = CallQS[SystemInformationClass].Set(SystemInformation,
+                                                            SystemInformationLength);
             }
         }
     }

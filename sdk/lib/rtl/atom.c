@@ -2,7 +2,7 @@
  * COPYRIGHT:       See COPYING in the top level directory
  * PROJECT:         ReactOS system libraries
  * FILE:            lib/rtl/atom.c
- * PURPOSE:         Atom managment
+ * PURPOSE:         Atom management
  * PROGRAMMER:      Thomas Weidenmueller
  */
 
@@ -174,6 +174,7 @@ RtlCreateAtomTable(
     }
 
     /* initialize atom table */
+    Table->Signature = 'motA';
     Table->NumberOfBuckets = TableSize;
 
     Status = RtlpInitAtomTableLock(Table);
@@ -622,9 +623,9 @@ RtlQueryAtomInAtomTable(
     {
         /* Synthesize an entry */
         NumberEntry.AtomTableEntry.Atom = Atom;
-        NumberEntry.AtomTableEntry.NameLength = swprintf(NumberEntry.AtomTableEntry.Name,
-                                                L"#%lu",
-                                                (ULONG)Atom);
+        NumberEntry.AtomTableEntry.NameLength = _swprintf(NumberEntry.AtomTableEntry.Name,
+                                                          L"#%lu",
+                                                          (ULONG)Atom);
         NumberEntry.AtomTableEntry.ReferenceCount = 1;
         NumberEntry.AtomTableEntry.Flags = RTL_ATOM_IS_PINNED;
         Entry = &NumberEntry.AtomTableEntry;

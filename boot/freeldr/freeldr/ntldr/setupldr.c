@@ -15,6 +15,17 @@
 #include <debug.h>
 DBG_DEFAULT_CHANNEL(WINDOWS);
 
+/* Architecture name suffixes for architecture-specific INF sections */
+#if defined(_M_IX86)
+#define INF_ARCH "x86"
+#elif defined(_M_AMD64)
+#define INF_ARCH "amd64"
+#elif defined(_M_ARM)
+#define INF_ARCH "arm"
+#elif defined(_M_ARM64)
+#define INF_ARCH "arm64"
+#endif
+
 // TODO: Move to .h
 VOID
 AllocateAndInitLPB(
@@ -22,60 +33,74 @@ AllocateAndInitLPB(
     OUT PLOADER_PARAMETER_BLOCK* OutLoaderBlock);
 
 static VOID
-SetupLdrLoadNlsData(PLOADER_PARAMETER_BLOCK LoaderBlock, HINF InfHandle, PCSTR SearchPath)
+SetupLdrLoadNlsData(
+    _Inout_ PLOADER_PARAMETER_BLOCK LoaderBlock,
+    _In_ HINF InfHandle,
+    _In_ PCSTR SearchPath)
 {
+    BOOLEAN Success;
     INFCONTEXT InfContext;
-    PCSTR AnsiName, OemName, LangName;
+    PCSTR AnsiData;
+    UNICODE_STRING AnsiFileName = {0};
+    UNICODE_STRING OemFileName = {0};
+    UNICODE_STRING LangFileName = {0}; // CaseTable
+    UNICODE_STRING OemHalFileName = {0};
 
     /* Get ANSI codepage file */
-    if (!InfFindFirstLine(InfHandle, "NLS", "AnsiCodepage", &InfContext))
+    if (!InfFindFirstLine(InfHandle, "NLS", "AnsiCodepage", &InfContext) ||
+        !InfGetDataField(&InfContext, 1, &AnsiData) ||
+        !RtlCreateUnicodeStringFromAsciiz(&AnsiFileName, AnsiData))
     {
-        ERR("Failed to find 'NLS/AnsiCodepage'\n");
-        return;
-    }
-    if (!InfGetDataField(&InfContext, 1, &AnsiName))
-    {
-        ERR("Failed to get load options\n");
+        ERR("Failed to find or get 'NLS/AnsiCodepage'\n");
         return;
     }
 
     /* Get OEM codepage file */
-    if (!InfFindFirstLine(InfHandle, "NLS", "OemCodepage", &InfContext))
+    if (!InfFindFirstLine(InfHandle, "NLS", "OemCodepage", &InfContext) ||
+        !InfGetDataField(&InfContext, 1, &AnsiData) ||
+        !RtlCreateUnicodeStringFromAsciiz(&OemFileName, AnsiData))
     {
-        ERR("Failed to find 'NLS/AnsiCodepage'\n");
-        return;
-    }
-    if (!InfGetDataField(&InfContext, 1, &OemName))
-    {
-        ERR("Failed to get load options\n");
-        return;
+        ERR("Failed to find or get 'NLS/OemCodepage'\n");
+        goto Quit;
     }
 
-    if (!InfFindFirstLine(InfHandle, "NLS", "UnicodeCasetable", &InfContext))
+    /* Get the Unicode case table file */
+    if (!InfFindFirstLine(InfHandle, "NLS", "UnicodeCasetable", &InfContext) ||
+        !InfGetDataField(&InfContext, 1, &AnsiData) ||
+        !RtlCreateUnicodeStringFromAsciiz(&LangFileName, AnsiData))
     {
-        ERR("Failed to find 'NLS/AnsiCodepage'\n");
-        return;
-    }
-    if (!InfGetDataField(&InfContext, 1, &LangName))
-    {
-        ERR("Failed to get load options\n");
-        return;
+        ERR("Failed to find or get 'NLS/UnicodeCasetable'\n");
+        goto Quit;
     }
 
-    TRACE("NLS data '%s' '%s' '%s'\n", AnsiName, OemName, LangName);
-
-#if DBG
+    /* Get OEM HAL font file */
+    if (!InfFindFirstLine(InfHandle, "NLS", "OemHalFont", &InfContext) ||
+        !InfGetData(&InfContext, NULL, &AnsiData) ||
+        !RtlCreateUnicodeStringFromAsciiz(&OemHalFileName, AnsiData))
     {
-        BOOLEAN Success = WinLdrLoadNLSData(LoaderBlock, SearchPath, AnsiName, OemName, LangName);
-        (VOID)Success;
-        TRACE("NLS data loading %s\n", Success ? "successful" : "failed");
+        WARN("Failed to find or get 'NLS/OemHalFont'\n");
+        /* Ignore, this is an optional file */
+        RtlInitEmptyUnicodeString(&OemHalFileName, NULL, 0);
     }
-#else
-    WinLdrLoadNLSData(LoaderBlock, SearchPath, AnsiName, OemName, LangName);
-#endif
 
-    /* TODO: Load OEM HAL font */
-    // Value "OemHalFont"
+    TRACE("NLS data: '%wZ' '%wZ' '%wZ' '%wZ'\n",
+          &AnsiFileName, &OemFileName, &LangFileName, &OemHalFileName);
+
+    /* Load NLS data */
+    Success = WinLdrLoadNLSData(LoaderBlock,
+                                SearchPath,
+                                &AnsiFileName,
+                                &OemFileName,
+                                &LangFileName,
+                                &OemHalFileName);
+    TRACE("NLS data loading %s\n", Success ? "successful" : "failed");
+    (VOID)Success;
+
+Quit:
+    RtlFreeUnicodeString(&OemHalFileName);
+    RtlFreeUnicodeString(&LangFileName);
+    RtlFreeUnicodeString(&OemFileName);
+    RtlFreeUnicodeString(&AnsiFileName);
 }
 
 static
@@ -121,17 +146,28 @@ SetupLdrInitErrataInf(
 }
 
 static VOID
-SetupLdrScanBootDrivers(PLIST_ENTRY BootDriverListHead, HINF InfHandle, PCSTR SearchPath)
+SetupLdrScanBootDrivers(
+    _Inout_ PLIST_ENTRY BootDriverListHead,
+    _In_ HINF InfHandle,
+    _In_ PCSTR SearchPath)
 {
     INFCONTEXT InfContext, dirContext;
-    BOOLEAN Success;
     PCSTR Media, DriverName, dirIndex, ImagePath;
-    WCHAR ServiceName[256];
-    WCHAR ImagePathW[256];
+    BOOLEAN Success;
+    UINT8 Pass;
+    WCHAR ImagePathW[MAX_PATH];
+    WCHAR DriverNameW[256];
 
-    /* Open inf section */
-    if (!InfFindFirstLine(InfHandle, "SourceDisksFiles", NULL, &InfContext))
-        return;
+    UNREFERENCED_PARAMETER(SearchPath);
+
+    /* Open the INF section, first the optional platform-specific one,
+     * then the generic section */
+    for (Pass = 0; Pass <= 1; ++Pass)
+    {
+    PCSTR pFilesSection[] = {"SourceDisksFiles." INF_ARCH, "SourceDisksFiles"};
+
+    if (!InfFindFirstLine(InfHandle, pFilesSection[Pass], NULL, &InfContext))
+        continue;
 
     /* Load all listed boot drivers */
     do
@@ -140,149 +176,59 @@ SetupLdrScanBootDrivers(PLIST_ENTRY BootDriverListHead, HINF InfHandle, PCSTR Se
             InfGetDataField(&InfContext, 0, &DriverName) &&
             InfGetDataField(&InfContext, 13, &dirIndex))
         {
-            if ((strcmp(Media, "x") == 0) &&
+            if ((strcmp(Media, "x") == 0) && // HACK: ReactOS-specific
                 InfFindFirstLine(InfHandle, "Directories", dirIndex, &dirContext) &&
                 InfGetDataField(&dirContext, 1, &ImagePath))
             {
-                /* Convert name to widechar */
-                swprintf(ServiceName, L"%S", DriverName);
-
                 /* Prepare image path */
-                swprintf(ImagePathW, L"%S", ImagePath);
-                wcscat(ImagePathW, L"\\");
-                wcscat(ImagePathW, ServiceName);
+                RtlStringCbPrintfW(ImagePathW, sizeof(ImagePathW),
+                                   L"%S\\%S", ImagePath, DriverName);
 
-                /* Remove .sys extension */
-                ServiceName[wcslen(ServiceName) - 4] = 0;
+                /* Convert name to Unicode and remove .sys extension */
+                RtlStringCbPrintfW(DriverNameW, sizeof(DriverNameW),
+                                   L"%S", DriverName);
+                DriverNameW[wcslen(DriverNameW) - 4] = UNICODE_NULL;
 
                 /* Add it to the list */
                 Success = WinLdrAddDriverToList(BootDriverListHead,
-                                                L"\\Registry\\Machine\\System\\CurrentControlSet\\Services\\",
+                                                FALSE,
+                                                DriverNameW,
                                                 ImagePathW,
-                                                ServiceName);
+                                                NULL,
+                                                SERVICE_ERROR_NORMAL,
+                                                -1);
                 if (!Success)
                 {
-                    ERR("Could not add boot driver '%s', '%s'\n", SearchPath, DriverName);
-                    return;
+                    ERR("Could not add boot driver '%s'\n", DriverName);
+                    /* Ignore and continue adding other drivers */
                 }
             }
         }
     } while (InfFindNextLine(&InfContext, &InfContext));
+    } // for (Pass...)
+
+    /* Finally, add the boot filesystem driver to the list */
+    if (BootFileSystem)
+    {
+        TRACE("Adding filesystem driver %S\n", BootFileSystem);
+        Success = WinLdrAddDriverToList(BootDriverListHead,
+                                        FALSE,
+                                        BootFileSystem,
+                                        NULL,
+                                        L"Boot File System",
+                                        SERVICE_ERROR_CRITICAL,
+                                        -1);
+        if (!Success)
+            ERR("Failed to add filesystem driver %S\n", BootFileSystem);
+    }
+    else
+    {
+        TRACE("No required filesystem driver\n");
+    }
 }
 
 
 /* SETUP STARTER **************************************************************/
-
-/*
- * Update the options in the buffer pointed by LoadOptions, of maximum size
- * BufferSize, by first removing any specified options, and then adding any
- * other ones.
- *
- * OptionsToAdd is a NULL-terminated array of string buffer pointers that
- *    specify the options to be added into LoadOptions. Whether they are
- *    prepended or appended to LoadOptions is controlled via the Append
- *    parameter. The options are added in the order specified by the array.
- *
- * OptionsToRemove is a NULL-terminated array of string buffer pointers that
- *    specify the options to remove from LoadOptions. Specifying also there
- *    any options to add, has the effect of removing from LoadOptions any
- *    duplicates of the options to be added, before adding them later into
- *    LoadOptions. The options are removed in the order specified by the array.
- *
- * The options string buffers in the OptionsToRemove array have the format:
- *    "/option1 /option2[=] ..."
- *
- * An option in the OptionsToRemove list with a trailing '=' or ':' designates
- * an option in LoadOptions with user-specific data appended after the sign.
- * When such an option is being removed from LoadOptions, all the appended
- * data is also removed until the next option.
- */
-VOID
-NtLdrUpdateLoadOptions(
-    IN OUT PSTR LoadOptions,
-    IN ULONG BufferSize,
-    IN BOOLEAN Append,
-    IN PCSTR OptionsToAdd[] OPTIONAL,
-    IN PCSTR OptionsToRemove[] OPTIONAL)
-{
-    PCSTR NextOptions, NextOpt;
-    PSTR Options, Option;
-    ULONG NextOptLength;
-    ULONG OptionLength;
-
-    if (!LoadOptions || (BufferSize == 0))
-        return;
-    // ASSERT(strlen(LoadOptions) + 1 <= BufferSize);
-
-    /* Loop over the options to remove */
-    for (; OptionsToRemove && *OptionsToRemove; ++OptionsToRemove)
-    {
-        NextOptions = *OptionsToRemove;
-        while ((NextOpt = NtLdrGetNextOption(&NextOptions, &NextOptLength)))
-        {
-            /* Scan the load options */
-            Options = LoadOptions;
-            while ((Option = (PSTR)NtLdrGetNextOption((PCSTR*)&Options, &OptionLength)))
-            {
-                /*
-                 * Check whether the option to find exactly matches the current
-                 * load option, or is a prefix thereof if this is an option with
-                 * appended data.
-                 */
-                if ((OptionLength >= NextOptLength) &&
-                    (_strnicmp(Option, NextOpt, NextOptLength) == 0))
-                {
-                    if ((OptionLength == NextOptLength) ||
-                        (NextOpt[NextOptLength-1] == '=') ||
-                        (NextOpt[NextOptLength-1] == ':'))
-                    {
-                        /* Eat any skipped option or whitespace separators */
-                        while ((Option > LoadOptions) &&
-                               (Option[-1] == '/' ||
-                                Option[-1] == ' ' ||
-                                Option[-1] == '\t'))
-                        {
-                            --Option;
-                        }
-
-                        /* If the option was not preceded by a whitespace
-                         * separator, insert one and advance the pointer. */
-                        if ((Option > LoadOptions) &&
-                            (Option[-1] != ' ') &&
-                            (Option[-1] != '\t') &&
-                            (*Options != '\0') /* &&
-                            ** Not necessary since NtLdrGetNextOption() **
-                            ** stripped any leading separators.         **
-                            (*Options != ' ') &&
-                            (*Options != '\t') */)
-                        {
-                            *Option++ = ' ';
-                        }
-
-                        /* Move the remaining options back, erasing the current one */
-                        ASSERT(Option <= Options);
-                        RtlMoveMemory(Option,
-                                      Options,
-                                      (strlen(Options) + 1) * sizeof(CHAR));
-
-                        /* Reset the iterator */
-                        Options = Option;
-                    }
-                }
-            }
-        }
-    }
-
-    /* Now loop over the options to add */
-    for (; OptionsToAdd && *OptionsToAdd; ++OptionsToAdd)
-    {
-        NtLdrAddOptions(LoadOptions,
-                        BufferSize,
-                        Append,
-                        *OptionsToAdd);
-    }
-}
-
 
 /*
  * List of options and their corresponding higher priority ones,
@@ -452,21 +398,26 @@ LoadReactOSSetup(
     PSETUP_LOADER_BLOCK SetupBlock;
     CHAR BootPath[MAX_PATH];
     CHAR FilePath[MAX_PATH];
-    CHAR UserBootOptions[256];
+    CHAR UserBootOptions[MAX_OPTIONS_LENGTH+1];
     PCSTR BootOptions;
 
     static PCSTR SourcePaths[] =
     {
-        "", /* Only for floppy boot */
+        "", /* Keep first to optimize TXTSETUP.SIF search on floppy boot */
 #if defined(_M_IX86)
         "I386\\",
+#elif defined(_M_AMD64)
+        "AMD64\\",
+#elif defined(_M_ARM)
+        "ARM\\",
+#elif defined(_M_ARM64)
+        "ARM64\\",
 #elif defined(_M_MPPC)
         "PPC\\",
 #elif defined(_M_MRX000)
         "MIPS\\",
 #endif
         "reactos\\",
-        NULL
     };
 
     /* Retrieve the (mandatory) boot type */
@@ -490,10 +441,10 @@ LoadReactOSSetup(
         return EINVAL;
     }
 
+    /* Let the user know we started loading */
+    UiDrawBackdrop(UiGetScreenHeight());
     UiDrawStatusText("Setup is loading...");
-
-    UiDrawBackdrop();
-    UiDrawProgressBarCenter(1, 100, "Loading ReactOS Setup...");
+    UiDrawProgressBarCenter("Loading ReactOS Setup...");
 
     /* Retrieve the system path */
     *BootPath = ANSI_NULL;
@@ -549,12 +500,11 @@ LoadReactOSSetup(
     BootOptions = GetArgumentValue(Argc, Argv, "Options");
     if (!BootOptions)
         BootOptions = "";
-
-    TRACE("BootOptions: '%s'\n", BootOptions);
+    TRACE("BootOptions(1): '%s'\n", BootOptions);
 
     /* Check if a RAM disk file was given */
     FileName = (PSTR)NtLdrGetOptionEx(BootOptions, "RDPATH=", &FileNameLength);
-    if (FileName && (FileNameLength > 7))
+    if (FileName && (FileNameLength >= 7))
     {
         /* Load the RAM disk */
         Status = RamDiskInitialize(FALSE, BootOptions, SystemPartition);
@@ -568,32 +518,43 @@ LoadReactOSSetup(
     }
 
     /* Check if we booted from floppy */
-    BootFromFloppy = strstr(BootPath, "fdisk") != NULL;
+    BootFromFloppy = !!strstr(BootPath, ")fdisk(");
+    // FIXME: Use for implementing disk tag check when booting using multiple floppies.
+    DBG_UNREFERENCED_LOCAL_VARIABLE(BootFromFloppy);
 
-    /* Open 'txtsetup.sif' from any of the source paths */
+    /* Open 'TXTSETUP.SIF' from any of the source paths */
     FileName = BootPath + strlen(BootPath);
-    for (i = BootFromFloppy ? 0 : 1; ; i++)
+    for (i = 0;; ++i)
     {
-        SystemPath = SourcePaths[i];
-        if (!SystemPath)
+        if (i >= RTL_NUMBER_OF(SourcePaths))
         {
             UiMessageBox("Failed to open txtsetup.sif");
             return ENOENT;
         }
+        SystemPath = SourcePaths[i];
+
+        /* Adjust the tentative BootPath */
         FileNameLength = (ULONG)(sizeof(BootPath) - (FileName - BootPath)*sizeof(CHAR));
         RtlStringCbCopyA(FileName, FileNameLength, SystemPath);
+
+        /* Try to open TXTSETUP.SIF from this BootPath */
         RtlStringCbCopyA(FilePath, sizeof(FilePath), BootPath);
         RtlStringCbCatA(FilePath, sizeof(FilePath), "txtsetup.sif");
         if (InfOpenFile(&InfHandle, FilePath, &ErrorLine))
         {
+            /* Found and opened: TXTSETUP.SIF is in the correct BootPath */
             break;
+        }
+        else
+        {
+            if (ErrorLine != -1)
+                UiMessageBox("Error in %s at line %lu", FilePath, ErrorLine);
         }
     }
 
     TRACE("BootPath: '%s', SystemPath: '%s'\n", BootPath, SystemPath);
 
     // UseLocalSif = NtLdrGetOption(BootOptions, "USELOCALSIF");
-
     if (NtLdrGetOption(BootOptions, "SIFOPTIONSOVERRIDE"))
     {
         PCSTR OptionsToRemove[2] = {"SIFOPTIONSOVERRIDE", NULL};
@@ -603,13 +564,11 @@ LoadReactOSSetup(
         RtlStringCbCopyA(UserBootOptions, sizeof(UserBootOptions), BootOptions);
 
         /* Remove the private switch from the options */
-        NtLdrUpdateLoadOptions(UserBootOptions,
-                               sizeof(UserBootOptions),
-                               FALSE,
-                               NULL,
-                               OptionsToRemove);
-
-        BootOptions = UserBootOptions;
+        NtLdrUpdateOptions(UserBootOptions,
+                           sizeof(UserBootOptions),
+                           FALSE,
+                           NULL,
+                           OptionsToRemove);
     }
     else // if (!*BootOptions || NtLdrGetOption(BootOptions, "SIFOPTIONSADD"))
     {
@@ -643,7 +602,7 @@ LoadReactOSSetup(
         }
         /* If none was found, default to enabling debugging */
         if (!DbgLoadOptions)
-            DbgLoadOptions = "/DEBUG";
+            DbgLoadOptions = "DEBUG";
 #if !DBG
         }
 #endif
@@ -667,7 +626,7 @@ LoadReactOSSetup(
              * do not contain explicitly the DEBUG option), since we want
              * to have debugging enabled if possible.
              */
-            OptionsToRemove[0] = "/NODEBUG";
+            OptionsToRemove[0] = "NODEBUG";
             NtLdrGetHigherPriorityOptions(DbgLoadOptions,
                                           &ExtraOptions,
                                           &HigherPriorityOptions);
@@ -681,11 +640,11 @@ LoadReactOSSetup(
              */
             OptionsToAdd[0] = (PSTR)DbgLoadOptions;
             OptionsToRemove[2] = (PSTR)DbgLoadOptions;
-            NtLdrUpdateLoadOptions(UserBootOptions,
-                                   sizeof(UserBootOptions),
-                                   FALSE,
-                                   (PCSTR*)OptionsToAdd,
-                                   (PCSTR*)OptionsToRemove);
+            NtLdrUpdateOptions(UserBootOptions,
+                               sizeof(UserBootOptions),
+                               FALSE,
+                               (PCSTR*)OptionsToAdd,
+                               (PCSTR*)OptionsToRemove);
 
             if (ExtraOptions)
                 FrLdrHeapFree(ExtraOptions, TAG_BOOT_OPTIONS);
@@ -711,21 +670,30 @@ LoadReactOSSetup(
          * take precedence over those from TXTSETUP.SIF. */
         OptionsToAdd[0] = (PSTR)BootOptions;
         OptionsToRemove[1] = (PSTR)BootOptions;
-        NtLdrUpdateLoadOptions(UserBootOptions,
-                               sizeof(UserBootOptions),
-                               FALSE,
-                               (PCSTR*)OptionsToAdd,
-                               (PCSTR*)OptionsToRemove);
+        NtLdrUpdateOptions(UserBootOptions,
+                           sizeof(UserBootOptions),
+                           FALSE,
+                           (PCSTR*)OptionsToAdd,
+                           (PCSTR*)OptionsToRemove);
 
         if (ExtraOptions)
             FrLdrHeapFree(ExtraOptions, TAG_BOOT_OPTIONS);
         if (HigherPriorityOptions)
             FrLdrHeapFree(HigherPriorityOptions, TAG_BOOT_OPTIONS);
-
-        BootOptions = UserBootOptions;
     }
 
-    TRACE("BootOptions: '%s'\n", BootOptions);
+    /* Append boot-time options */
+    AppendBootTimeOptions(UserBootOptions, sizeof(UserBootOptions));
+
+    /* Post-process the boot options */
+    NtLdrNormalizeOptions(UserBootOptions);
+    BootOptions = UserBootOptions;
+    TRACE("BootOptions(2): '%s'\n", BootOptions);
+
+    /* Handle the SOS option */
+    SosEnabled = !!NtLdrGetOption(BootOptions, "SOS");
+    if (SosEnabled)
+        UiResetForSOS();
 
     /* Allocate and minimally-initialize the Loader Parameter Block */
     AllocateAndInitLPB(_WIN32_WINNT_WS03, &LoaderBlock);
@@ -738,8 +706,7 @@ LoadReactOSSetup(
     SetupBlock->Flags = SETUPLDR_TEXT_MODE;
 
     /* Load the "setupreg.hiv" setup system hive */
-    UiDrawBackdrop();
-    UiDrawProgressBarCenter(15, 100, "Loading setup system hive...");
+    UiUpdateProgressBar(15, "Loading setup system hive...");
     Success = WinLdrInitSystemHive(LoaderBlock, BootPath, TRUE);
     TRACE("Setup SYSTEM hive %s\n", (Success ? "loaded" : "not loaded"));
     /* Bail out if failure */
@@ -770,5 +737,6 @@ LoadReactOSSetup(
     return LoadAndBootWindowsCommon(_WIN32_WINNT_WS03,
                                     LoaderBlock,
                                     BootOptions,
+                                    SystemPartition,
                                     BootPath);
 }

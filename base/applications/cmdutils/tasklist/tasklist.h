@@ -2,7 +2,7 @@
  * PROJECT:     ReactOS Tasklist Command
  * LICENSE:     GPL-2.0-or-later (https://spdx.org/licenses/GPL-2.0-or-later)
  * PURPOSE:     Displays a list of currently running processes on the computer.
- * COPYRIGHT:   Copyright 2020 He Yang (1160386205@qq.com)
+ * COPYRIGHT:   Copyright 2020 He Yang <1160386205@qq.com>
  */
 
 #pragma once
@@ -10,11 +10,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <wchar.h>
-#include <assert.h>
 
 #define WIN32_NO_STATUS
 #include <windows.h>
-#include <ntndk.h>
+#include <ndk/exfuncs.h>
 #include <strsafe.h>
 
 #include <conutils.h>

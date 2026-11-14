@@ -79,6 +79,10 @@ int seh0058();
     } \
     _SEH2_END
 
+#if defined(_MSC_VER) && !defined(_USE_NATIVE_SEH)
+#define _USE_NATIVE_SEH
+#endif
+
 START_TEST(ms_seh)
 {
     run_test(seh0001);
@@ -89,11 +93,15 @@ START_TEST(ms_seh)
     run_test(seh0006);
     run_test(seh0007);
     run_test(seh0008);
+#ifdef _USE_NATIVE_SEH
     run_test(seh0009);
+#endif
     run_test(seh0010);
     run_test(seh0011);
     run_test(seh0012);
+#ifdef _USE_NATIVE_SEH
     run_test(seh0013);
+#endif
     run_test(seh0014);
     run_test(seh0015);
     run_test(seh0016);
@@ -102,21 +110,29 @@ START_TEST(ms_seh)
     run_test(seh0019);
     run_test(seh0020);
     run_test(seh0021);
+#ifdef _USE_NATIVE_SEH
     run_test(seh0022);
+#endif
     run_test(seh0023);
     run_test(seh0024);
     run_test(seh0025);
+#ifdef _USE_NATIVE_SEH
     run_test(seh0026);
+#endif
     run_test(seh0027);
     run_test(seh0028);
+#ifdef _USE_NATIVE_SEH
     run_test(seh0029);
+#endif
     run_test(seh0030);
     run_test(seh0031);
     run_test(seh0032);
     run_test(seh0033);
+#ifdef _USE_NATIVE_SEH
     run_test(seh0034);
     run_test(seh0035);
     run_test(seh0036);
+#endif
     run_test(seh0037);
     run_test(seh0038);
     run_test(seh0039);
@@ -135,9 +151,7 @@ START_TEST(ms_seh)
     run_test(seh0052);
     run_test(seh0053);
     run_test(seh0054);
-#if !defined(_PSEH3_H_)
     run_test(seh0055);
-#endif
     run_test(seh0056);
     run_test(seh0057);
     run_test(seh0058);

@@ -1,15 +1,13 @@
-add_cd_file(FILE ${CMAKE_CURRENT_SOURCE_DIR}/1920px_Polarlicht.jpg DESTINATION reactos/Web/Wallpaper FOR all)
-add_cd_file(FILE ${CMAKE_CURRENT_SOURCE_DIR}/clouds.jpg DESTINATION reactos/Web/Wallpaper FOR all)
-add_cd_file(FILE ${CMAKE_CURRENT_SOURCE_DIR}/grass.jpg DESTINATION reactos/Web/Wallpaper FOR all)
-add_cd_file(FILE ${CMAKE_CURRENT_SOURCE_DIR}/lake.jpg DESTINATION reactos/Web/Wallpaper FOR all)
-add_cd_file(FILE ${CMAKE_CURRENT_SOURCE_DIR}/ReactOS_CirclesBlue_1.jpg DESTINATION reactos/Web/Wallpaper FOR all)
-add_cd_file(FILE ${CMAKE_CURRENT_SOURCE_DIR}/ReactOS_CirclesBlue_2.jpg DESTINATION reactos/Web/Wallpaper FOR all)
-add_cd_file(FILE ${CMAKE_CURRENT_SOURCE_DIR}/ReactOS_CirclesGold_1.jpg DESTINATION reactos/Web/Wallpaper FOR all)
-add_cd_file(FILE ${CMAKE_CURRENT_SOURCE_DIR}/ReactOS_CirclesGold_2.jpg DESTINATION reactos/Web/Wallpaper FOR all)
-add_cd_file(FILE ${CMAKE_CURRENT_SOURCE_DIR}/ReactOS_Hexagons.jpg DESTINATION reactos/Web/Wallpaper FOR all)
-add_cd_file(FILE ${CMAKE_CURRENT_SOURCE_DIR}/ReactOS_Mizu.png DESTINATION reactos/Web/Wallpaper FOR all)
-add_cd_file(FILE ${CMAKE_CURRENT_SOURCE_DIR}/ReactOS_Mizu_4x3.png DESTINATION reactos/Web/Wallpaper FOR all)
-add_cd_file(FILE ${CMAKE_CURRENT_SOURCE_DIR}/ReactOS_Mizu_16x9_A.png DESTINATION reactos/Web/Wallpaper FOR all)
-add_cd_file(FILE ${CMAKE_CURRENT_SOURCE_DIR}/ReactOS_Mizu_16x9_B.png DESTINATION reactos/Web/Wallpaper FOR all)
-add_subdirectory(Angelus)
-add_subdirectory(Silhouette)
+
+file(GLOB WALLPAPER_FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/*.bmp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/*.jpg"
+    "${CMAKE_CURRENT_SOURCE_DIR}/*.png"
+    "${CMAKE_CURRENT_SOURCE_DIR}/*.txt"
+)
+
+list(REMOVE_ITEM WALLPAPER_FILES "${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt")
+
+foreach(f ${WALLPAPER_FILES})
+    add_cd_file(FILE "${f}" DESTINATION reactos/Web/Wallpaper FOR all)
+endforeach()

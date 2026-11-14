@@ -1,11 +1,9 @@
 /*
- * PROJECT:         ReactOS SDK Library
- * LICENSE:         LGPL, see LGPL.txt in top level directory.
- * FILE:            lib/sdk/delayimp/delayimp.c
- * PURPOSE:         Library for delay importing from dlls
- * PROGRAMMERS:     Timo Kreuzer <timo.kreuzer@reactos.org>
- *                  Mark Jansen
- *
+ * PROJECT:     ReactOS delayimport Library
+ * LICENSE:     MIT (https://spdx.org/licenses/MIT)
+ * PURPOSE:     Implementation of delayimport library
+ * COPYRIGHT:   Copyright 2009 Timo Kreuzer <timo.kreuzer@reactos.org>
+ *              Copyright 2016 Mark Jansen
  */
 
 #include <stdarg.h>
@@ -13,26 +11,13 @@
 #include <winbase.h>
 #include <delayimp.h>
 
-/**** Linker magic: provide a default (NULL) pointer, but allow the user to override it ****/
+/**** Linker magic: provide default (NULL) pointers in separate
+ **** compilation units (pfnDliNotifyHook2.c and pfnDliFailureHook2.c),
+ **** so as to allow the user to override these ****/
 
-/* The actual items we use */
-PfnDliHook __pfnDliNotifyHook2;
-PfnDliHook __pfnDliFailureHook2;
-
-#if !defined(__GNUC__)
-/* The fallback symbols */
-PfnDliHook __pfnDliNotifyHook2Default = NULL;
-PfnDliHook __pfnDliFailureHook2Default = NULL;
-
-/* Tell the linker to use the fallback symbols */
-#if defined (_M_IX86)
-#pragma comment(linker, "/alternatename:___pfnDliNotifyHook2=___pfnDliNotifyHook2Default")
-#pragma comment(linker, "/alternatename:___pfnDliFailureHook2=___pfnDliFailureHook2Default")
-#else
-#pragma comment(linker, "/alternatename:__pfnDliNotifyHook2=__pfnDliNotifyHook2Default")
-#pragma comment(linker, "/alternatename:__pfnDliFailureHook2=__pfnDliFailureHook2Default")
-#endif
-#endif
+/* The actual symbols we use */
+extern PfnDliHook __pfnDliNotifyHook2;
+extern PfnDliHook __pfnDliFailureHook2;
 
 
 /**** Helper functions to convert from RVA to address ****/
@@ -77,7 +62,7 @@ __delayLoadHelper2(PCImgDelayDescr pidd, PImgThunkData pIATEntry)
     dli.dlp.fImportByName = !IMAGE_SNAP_BY_ORDINAL(pINT[index].u1.Ordinal);
     if (dli.dlp.fImportByName)
     {
-        /* u1.AdressOfData points to a IMAGE_IMPORT_BY_NAME struct */
+        /* u1.AddressOfData points to a IMAGE_IMPORT_BY_NAME struct */
         PIMAGE_IMPORT_BY_NAME piibn = PFromRva((RVA)pINT[index].u1.AddressOfData);
         dli.dlp.szProcName = (LPCSTR)&piibn->Name;
     }

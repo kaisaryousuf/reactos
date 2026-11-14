@@ -321,7 +321,7 @@ NTSTATUS
 NTAPI
 NtGetDevicePowerState(
   _In_ HANDLE Device,
-  _Out_ DEVICE_POWER_STATE *State);
+  _Out_ PDEVICE_POWER_STATE PowerState);
 
 NTSYSCALLAPI
 NTSTATUS
@@ -386,7 +386,8 @@ typedef struct {
   BOOLEAN BatteryPresent;
   BOOLEAN Charging;
   BOOLEAN Discharging;
-  BOOLEAN Spare1[4];
+  BOOLEAN Spare1[3];
+  UCHAR Tag;
   ULONG MaxCapacity;
   ULONG RemainingCapacity;
   ULONG Rate;

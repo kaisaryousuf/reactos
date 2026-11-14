@@ -1,8 +1,8 @@
 /*
  * PROJECT:     ReactOS 'Layers' Shim library
- * LICENSE:     GPL-2.0+ (https://spdx.org/licenses/GPL-2.0+)
+ * LICENSE:     MIT (https://spdx.org/licenses/MIT)
  * PURPOSE:     Version lie implementation helper
- * COPYRIGHT:   Copyright 2016,2017 Mark Jansen (mark.jansen@reactos.org)
+ * COPYRIGHT:   Copyright 2016,2017 Mark Jansen <mark.jansen@reactos.org>
  */
 
 #include <setup_shim.inl>
@@ -31,14 +31,19 @@ BOOL WINAPI SHIM_OBJ_NAME(APIHook_GetVersionExW)(LPOSVERSIONINFOEXA lpOsVersionI
     return FALSE;
 }
 
+#ifndef STATUS_INVALID_PARAMETER
+#define STATUS_INVALID_PARAMETER 0xC000000DL
+#define STATUS_SUCCESS 0
+#endif
+
 /* We do not care about the actual type, FakeVersion will correctly handle it either way */
-BOOL WINAPI SHIM_OBJ_NAME(APIHook_RtlGetVersion)(LPOSVERSIONINFOEXA lpOsVersionInfo)
+DWORD WINAPI SHIM_OBJ_NAME(APIHook_RtlGetVersion)(LPOSVERSIONINFOEXA lpOsVersionInfo)
 {
-    if (CALL_SHIM(3, GETVERSIONEXAPROC)(lpOsVersionInfo))
+    if (CALL_SHIM(3, GETVERSIONEXAPROC)(lpOsVersionInfo) == STATUS_SUCCESS)
     {
-        return FakeVersion(lpOsVersionInfo, &VERSION_INFO);
+        return FakeVersion(lpOsVersionInfo, &VERSION_INFO) ? STATUS_SUCCESS : STATUS_INVALID_PARAMETER;
     }
-    return FALSE;
+    return STATUS_INVALID_PARAMETER;
 }
 
 BOOL WINAPI SHIM_OBJ_NAME(Notify)(DWORD fdwReason, PVOID ptr)

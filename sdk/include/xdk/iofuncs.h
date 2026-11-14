@@ -2,6 +2,8 @@
  *                         I/O Manager Functions                              *
  ******************************************************************************/
 
+#include <section_attribs.h>
+
 $if (_WDMDDK_)
 /*
  * NTSTATUS
@@ -36,7 +38,306 @@ $if (_WDMDDK_)
     } \
 }
 
-#if !defined(_M_AMD64)
+#if defined(_M_ARM64)
+
+/* There are no I/O ports, registers and ports are memory mapped and every access completes earlier memory accesses first */
+
+FORCEINLINE
+UCHAR
+READ_REGISTER_UCHAR(
+  _In_ volatile UCHAR *Register)
+{
+  __dsb(_ARM64_BARRIER_SY);
+  return *Register;
+}
+
+FORCEINLINE
+VOID
+WRITE_REGISTER_UCHAR(
+  _In_ volatile UCHAR *Register,
+  _In_ UCHAR Value)
+{
+  __dsb(_ARM64_BARRIER_SY);
+  *Register = Value;
+}
+
+FORCEINLINE
+VOID
+READ_REGISTER_BUFFER_UCHAR(
+  _In_ volatile UCHAR *Register,
+  _Out_writes_all_(Count) PUCHAR Buffer,
+  _In_ ULONG Count)
+{
+  __dsb(_ARM64_BARRIER_SY);
+  while (Count--)
+    *Buffer++ = *Register++;
+}
+
+FORCEINLINE
+VOID
+WRITE_REGISTER_BUFFER_UCHAR(
+  _In_ volatile UCHAR *Register,
+  _In_reads_(Count) PUCHAR Buffer,
+  _In_ ULONG Count)
+{
+  __dsb(_ARM64_BARRIER_SY);
+  while (Count--)
+    *Register++ = *Buffer++;
+}
+
+FORCEINLINE
+USHORT
+READ_REGISTER_USHORT(
+  _In_ volatile USHORT *Register)
+{
+  __dsb(_ARM64_BARRIER_SY);
+  return *Register;
+}
+
+FORCEINLINE
+VOID
+WRITE_REGISTER_USHORT(
+  _In_ volatile USHORT *Register,
+  _In_ USHORT Value)
+{
+  __dsb(_ARM64_BARRIER_SY);
+  *Register = Value;
+}
+
+FORCEINLINE
+VOID
+READ_REGISTER_BUFFER_USHORT(
+  _In_ volatile USHORT *Register,
+  _Out_writes_all_(Count) PUSHORT Buffer,
+  _In_ ULONG Count)
+{
+  __dsb(_ARM64_BARRIER_SY);
+  while (Count--)
+    *Buffer++ = *Register++;
+}
+
+FORCEINLINE
+VOID
+WRITE_REGISTER_BUFFER_USHORT(
+  _In_ volatile USHORT *Register,
+  _In_reads_(Count) PUSHORT Buffer,
+  _In_ ULONG Count)
+{
+  __dsb(_ARM64_BARRIER_SY);
+  while (Count--)
+    *Register++ = *Buffer++;
+}
+
+FORCEINLINE
+ULONG
+READ_REGISTER_ULONG(
+  _In_ volatile ULONG *Register)
+{
+  __dsb(_ARM64_BARRIER_SY);
+  return *Register;
+}
+
+FORCEINLINE
+VOID
+WRITE_REGISTER_ULONG(
+  _In_ volatile ULONG *Register,
+  _In_ ULONG Value)
+{
+  __dsb(_ARM64_BARRIER_SY);
+  *Register = Value;
+}
+
+FORCEINLINE
+VOID
+READ_REGISTER_BUFFER_ULONG(
+  _In_ volatile ULONG *Register,
+  _Out_writes_all_(Count) PULONG Buffer,
+  _In_ ULONG Count)
+{
+  __dsb(_ARM64_BARRIER_SY);
+  while (Count--)
+    *Buffer++ = *Register++;
+}
+
+FORCEINLINE
+VOID
+WRITE_REGISTER_BUFFER_ULONG(
+  _In_ volatile ULONG *Register,
+  _In_reads_(Count) PULONG Buffer,
+  _In_ ULONG Count)
+{
+  __dsb(_ARM64_BARRIER_SY);
+  while (Count--)
+    *Register++ = *Buffer++;
+}
+
+FORCEINLINE
+ULONG64
+READ_REGISTER_ULONG64(
+  _In_ volatile ULONG64 *Register)
+{
+  __dsb(_ARM64_BARRIER_SY);
+  return *Register;
+}
+
+FORCEINLINE
+VOID
+WRITE_REGISTER_ULONG64(
+  _In_ volatile ULONG64 *Register,
+  _In_ ULONG64 Value)
+{
+  __dsb(_ARM64_BARRIER_SY);
+  *Register = Value;
+}
+
+FORCEINLINE
+VOID
+READ_REGISTER_BUFFER_ULONG64(
+  _In_ volatile ULONG64 *Register,
+  _Out_writes_all_(Count) PULONG64 Buffer,
+  _In_ ULONG Count)
+{
+  __dsb(_ARM64_BARRIER_SY);
+  while (Count--)
+    *Buffer++ = *Register++;
+}
+
+FORCEINLINE
+VOID
+WRITE_REGISTER_BUFFER_ULONG64(
+  _In_ volatile ULONG64 *Register,
+  _In_reads_(Count) PULONG64 Buffer,
+  _In_ ULONG Count)
+{
+  __dsb(_ARM64_BARRIER_SY);
+  while (Count--)
+    *Register++ = *Buffer++;
+}
+
+FORCEINLINE
+UCHAR
+READ_PORT_UCHAR(
+  _In_ PUCHAR Port)
+{
+  return READ_REGISTER_UCHAR(Port);
+}
+
+FORCEINLINE
+VOID
+WRITE_PORT_UCHAR(
+  _In_ PUCHAR Port,
+  _In_ UCHAR Value)
+{
+  WRITE_REGISTER_UCHAR(Port, Value);
+}
+
+FORCEINLINE
+VOID
+READ_PORT_BUFFER_UCHAR(
+  _In_ PUCHAR Port,
+  _Out_writes_all_(Count) PUCHAR Buffer,
+  _In_ ULONG Count)
+{
+  __dsb(_ARM64_BARRIER_SY);
+  while (Count--)
+    *Buffer++ = *(volatile UCHAR *)Port;
+}
+
+FORCEINLINE
+VOID
+WRITE_PORT_BUFFER_UCHAR(
+  _In_ PUCHAR Port,
+  _In_reads_(Count) PUCHAR Buffer,
+  _In_ ULONG Count)
+{
+  __dsb(_ARM64_BARRIER_SY);
+  while (Count--)
+    *(volatile UCHAR *)Port = *Buffer++;
+}
+
+FORCEINLINE
+USHORT
+READ_PORT_USHORT(
+  _In_ PUSHORT Port)
+{
+  return READ_REGISTER_USHORT(Port);
+}
+
+FORCEINLINE
+VOID
+WRITE_PORT_USHORT(
+  _In_ PUSHORT Port,
+  _In_ USHORT Value)
+{
+  WRITE_REGISTER_USHORT(Port, Value);
+}
+
+FORCEINLINE
+VOID
+READ_PORT_BUFFER_USHORT(
+  _In_ PUSHORT Port,
+  _Out_writes_all_(Count) PUSHORT Buffer,
+  _In_ ULONG Count)
+{
+  __dsb(_ARM64_BARRIER_SY);
+  while (Count--)
+    *Buffer++ = *(volatile USHORT *)Port;
+}
+
+FORCEINLINE
+VOID
+WRITE_PORT_BUFFER_USHORT(
+  _In_ PUSHORT Port,
+  _In_reads_(Count) PUSHORT Buffer,
+  _In_ ULONG Count)
+{
+  __dsb(_ARM64_BARRIER_SY);
+  while (Count--)
+    *(volatile USHORT *)Port = *Buffer++;
+}
+
+FORCEINLINE
+ULONG
+READ_PORT_ULONG(
+  _In_ PULONG Port)
+{
+  return READ_REGISTER_ULONG(Port);
+}
+
+FORCEINLINE
+VOID
+WRITE_PORT_ULONG(
+  _In_ PULONG Port,
+  _In_ ULONG Value)
+{
+  WRITE_REGISTER_ULONG(Port, Value);
+}
+
+FORCEINLINE
+VOID
+READ_PORT_BUFFER_ULONG(
+  _In_ PULONG Port,
+  _Out_writes_all_(Count) PULONG Buffer,
+  _In_ ULONG Count)
+{
+  __dsb(_ARM64_BARRIER_SY);
+  while (Count--)
+    *Buffer++ = *(volatile ULONG *)Port;
+}
+
+FORCEINLINE
+VOID
+WRITE_PORT_BUFFER_ULONG(
+  _In_ PULONG Port,
+  _In_reads_(Count) PULONG Buffer,
+  _In_ ULONG Count)
+{
+  __dsb(_ARM64_BARRIER_SY);
+  while (Count--)
+    *(volatile ULONG *)Port = *Buffer++;
+}
+
+#elif !defined(_M_AMD64)
 NTHALAPI
 VOID
 NTAPI
@@ -271,30 +572,30 @@ FORCEINLINE
 VOID
 READ_REGISTER_BUFFER_UCHAR(
   IN PUCHAR Register,
-  IN PUCHAR Buffer,
+  _Out_writes_all_(Count) PUCHAR Buffer,
   IN ULONG Count)
 {
-  __movsb(Register, Buffer, Count);
+  __movsb(Buffer, Register, Count);
 }
 
 FORCEINLINE
 VOID
 READ_REGISTER_BUFFER_ULONG(
   IN PULONG Register,
-  IN PULONG Buffer,
+  _Out_writes_all_(Count) PULONG Buffer,
   IN ULONG Count)
 {
-  __movsd(Register, Buffer, Count);
+  __movsd(Buffer, Register, Count);
 }
 
 FORCEINLINE
 VOID
 READ_REGISTER_BUFFER_USHORT(
   IN PUSHORT Register,
-  IN PUSHORT Buffer,
+  _Out_writes_all_(Count) PUSHORT Buffer,
   IN ULONG Count)
 {
-  __movsw(Register, Buffer, Count);
+  __movsw(Buffer, Register, Count);
 }
 
 FORCEINLINE
@@ -309,6 +610,14 @@ FORCEINLINE
 ULONG
 READ_REGISTER_ULONG(
   IN volatile ULONG *Register)
+{
+  return *Register;
+}
+
+FORCEINLINE
+ULONG64
+READ_REGISTER_ULONG64(
+  IN volatile ULONG64 *Register)
 {
   return *Register;
 }
@@ -430,6 +739,17 @@ VOID
 WRITE_REGISTER_ULONG(
   IN volatile ULONG *Register,
   IN ULONG Value)
+{
+  LONG Synch;
+  *Register = Value;
+  InterlockedOr(&Synch, 1);
+}
+
+FORCEINLINE
+VOID
+WRITE_REGISTER_ULONG64(
+  IN volatile ULONG64 *Register,
+  IN ULONG64 Value)
 {
   LONG Synch;
   *Register = Value;
@@ -1138,6 +1458,7 @@ IoRegisterDeviceInterface(
 
 _IRQL_requires_max_(PASSIVE_LEVEL)
 _Must_inspect_result_
+CODE_SEG("PAGE")
 NTKERNELAPI
 NTSTATUS
 NTAPI
@@ -1289,6 +1610,7 @@ IoStopTimer(
 
 _IRQL_requires_max_(PASSIVE_LEVEL)
 __drv_freesMem(Pool)
+CODE_SEG("PAGE")
 NTKERNELAPI
 NTSTATUS
 NTAPI
@@ -1488,7 +1810,7 @@ IoQueryDeviceDescription(
   _In_opt_ PCONFIGURATION_TYPE PeripheralType,
   _In_opt_ PULONG PeripheralNumber,
   _In_ PIO_QUERY_DEVICE_ROUTINE CalloutRoutine,
-  _Inout_opt_ PVOID Context);
+  _In_opt_ PVOID Context);
 
 _IRQL_requires_max_(APC_LEVEL)
 NTKERNELAPI
@@ -2400,35 +2722,6 @@ IoRequestDeviceEjectEx(
   _In_opt_ PVOID Context,
   _In_opt_ PDRIVER_OBJECT DriverObject);
 
-_IRQL_requires_max_(PASSIVE_LEVEL)
-_Must_inspect_result_
-NTKRNLVISTAAPI
-NTSTATUS
-NTAPI
-IoSetDevicePropertyData(
-  _In_ PDEVICE_OBJECT Pdo,
-  _In_ CONST DEVPROPKEY *PropertyKey,
-  _In_ LCID Lcid,
-  _In_ ULONG Flags,
-  _In_ DEVPROPTYPE Type,
-  _In_ ULONG Size,
-  _In_opt_ PVOID Data);
-
-_IRQL_requires_max_(PASSIVE_LEVEL)
-_Must_inspect_result_
-NTKRNLVISTAAPI
-NTSTATUS
-NTAPI
-IoGetDevicePropertyData(
-  _In_ PDEVICE_OBJECT Pdo,
-  _In_ CONST DEVPROPKEY *PropertyKey,
-  _In_ LCID Lcid,
-  _Reserved_ ULONG Flags,
-  _In_ ULONG Size,
-  _Out_ PVOID Data,
-  _Out_ PULONG RequiredSize,
-  _Out_ PDEVPROPTYPE Type);
-
 $endif (_WDMDDK_)
 $if (_NTDDK_)
 NTKERNELAPI
@@ -2597,15 +2890,28 @@ IoReplaceFileObjectName(
 $endif (_NTIFS_)
 #endif /* (NTDDI_VERSION >= NTDDI_WIN7) */
 
+$if (_NTDDK_)
 #if (NTDDI_VERSION >= NTDDI_WIN8)
 
+NTKRNLVISTAAPI
+VOID
+NTAPI
+IoSetMasterIrpStatus(
+  _Inout_ PIRP MasterIrp,
+  _In_ NTSTATUS Status);
+
+#endif /* (NTDDI_VERSION >= NTDDI_WIN8) */
+$endif (_NTDDK_)
+
 $if (_WDMDDK_)
+#if (NTDDI_VERSION >= NTDDI_VISTA) || defined(__REACTOS__)
 _IRQL_requires_max_(PASSIVE_LEVEL)
 _Must_inspect_result_
-NTKRNLVISTAAPI
+NTKERNELAPI
 NTSTATUS
-IoSetDeviceInterfacePropertyData(
-  _In_ PUNICODE_STRING SymbolicLinkName,
+NTAPI
+IoSetDevicePropertyData(
+  _In_ PDEVICE_OBJECT Pdo,
   _In_ CONST DEVPROPKEY *PropertyKey,
   _In_ LCID Lcid,
   _In_ ULONG Flags,
@@ -2617,26 +2923,49 @@ _IRQL_requires_max_(PASSIVE_LEVEL)
 _Must_inspect_result_
 NTKERNELAPI
 NTSTATUS
-IoGetDeviceInterfacePropertyData (
+NTAPI
+IoGetDevicePropertyData(
+  _In_ PDEVICE_OBJECT Pdo,
+  _In_ CONST DEVPROPKEY *PropertyKey,
+  _In_ LCID Lcid,
+  _Reserved_ ULONG Flags,
+  _In_ ULONG Size,
+  _Out_writes_bytes_to_opt_(Size, *RequiredSize) PVOID Data,
+  _Out_ PULONG RequiredSize,
+  _Out_ PDEVPROPTYPE Type);
+#endif /* (NTDDI_VERSION >= NTDDI_VISTA) || defined(__REACTOS__) */
+
+#if (NTDDI_VERSION >= NTDDI_WIN8)
+_IRQL_requires_max_(PASSIVE_LEVEL)
+_Must_inspect_result_
+NTKRNLVISTAAPI
+NTSTATUS
+NTAPI
+IoSetDeviceInterfacePropertyData(
+  _In_ PUNICODE_STRING SymbolicLinkName,
+  _In_ CONST DEVPROPKEY *PropertyKey,
+  _In_ LCID Lcid,
+  _In_ ULONG Flags,
+  _In_ DEVPROPTYPE Type,
+  _In_ ULONG Size,
+  _In_reads_bytes_opt_(Size) PVOID Data);
+
+_IRQL_requires_max_(PASSIVE_LEVEL)
+_Must_inspect_result_
+NTKRNLVISTAAPI
+NTSTATUS
+NTAPI
+IoGetDeviceInterfacePropertyData(
   _In_ PUNICODE_STRING SymbolicLinkName,
   _In_ CONST DEVPROPKEY *PropertyKey,
   _In_ LCID Lcid,
   _Reserved_ ULONG Flags,
   _In_ ULONG Size,
-  _Out_writes_bytes_to_(Size, *RequiredSize) PVOID Data,
+  _Out_writes_bytes_to_opt_(Size, *RequiredSize) PVOID Data,
   _Out_ PULONG RequiredSize,
   _Out_ PDEVPROPTYPE Type);
-$endif (_WDMDDK_)
-$if (_NTDDK_)
-
-NTKRNLVISTAAPI
-VOID
-IoSetMasterIrpStatus(
-  _Inout_ PIRP MasterIrp,
-  _In_ NTSTATUS Status);
-$endif (_NTDDK_)
-
 #endif /* (NTDDI_VERSION >= NTDDI_WIN8) */
+$endif (_WDMDDK_)
 
 $if (_WDMDDK_)
 #if defined(_WIN64)

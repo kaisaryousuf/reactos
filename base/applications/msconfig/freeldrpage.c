@@ -53,11 +53,11 @@ LoadBootIni(WCHAR *szDrive, HWND hDlg)
         hr = StringCbCatW(szBuffer, sizeof(szBuffer), L"boot.ini");
         if (FAILED(hr))
             return FALSE;
-            
+
         file = _wfopen(szBuffer, L"rt");
         if (!file)
             return FALSE;
-    }     
+    }
 
     hDlgCtrl = GetDlgItem(hDlg, IDC_LIST_BOX);
 
@@ -140,6 +140,7 @@ FreeLdrPageWndProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
         hFreeLdrDialog = hDlg;
         SetWindowPos(hDlg, NULL, 10, 32, 0, 0, SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOSIZE | SWP_NOZORDER);
         InitializeFreeLDRDialog(hDlg);
+        DisableAllExcept(hDlg, IDC_LIST_BOX); // FIXME: Implement saving
         return TRUE;
     case WM_COMMAND:
         switch(HIWORD(wParam))

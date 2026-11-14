@@ -122,7 +122,7 @@ static DWORD FindFlag(PCWSTR Name, WORD Dest)
     {
         if (g_Flags[n].wDest & Dest)
         {
-            if (!wcsicmp(Name, g_Flags[n].szAbbr))
+            if (!_wcsicmp(Name, g_Flags[n].szAbbr))
             {
                 return g_Flags[n].dwFlag;
             }
@@ -183,7 +183,7 @@ static VOID ModifyStatus(VOID)
             ShowStatus(GlobalFlags, Ignored);
         }
     }
-    CloseHandle(IFEOKey);
+    RegCloseKey(IFEOKey);
 }
 
 
@@ -200,7 +200,7 @@ static VOID DisplayStatus(VOID)
     GlobalFlags = ReadSZFlagsFromRegistry(IFEOKey, L"GlobalFlag");
     ShowStatus(GlobalFlags, 0);
 
-    CloseHandle(IFEOKey);
+    RegCloseKey(IFEOKey);
 }
 
 

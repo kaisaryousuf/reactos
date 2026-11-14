@@ -1,5 +1,15 @@
 /* Hardware Abstraction Layer Types */
 
+$if (_WDMDDK_)
+typedef NTSTATUS
+NTAPI
+PROCESSOR_HALT_ROUTINE(
+    _Inout_opt_ PVOID Context
+);
+
+typedef PROCESSOR_HALT_ROUTINE *PPROCESSOR_HALT_ROUTINE;
+$endif (_WDMDDK_)
+
 $if (_NTDDK_)
 typedef BOOLEAN
 (NTAPI *PHAL_RESET_DISPLAY_PARAMETERS)(
@@ -269,16 +279,27 @@ typedef struct {
 #endif
 } HAL_DISPATCH, *PHAL_DISPATCH;
 
-#ifdef _NTSYSTEM_
-extern HAL_DISPATCH HalDispatchTable;
-#define HALDISPATCH (&HalDispatchTable)
-#else
+#if !defined(_NTSYSTEM_) && (defined(_NTDRIVER_) || defined(_NTDDK_) || defined(_NTIFS_) || defined(_NTHAL_))
 __CREATE_NTOS_DATA_IMPORT_ALIAS(HalDispatchTable)
-extern PHAL_DISPATCH HalDispatchTable;
-#define HALDISPATCH HalDispatchTable
+extern  PHAL_DISPATCH   HalDispatchTable;
+#define HALDISPATCH     HalDispatchTable
+#else
+extern  HAL_DISPATCH    HalDispatchTable;
+#define HALDISPATCH     (&HalDispatchTable)
 #endif
 
-#define HAL_DISPATCH_VERSION            3 /* FIXME: when to use 4? */
+// See Version table at:
+// https://www.geoffchappell.com/studies/windows/km/ntoskrnl/inc/ntos/hal/hal_dispatch.htm
+#if (NTDDI_VERSION < NTDDI_WIN2K)
+#define HAL_DISPATCH_VERSION            1
+#elif (NTDDI_VERSION < NTDDI_WINXP)
+#define HAL_DISPATCH_VERSION            2
+#elif (NTDDI_VERSION < NTDDI_WIN7)
+#define HAL_DISPATCH_VERSION            3
+#else
+#define HAL_DISPATCH_VERSION            4
+#endif
+
 #define HalDispatchTableVersion         HALDISPATCH->Version
 #define HalQuerySystemInformation       HALDISPATCH->HalQuerySystemInformation
 #define HalSetSystemInformation         HALDISPATCH->HalSetSystemInformation
@@ -371,8 +392,6 @@ typedef struct _HAL_AMLI_BAD_IO_ADDRESS_LIST {
   PHALIOREADWRITEHANDLER IOHandler;
 } HAL_AMLI_BAD_IO_ADDRESS_LIST, *PHAL_AMLI_BAD_IO_ADDRESS_LIST;
 
-#if defined(_X86_) || defined(_IA64_) || defined(_AMD64_)
-
 typedef VOID
 (NTAPI *PHALMCAINTERFACELOCK)(VOID);
 
@@ -410,6 +429,23 @@ typedef ERROR_SEVERITY
   _In_ PMCA_EXCEPTION Exception);
 
 #endif
+
+#if defined(_ARM_) || defined(_ARM64_)
+
+struct _KTRAP_FRAME;
+struct _KEXCEPTION_FRAME;
+
+typedef PVOID PCMC_EXCEPTION;
+typedef PVOID PCPE_EXCEPTION;
+
+typedef VOID
+(NTAPI *PDRIVER_EXCPTN_CALLBACK)(
+    _In_ PVOID Context,
+    _In_ struct _KTRAP_FRAME *TrapFrame,
+    _In_ struct _KEXCEPTION_FRAME *ExceptionFrame,
+    _In_ PVOID Exception);
+
+#endif /* defined(_ARM_) || defined(_ARM64_) */
 
 #if defined(_X86_) || defined(_IA64_)
 typedef
@@ -494,8 +530,6 @@ typedef struct _CPE_DRIVER_INFO {
   PKDEFERRED_ROUTINE DpcCallback;
   PVOID DeviceContext;
 } CPE_DRIVER_INFO, *PCPE_DRIVER_INFO;
-
-#endif // defined(_X86_) || defined(_IA64_) || defined(_AMD64_)
 
 #if defined(_IA64_)
 

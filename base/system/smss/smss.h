@@ -6,9 +6,12 @@
  * PROGRAMMERS:     Alex Ionescu
  */
 
-/* DEPENDENCIES ***************************************************************/
 #ifndef _SM_
 #define _SM_
+
+#pragma once
+
+/* DEPENDENCIES ***************************************************************/
 
 #include <stdio.h>
 
@@ -19,19 +22,22 @@
 #include <winreg.h>
 
 #define NTOS_MODE_USER
-#include <ndk/iofuncs.h>
-#include <ndk/obfuncs.h>
-#include <ndk/rtlfuncs.h>
 #include <ndk/cmfuncs.h>
 #include <ndk/exfuncs.h>
-#include <ndk/mmfuncs.h>
-#include <ndk/psfuncs.h>
+#include <ndk/iofuncs.h>
+#include <ndk/kefuncs.h>
 #include <ndk/lpcfuncs.h>
+#include <ndk/mmfuncs.h>
+#include <ndk/obfuncs.h>
+#include <ndk/psfuncs.h>
+#include <ndk/rtlfuncs.h>
 #include <ndk/setypes.h>
 #include <ndk/umfuncs.h>
-#include <ndk/kefuncs.h>
 
 #include <ntstrsafe.h>
+
+/* PSEH for SEH Support */
+#include <pseh/pseh2.h>
 
 /* SM Protocol Header */
 #include <sm/smmsg.h>
@@ -78,7 +84,7 @@ extern LIST_ENTRY SmpKnownSubSysHead;
 extern RTL_CRITICAL_SECTION SmpSessionListLock;
 extern LIST_ENTRY SmpSessionListHead;
 extern ULONG SmpNextSessionId;
-extern ULONG SmpNextSessionIdScanMode;
+extern BOOLEAN SmpNextSessionIdScanMode;
 extern BOOLEAN SmpDbgSsLoaded;
 extern HANDLE SmpWindowsSubSysProcess;
 extern HANDLE SmpSessionsObjectDirectory;
@@ -91,70 +97,24 @@ extern UNICODE_STRING SmpSystemRoot;
 extern PWCHAR SmpDefaultEnvironment;
 extern UNICODE_STRING SmpDefaultLibPath;
 extern LIST_ENTRY SmpSetupExecuteList;
-extern LIST_ENTRY SmpSubSystemsToLoad;
-extern LIST_ENTRY SmpExecuteList;
 extern LIST_ENTRY SmpSubSystemList;
+extern LIST_ENTRY SmpSubSystemsToLoad;
+extern LIST_ENTRY SmpSubSystemsToDefer;
+extern LIST_ENTRY SmpExecuteList;
 extern ULONG AttachedSessionId;
 extern BOOLEAN SmpDebug;
 
 /* FUNCTIONS ******************************************************************/
 
-NTSTATUS
+/* crashdmp.c */
+
+BOOLEAN
 NTAPI
-SmpTerminate(
-    IN PULONG_PTR Parameters,
-    IN ULONG ParameterMask,
-    IN ULONG ParameterCount
+SmpCheckForCrashDump(
+    IN PUNICODE_STRING FileName
 );
 
-NTSTATUS
-NTAPI
-SmpCreateSecurityDescriptors(
-    IN BOOLEAN InitialCall
-);
-
-NTSTATUS
-NTAPI
-SmpInit(
-    IN PUNICODE_STRING InitialCommand,
-    OUT PHANDLE ProcessHandle
-);
-
-NTSTATUS
-NTAPI
-SmpAcquirePrivilege(
-    IN ULONG Privilege,
-    OUT PVOID *PrivilegeStat
-);
-
-VOID
-NTAPI
-SmpReleasePrivilege(
-    IN PVOID State
-);
-
-ULONG
-NTAPI
-SmpApiLoop(
-    IN PVOID Parameter
-);
-
-NTSTATUS
-NTAPI
-SmpExecuteCommand(
-    IN PUNICODE_STRING CommandLine,
-    IN ULONG MuSessionId,
-    OUT PHANDLE ProcessId,
-    IN ULONG Flags
-);
-
-NTSTATUS
-NTAPI
-SmpLoadSubSystemsForMuSession(
-    IN PULONG MuSessionId,
-    OUT PHANDLE ProcessId,
-    IN PUNICODE_STRING InitialCommand
-);
+/* pagefile.c */
 
 VOID
 NTAPI
@@ -174,25 +134,72 @@ SmpCreatePagingFiles(
     VOID
 );
 
-NTSTATUS
+/* sminit.c */
+
+VOID
 NTAPI
-SmpParseCommandLine(
-    IN PUNICODE_STRING CommandLine,
-    OUT PULONG Flags,
-    OUT PUNICODE_STRING FileName,
-    OUT PUNICODE_STRING Directory,
-    OUT PUNICODE_STRING Arguments
+SmpTranslateSystemPartitionInformation(
+    VOID
 );
 
 NTSTATUS
 NTAPI
-SmpLoadSubSystem(
-    IN PUNICODE_STRING FileName,
-    IN PUNICODE_STRING Directory,
-    IN PUNICODE_STRING CommandLine,
-    IN ULONG MuSessionId,
-    OUT PHANDLE ProcessId,
-    IN ULONG Flags
+SmpCreateSecurityDescriptors(
+    IN BOOLEAN InitialCall
+);
+
+NTSTATUS
+NTAPI
+SmpInit(
+    IN PUNICODE_STRING InitialCommand,
+    OUT PHANDLE ProcessHandle
+);
+
+/* smloop.c */
+
+ULONG
+NTAPI
+SmpApiLoop(
+    _In_ PVOID Parameter);
+
+/* smsbapi.c */
+
+NTSTATUS
+NTAPI
+SmpSbCreateSession(
+    IN PVOID Reserved,
+    IN PSMP_SUBSYSTEM OtherSubsystem,
+    IN PRTL_USER_PROCESS_INFORMATION ProcessInformation,
+    IN ULONG DbgSessionId,
+    IN PCLIENT_ID DbgUiClientId
+);
+
+/* smsessn.c */
+
+BOOLEAN
+NTAPI
+SmpCheckDuplicateMuSessionId(
+    IN ULONG MuSessionId
+);
+
+VOID
+NTAPI
+SmpDeleteSession(
+    IN ULONG SessionId
+);
+
+ULONG
+NTAPI
+SmpAllocateSessionId(
+    IN PSMP_SUBSYSTEM Subsystem,
+    IN PSMP_SUBSYSTEM OtherSubsystem
+);
+
+NTSTATUS
+NTAPI
+SmpGetProcessMuSessionId(
+    IN HANDLE ProcessHandle,
+    OUT PULONG SessionId
 );
 
 NTSTATUS
@@ -202,36 +209,53 @@ SmpSetProcessMuSessionId(
     IN ULONG SessionId
 );
 
-BOOLEAN
+/* smss.c */
+
+NTSTATUS
 NTAPI
-SmpQueryRegistrySosOption(
-    VOID
+SmpExecuteImage(
+    IN PUNICODE_STRING FileName,
+    IN PUNICODE_STRING Directory,
+    IN PUNICODE_STRING CommandLine,
+    IN ULONG MuSessionId,
+    IN ULONG Flags,
+    IN PRTL_USER_PROCESS_INFORMATION ProcessInformation
 );
 
-BOOLEAN
+NTSTATUS
 NTAPI
-SmpSaveAndClearBootStatusData(
-    OUT PBOOLEAN BootOkay,
-    OUT PBOOLEAN ShutdownOkay
+SmpExecuteCommand(
+    IN PUNICODE_STRING CommandLine,
+    IN ULONG MuSessionId,
+    OUT PHANDLE ProcessId,
+    IN ULONG Flags
 );
+
+NTSTATUS
+NTAPI
+SmpExecuteInitialCommand(IN ULONG MuSessionId,
+                         IN PUNICODE_STRING InitialCommand,
+                         IN HANDLE InitialCommandProcess,
+                         OUT PHANDLE ReturnPid);
+
+NTSTATUS
+NTAPI
+SmpTerminate(
+    _In_reads_(ParameterCount) PULONG_PTR Parameters,
+    _In_ ULONG ParameterMask,
+    _In_ ULONG ParameterCount);
+
+LONG
+NTAPI
+SmpUnhandledExceptionFilter(
+    _In_ PEXCEPTION_POINTERS ExceptionInfo);
+
+/* smsubsys.c */
 
 VOID
 NTAPI
-SmpRestoreBootStatusData(
-    IN BOOLEAN BootOkay,
-    IN BOOLEAN ShutdownOkay
-);
-
-BOOLEAN
-NTAPI
-SmpCheckForCrashDump(
-    IN PUNICODE_STRING FileName
-);
-
-VOID
-NTAPI
-SmpTranslateSystemPartitionInformation(
-    VOID
+SmpDereferenceSubsystem(
+    IN PSMP_SUBSYSTEM SubSystem
 );
 
 PSMP_SUBSYSTEM
@@ -249,55 +273,60 @@ SmpLocateKnownSubSysByType(
 
 NTSTATUS
 NTAPI
-SmpGetProcessMuSessionId(
-    IN HANDLE ProcessHandle,
-    OUT PULONG SessionId
-);
-
-VOID
-NTAPI
-SmpDereferenceSubsystem(
-    IN PSMP_SUBSYSTEM SubSystem
-);
-
-NTSTATUS
-NTAPI
-SmpSbCreateSession(
-    IN PVOID Reserved,
-    IN PSMP_SUBSYSTEM OtherSubsystem,
-    IN PRTL_USER_PROCESS_INFORMATION ProcessInformation,
-    IN ULONG MuSessionId,
-    IN PCLIENT_ID DbgClientId
-);
-
-ULONG
-NTAPI
-SmpAllocateSessionId(
-    IN PSMP_SUBSYSTEM Subsystem,
-    IN PSMP_SUBSYSTEM OtherSubsystem
-);
-
-VOID
-NTAPI
-SmpDeleteSession(
-    IN ULONG SessionId
-);
-
-BOOLEAN
-NTAPI
-SmpCheckDuplicateMuSessionId(
-    IN ULONG MuSessionId
-);
-
-NTSTATUS
-NTAPI
-SmpExecuteImage(
+SmpLoadSubSystem(
     IN PUNICODE_STRING FileName,
     IN PUNICODE_STRING Directory,
     IN PUNICODE_STRING CommandLine,
     IN ULONG MuSessionId,
-    IN ULONG Flags,
-    IN PRTL_USER_PROCESS_INFORMATION ProcessInformation
+    OUT PHANDLE ProcessId,
+    IN ULONG Flags
+);
+
+NTSTATUS
+NTAPI
+SmpLoadSubSystemsForMuSession(
+    IN PULONG MuSessionId,
+    OUT PHANDLE ProcessId,
+    IN PUNICODE_STRING InitialCommand
+);
+
+/* smutil.c */
+
+NTSTATUS
+NTAPI
+SmpAcquirePrivilege(
+    IN ULONG Privilege,
+    OUT PVOID *PrivilegeStat
+);
+
+VOID
+NTAPI
+SmpReleasePrivilege(
+    IN PVOID State
+);
+
+NTSTATUS
+NTAPI
+SmpParseCommandLine(
+    IN PUNICODE_STRING CommandLine,
+    OUT PULONG Flags,
+    OUT PUNICODE_STRING FileName,
+    OUT PUNICODE_STRING Directory,
+    OUT PUNICODE_STRING Arguments
+);
+
+BOOLEAN
+NTAPI
+SmpSaveAndClearBootStatusData(
+    OUT PBOOLEAN BootOkay,
+    OUT PBOOLEAN ShutdownOkay
+);
+
+VOID
+NTAPI
+SmpRestoreBootStatusData(
+    IN BOOLEAN BootOkay,
+    IN BOOLEAN ShutdownOkay
 );
 
 #endif /* _SM_ */

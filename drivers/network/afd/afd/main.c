@@ -13,6 +13,7 @@
 /* INCLUDES */
 
 #include "afd.h"
+#include "wdm.h"
 
 #if DBG
 
@@ -351,7 +352,7 @@ AfdCreateSocket(PDEVICE_OBJECT DeviceObject, PIRP Irp,
     FCB->Flags = ConnectInfo ? ConnectInfo->EndpointFlags : 0;
     FCB->GroupID = ConnectInfo ? ConnectInfo->GroupID : 0;
     FCB->GroupType = 0; /* FIXME */
-    FCB->State = SOCKET_STATE_CREATED;
+    FCB->SharedData.State = SOCKET_STATE_CREATED;
     FCB->FileObject = FileObject;
     FCB->DeviceExt = DeviceExt;
     FCB->AddressFile.Handle = INVALID_HANDLE_VALUE;
@@ -473,7 +474,7 @@ AfdCloseSocket(PDEVICE_OBJECT DeviceObject, PIRP Irp,
 
     if( !SocketAcquireStateLock( FCB ) ) return STATUS_FILE_CLOSED;
 
-    FCB->State = SOCKET_STATE_CLOSED;
+    FCB->SharedData.State = SOCKET_STATE_CLOSED;
 
     InFlightRequest[0] = &FCB->ListenIrp;
     InFlightRequest[1] = &FCB->ReceiveIrp;
@@ -493,6 +494,7 @@ AfdCloseSocket(PDEVICE_OBJECT DeviceObject, PIRP Irp,
     KillSelectsForFCB( FCB->DeviceExt, FileObject, FALSE );
 
     ASSERT(IsListEmpty(&FCB->PendingIrpList[FUNCTION_CONNECT]));
+    ASSERT(IsListEmpty(&FCB->PendingIrpList[FUNCTION_CONNECTEX]));
     ASSERT(IsListEmpty(&FCB->PendingIrpList[FUNCTION_SEND]));
     ASSERT(IsListEmpty(&FCB->PendingIrpList[FUNCTION_RECV]));
     ASSERT(IsListEmpty(&FCB->PendingIrpList[FUNCTION_PREACCEPT]));
@@ -551,6 +553,9 @@ AfdCloseSocket(PDEVICE_OBJECT DeviceObject, PIRP Irp,
 
     if (FCB->RemoteAddress)
         ExFreePoolWithTag(FCB->RemoteAddress, TAG_AFD_TRANSPORT_ADDRESS);
+
+    if (FCB->OnConnectSendBuffer)
+        ExFreePoolWithTag(FCB->OnConnectSendBuffer, TAG_AFD_SUPER_CONNECT_BUFFER);
 
     if( FCB->Connection.Object )
     {
@@ -750,9 +755,6 @@ AfdDisconnect(PDEVICE_OBJECT DeviceObject, PIRP Irp,
         /* Discard any pending data */
         FCB->Recv.Content = 0;
         FCB->Recv.BytesUsed = 0;
-
-        /* Mark us as overread to complete future reads with an error */
-        FCB->Overread = TRUE;
 
         /* Set a successful receive status to indicate a shutdown on overread */
         FCB->LastReceiveStatus = STATUS_SUCCESS;
@@ -955,6 +957,9 @@ AfdDispatch(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         case IOCTL_AFD_CONNECT:
             return AfdStreamSocketConnect( DeviceObject, Irp, IrpSp );
 
+        case IOCTL_AFD_SUPER_CONNECT:
+            return AfdStreamSocketSuperConnect(DeviceObject, Irp, IrpSp);
+
         case IOCTL_AFD_START_LISTEN:
             return AfdListenSocket( DeviceObject, Irp, IrpSp );
 
@@ -1001,6 +1006,9 @@ AfdDispatch(PDEVICE_OBJECT DeviceObject, PIRP Irp)
 
         case IOCTL_AFD_ACCEPT:
             return AfdAccept( DeviceObject, Irp, IrpSp );
+
+        case IOCTL_AFD_SUPER_ACCEPT:
+            return AfdSuperAccept( DeviceObject, Irp, IrpSp );
 
         case IOCTL_AFD_DISCONNECT:
             return AfdDisconnect( DeviceObject, Irp, IrpSp );
@@ -1235,7 +1243,15 @@ AfdCancelHandler(PDEVICE_OBJECT DeviceObject,
             Function = FUNCTION_CONNECT;
             break;
 
+        case IOCTL_AFD_SUPER_CONNECT:
+            Function = FUNCTION_CONNECTEX;
+            break;
+
         case IOCTL_AFD_WAIT_FOR_LISTEN:
+            Function = FUNCTION_PREACCEPT;
+            break;
+
+        case IOCTL_AFD_SUPER_ACCEPT:
             Function = FUNCTION_PREACCEPT;
             break;
 
@@ -1286,6 +1302,26 @@ AfdCancelHandler(PDEVICE_OBJECT DeviceObject,
         {
             RemoveEntryList(CurrentEntry);
             CleanupPendingIrp(FCB, Irp, IrpSp, NULL);
+            if (Function == FUNCTION_PREACCEPT)
+            {
+                /* Unlock the acceptor socket so that it can be reused */
+                PFILE_OBJECT NewFileObject = (PFILE_OBJECT)Irp->Tail.Overlay.DriverContext[2];
+                if (NewFileObject)
+                {
+                    PAFD_FCB FCB2 = NewFileObject->FsContext;
+                    FCB2->SharedData.State = SOCKET_STATE_CREATED;
+                    
+                    ObfDereferenceObject(NewFileObject);
+                    Irp->Tail.Overlay.DriverContext[2] = NULL;
+                }
+
+                if (Irp->Tail.Overlay.DriverContext[3])
+                {
+                    MmUnlockPages((PMDL)Irp->Tail.Overlay.DriverContext[3]);
+                    IoFreeMdl((PMDL)Irp->Tail.Overlay.DriverContext[3]);
+                    Irp->Tail.Overlay.DriverContext[3] = NULL;
+                }
+            }
             UnlockAndMaybeComplete(FCB, STATUS_CANCELLED, Irp, 0);
             return;
         }

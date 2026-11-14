@@ -2,7 +2,7 @@
 add_definitions(
     -DNDIS50_MINIPORT
     -DNDIS_MINIPORT_DRIVER
-    -DNDIS_LEGACY_MINIPORT)
+    -DNDIS_LEGACY_MINIPORT=1)
 
 list(APPEND SOURCE
     ndis.c
@@ -12,7 +12,8 @@ list(APPEND SOURCE
     nic.h
     e1000hw.h
     debug.c
-    debug.h)
+    debug.h
+    send.c)
 
 add_library(e1000 MODULE ${SOURCE} e1000.rc)
 add_pch(e1000 nic.h SOURCE)

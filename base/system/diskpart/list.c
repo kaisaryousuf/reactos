@@ -14,27 +14,159 @@
 /* FUNCTIONS ******************************************************************/
 
 static
-ULONGLONG
-RoundingDivide(
-   IN ULONGLONG Dividend,
-   IN ULONGLONG Divisor)
+VOID
+PrintSize(
+    _In_ ULONGLONG ullSize,
+    _Out_ PWSTR pszOutBuffer,
+    _In_ ULONG ulOutBufferSize)
 {
-    return (Dividend + Divisor / 2) / Divisor;
+    WCHAR szUnitBuffer[8];
+    INT nUnitId;
+
+    if (ullSize >= SIZE_10TB) /* 10 TB */
+    {
+        ullSize = RoundingDivide(ullSize, SIZE_1TB);
+        nUnitId = IDS_UNIT_TB;
+    }
+    else if (ullSize >= SIZE_10GB) /* 10 GB */
+    {
+        ullSize = RoundingDivide(ullSize, SIZE_1GB);
+        nUnitId = IDS_UNIT_GB;
+    }
+    else if (ullSize >= SIZE_10MB) /* 10 MB */
+    {
+        ullSize = RoundingDivide(ullSize, SIZE_1MB);
+        nUnitId = IDS_UNIT_MB;
+    }
+    else if (ullSize >= SIZE_10KB) /* 10 KB */
+    {
+        ullSize = RoundingDivide(ullSize, SIZE_1KB);
+        nUnitId = IDS_UNIT_KB;
+    }
+    else
+    {
+        nUnitId = IDS_UNIT_B;
+    }
+
+    LoadStringW(GetModuleHandle(NULL),
+                nUnitId,
+                szUnitBuffer, ARRAYSIZE(szUnitBuffer));
+
+    _swprintf(pszOutBuffer, L"%4I64u %-2s", ullSize, szUnitBuffer);
+    StringCchPrintfW(pszOutBuffer,
+                     ulOutBufferSize,
+                     L"%4I64u %-2s", ullSize, szUnitBuffer);
 }
 
 
 static
+ULONGLONG
+GetFreeDiskSize(
+    _In_ PDISKENTRY DiskEntry)
+{
+    ULONGLONG SectorCount;
+    PLIST_ENTRY Entry;
+    PPARTENTRY PartEntry;
+
+    if (DiskEntry->PartitionStyle == PARTITION_STYLE_MBR)
+    {
+        SectorCount = DiskEntry->EndSector.QuadPart - DiskEntry->StartSector.QuadPart + 1;
+
+        Entry = DiskEntry->PrimaryPartListHead.Flink;
+        while (Entry != &DiskEntry->PrimaryPartListHead)
+        {
+            PartEntry = CONTAINING_RECORD(Entry, PARTENTRY, ListEntry);
+
+            if ((PartEntry->Mbr.PartitionType != PARTITION_ENTRY_UNUSED) && 
+                !IsContainerPartition(PartEntry->Mbr.PartitionType))
+            {
+                SectorCount -= PartEntry->SectorCount.QuadPart;
+            }
+
+            Entry = Entry->Flink;
+        }
+
+        Entry = DiskEntry->LogicalPartListHead.Flink;
+        while (Entry != &DiskEntry->LogicalPartListHead)
+        {
+            PartEntry = CONTAINING_RECORD(Entry, PARTENTRY, ListEntry);
+
+            if (PartEntry->Mbr.PartitionType != PARTITION_ENTRY_UNUSED)
+            {
+                SectorCount -= PartEntry->SectorCount.QuadPart;
+            }
+
+            Entry = Entry->Flink;
+        }
+    }
+    else if (DiskEntry->PartitionStyle == PARTITION_STYLE_GPT)
+    {
+        SectorCount = DiskEntry->EndSector.QuadPart - DiskEntry->StartSector.QuadPart + 1;
+
+        Entry = DiskEntry->PrimaryPartListHead.Flink;
+        while (Entry != &DiskEntry->PrimaryPartListHead)
+        {
+            PartEntry = CONTAINING_RECORD(Entry, PARTENTRY, ListEntry);
+
+            if (!IsEqualGUID(&PartEntry->Gpt.PartitionType, &PARTITION_ENTRY_UNUSED_GUID))
+            {
+                SectorCount -= PartEntry->SectorCount.QuadPart;
+            }
+
+            Entry = Entry->Flink;
+        }
+    }
+    else
+    {
+        SectorCount = DiskEntry->SectorCount.QuadPart;
+    }
+
+    return SectorCount * DiskEntry->BytesPerSector;
+}
+
+
 VOID
-ListDisk(VOID)
+PrintDisk(
+    _In_ PDISKENTRY DiskEntry)
+{
+    WCHAR szDiskSizeBuffer[8];
+    WCHAR szFreeSizeBuffer[8];
+    WCHAR szBuffer[40];
+    ULONGLONG DiskSize;
+    ULONGLONG FreeSize;
+
+    DiskSize = DiskEntry->SectorCount.QuadPart *
+               (ULONGLONG)DiskEntry->BytesPerSector;
+    PrintSize(DiskSize, szDiskSizeBuffer, ARRAYSIZE(szDiskSizeBuffer));
+
+    FreeSize = GetFreeDiskSize(DiskEntry);
+    PrintSize(FreeSize, szFreeSizeBuffer, ARRAYSIZE(szFreeSizeBuffer));
+
+    LoadStringW(GetModuleHandle(NULL),
+                IDS_STATUS_ONLINE,
+                szBuffer, ARRAYSIZE(szBuffer));
+
+    ConResPrintf(StdOut, IDS_LIST_DISK_FORMAT,
+                 (CurrentDisk == DiskEntry) ? L'*' : L' ',
+                 DiskEntry->DiskNumber,
+                 szBuffer,
+                 szDiskSizeBuffer,
+                 szFreeSizeBuffer,
+                 L" ",
+                 (DiskEntry->PartitionStyle == PARTITION_STYLE_GPT) ? L"*" : L" ");
+}
+
+
+EXIT_CODE
+ListDisk(
+    _In_ INT argc,
+    _In_ PWSTR *argv)
 {
     PLIST_ENTRY Entry;
     PDISKENTRY DiskEntry;
-    ULONGLONG DiskSize;
-    ULONGLONG FreeSize;
-    LPWSTR lpSizeUnit;
-    LPWSTR lpFreeUnit;
 
     /* Header labels */
+    ConPuts(StdOut, L"\n");
     ConResPuts(StdOut, IDS_LIST_DISK_HEAD);
     ConResPuts(StdOut, IDS_LIST_DISK_LINE);
 
@@ -43,217 +175,308 @@ ListDisk(VOID)
     {
         DiskEntry = CONTAINING_RECORD(Entry, DISKENTRY, ListEntry);
 
-        DiskSize = DiskEntry->SectorCount.QuadPart * 
-                   (ULONGLONG)DiskEntry->BytesPerSector;
-
-        if (DiskSize >= 10737418240) /* 10 GB */
-        {
-             DiskSize = RoundingDivide(DiskSize, 1073741824);
-             lpSizeUnit = L"GB";
-        }
-        else
-        {
-             DiskSize = RoundingDivide(DiskSize, 1048576);
-             if (DiskSize == 0)
-                 DiskSize = 1;
-             lpSizeUnit = L"MB";
-        }
-
-        /* FIXME */
-        FreeSize = 0;
-        lpFreeUnit = L"B";
-
-        ConResPrintf(StdOut, IDS_LIST_DISK_FORMAT,
-                     (CurrentDisk == DiskEntry) ? L'*': ' ',
-                     DiskEntry->DiskNumber,
-                     L"Online",
-                     DiskSize,
-                     lpSizeUnit,
-                     FreeSize,
-                     lpFreeUnit,
-                     L" ",
-                     L" ");
+        PrintDisk(DiskEntry);
 
         Entry = Entry->Flink;
     }
 
     ConPuts(StdOut, L"\n\n");
+
+    return EXIT_SUCCESS;
 }
 
-static
-VOID
-ListPartition(VOID)
+
+EXIT_CODE
+ListPartition(
+    _In_ INT argc,
+    _In_ PWSTR *argv)
 {
     PLIST_ENTRY Entry;
     PPARTENTRY PartEntry;
     ULONGLONG PartSize;
     ULONGLONG PartOffset;
-    LPWSTR lpSizeUnit;
-    LPWSTR lpOffsetUnit;
     ULONG PartNumber = 1;
+    BOOL bPartitionFound = FALSE;
+    WCHAR szPartitionTypeBuffer[40];
+    WCHAR szSizeBuffer[8];
+    WCHAR szOffsetBuffer[8];
+    INT nPartitionType;
 
     if (CurrentDisk == NULL)
     {
         ConResPuts(StdOut, IDS_LIST_PARTITION_NO_DISK);
-        return;
+        return EXIT_SUCCESS;
+    }
+
+    if (CurrentDisk->PartitionStyle == PARTITION_STYLE_MBR)
+    {
+        Entry = CurrentDisk->PrimaryPartListHead.Flink;
+        while (Entry != &CurrentDisk->PrimaryPartListHead)
+        {
+            PartEntry = CONTAINING_RECORD(Entry, PARTENTRY, ListEntry);
+            if (PartEntry->Mbr.PartitionType != PARTITION_ENTRY_UNUSED)
+                bPartitionFound = TRUE;
+
+            Entry = Entry->Flink;
+        }
+    }
+    else if (CurrentDisk->PartitionStyle == PARTITION_STYLE_GPT)
+    {
+        Entry = CurrentDisk->PrimaryPartListHead.Flink;
+        while (Entry != &CurrentDisk->PrimaryPartListHead)
+        {
+            PartEntry = CONTAINING_RECORD(Entry, PARTENTRY, ListEntry);
+            if (!IsEqualGUID(&PartEntry->Gpt.PartitionType, &PARTITION_ENTRY_UNUSED_GUID))
+                bPartitionFound = TRUE;
+
+            Entry = Entry->Flink;
+        }
+    }
+
+    if (bPartitionFound == FALSE)
+    {
+        ConPuts(StdOut, L"\n");
+        ConResPuts(StdOut, IDS_LIST_PARTITION_NONE);
+        ConPuts(StdOut, L"\n");
+        return EXIT_SUCCESS;
     }
 
     /* Header labels */
+    ConPuts(StdOut, L"\n");
     ConResPuts(StdOut, IDS_LIST_PARTITION_HEAD);
     ConResPuts(StdOut, IDS_LIST_PARTITION_LINE);
 
-    Entry = CurrentDisk->PrimaryPartListHead.Flink;
-    while (Entry != &CurrentDisk->PrimaryPartListHead)
+    if (CurrentDisk->PartitionStyle == PARTITION_STYLE_MBR)
     {
-        PartEntry = CONTAINING_RECORD(Entry, PARTENTRY, ListEntry);
-
-        if (PartEntry->PartitionType != 0)
+        Entry = CurrentDisk->PrimaryPartListHead.Flink;
+        while (Entry != &CurrentDisk->PrimaryPartListHead)
         {
-            PartSize = PartEntry->SectorCount.QuadPart * CurrentDisk->BytesPerSector;
+            PartEntry = CONTAINING_RECORD(Entry, PARTENTRY, ListEntry);
 
-            if (PartSize >= 10737418240) /* 10 GB */
+            if (PartEntry->Mbr.PartitionType != PARTITION_ENTRY_UNUSED)
             {
-                PartSize = RoundingDivide(PartSize, 1073741824);
-                lpSizeUnit = L"GB";
-            }
-            else if (PartSize >= 10485760) /* 10 MB */
-            {
-                PartSize = RoundingDivide(PartSize, 1048576);
-                lpSizeUnit = L"MB";
-            }
-            else
-            {
-                PartSize = RoundingDivide(PartSize, 1024);
-                lpSizeUnit = L"KB";
-            }
+                PartSize = PartEntry->SectorCount.QuadPart * CurrentDisk->BytesPerSector;
+                PrintSize(PartSize, szSizeBuffer, ARRAYSIZE(szSizeBuffer));
 
-            PartOffset = PartEntry->StartSector.QuadPart * CurrentDisk->BytesPerSector;
+                PartOffset = PartEntry->StartSector.QuadPart * CurrentDisk->BytesPerSector;
+                PrintSize(PartOffset, szOffsetBuffer, ARRAYSIZE(szOffsetBuffer));
 
-            if (PartOffset >= 10737418240) /* 10 GB */
-            {
-                PartOffset = RoundingDivide(PartOffset, 1073741824);
-                lpOffsetUnit = L"GB";
-            }
-            else if (PartOffset >= 10485760) /* 10 MB */
-            {
-                PartOffset = RoundingDivide(PartOffset, 1048576);
-                lpOffsetUnit = L"MB";
-            }
-            else
-            {
-                PartOffset = RoundingDivide(PartOffset, 1024);
-                lpOffsetUnit = L"KB";
+                LoadStringW(GetModuleHandle(NULL),
+                            IsContainerPartition(PartEntry->Mbr.PartitionType) ? IDS_PARTITION_TYPE_EXTENDED : IDS_PARTITION_TYPE_PRIMARY,
+                            szPartitionTypeBuffer, ARRAYSIZE(szPartitionTypeBuffer));
+
+                ConResPrintf(StdOut, IDS_LIST_PARTITION_FORMAT,
+                             (CurrentPartition == PartEntry) ? L'*' : L' ',
+                             PartNumber++,
+                             szPartitionTypeBuffer,
+                             szSizeBuffer,
+                             szOffsetBuffer);
             }
 
-            ConResPrintf(StdOut, IDS_LIST_PARTITION_FORMAT,
-                         (CurrentPartition == PartEntry) ? L'*': ' ',
-                         PartNumber++,
-                         IsContainerPartition(PartEntry->PartitionType) ? L"Extended" : L"Primary",
-                         PartSize,
-                         lpSizeUnit,
-                         PartOffset,
-                         lpOffsetUnit);
+            Entry = Entry->Flink;
         }
 
-        Entry = Entry->Flink;
+        Entry = CurrentDisk->LogicalPartListHead.Flink;
+        while (Entry != &CurrentDisk->LogicalPartListHead)
+        {
+            PartEntry = CONTAINING_RECORD(Entry, PARTENTRY, ListEntry);
+
+            if (PartEntry->Mbr.PartitionType != PARTITION_ENTRY_UNUSED)
+            {
+                PartSize = PartEntry->SectorCount.QuadPart * CurrentDisk->BytesPerSector;
+                PrintSize(PartSize, szSizeBuffer, ARRAYSIZE(szSizeBuffer));
+
+                PartOffset = PartEntry->StartSector.QuadPart * CurrentDisk->BytesPerSector;
+                PrintSize(PartOffset, szOffsetBuffer, ARRAYSIZE(szOffsetBuffer));
+
+                LoadStringW(GetModuleHandle(NULL),
+                            IDS_PARTITION_TYPE_LOGICAL,
+                            szPartitionTypeBuffer, ARRAYSIZE(szPartitionTypeBuffer));
+                ConResPrintf(StdOut, IDS_LIST_PARTITION_FORMAT,
+                             (CurrentPartition == PartEntry) ? L'*' : L' ',
+                             PartNumber++,
+                             szPartitionTypeBuffer,
+                             szSizeBuffer,
+                             szOffsetBuffer);
+            }
+
+            Entry = Entry->Flink;
+        }
+    }
+    else if (CurrentDisk->PartitionStyle == PARTITION_STYLE_GPT)
+    {
+        Entry = CurrentDisk->PrimaryPartListHead.Flink;
+        while (Entry != &CurrentDisk->PrimaryPartListHead)
+        {
+            PartEntry = CONTAINING_RECORD(Entry, PARTENTRY, ListEntry);
+
+            if (!IsEqualGUID(&PartEntry->Gpt.PartitionType, &PARTITION_ENTRY_UNUSED_GUID))
+            {
+                PartSize = PartEntry->SectorCount.QuadPart * CurrentDisk->BytesPerSector;
+                PrintSize(PartSize, szSizeBuffer, ARRAYSIZE(szSizeBuffer));
+
+                PartOffset = PartEntry->StartSector.QuadPart * CurrentDisk->BytesPerSector;
+                PrintSize(PartOffset, szOffsetBuffer, ARRAYSIZE(szOffsetBuffer));
+
+                if (IsEqualGUID(&PartEntry->Gpt.PartitionType, &PARTITION_ENTRY_UNUSED_GUID))
+                {
+                    nPartitionType = IDS_PARTITION_TYPE_UNUSED;
+                }
+                else if (IsEqualGUID(&PartEntry->Gpt.PartitionType, &PARTITION_BASIC_DATA_GUID))
+                {
+                    nPartitionType = IDS_PARTITION_TYPE_PRIMARY;
+                }
+                else if (IsEqualGUID(&PartEntry->Gpt.PartitionType, &PARTITION_SYSTEM_GUID))
+                {
+                    nPartitionType = IDS_PARTITION_TYPE_SYSTEM;
+                }
+                else if (IsEqualGUID(&PartEntry->Gpt.PartitionType, &PARTITION_MSFT_RESERVED_GUID))
+                {
+                    nPartitionType = IDS_PARTITION_TYPE_RESERVED;
+                }
+                else
+                {
+                    nPartitionType = IDS_PARTITION_TYPE_UNKNOWN;
+                }
+
+                LoadStringW(GetModuleHandle(NULL),
+                            nPartitionType,
+                            szPartitionTypeBuffer, ARRAYSIZE(szPartitionTypeBuffer));
+
+                ConResPrintf(StdOut, IDS_LIST_PARTITION_FORMAT,
+                             (CurrentPartition == PartEntry) ? L'*' : L' ',
+                             PartNumber++,
+                             szPartitionTypeBuffer,
+                             szSizeBuffer,
+                             szOffsetBuffer);
+            }
+
+            Entry = Entry->Flink;
+        }
     }
 
-    Entry = CurrentDisk->LogicalPartListHead.Flink;
-    while (Entry != &CurrentDisk->LogicalPartListHead)
+    ConPuts(StdOut, L"\n");
+
+    return EXIT_SUCCESS;
+}
+
+
+VOID
+PrintVolume(
+    _In_ PVOLENTRY VolumeEntry)
+{
+    WCHAR szVolumeTypeBuffer[30];
+    WCHAR szStatusBuffer[16];
+    WCHAR szInfoBuffer[16];
+    WCHAR szSizeBuffer[8];
+    INT nVolumeType, nVolumeStatus;
+
+    if (VolumeEntry->VolumeType != VOLUME_TYPE_PARTITION)
     {
-        PartEntry = CONTAINING_RECORD(Entry, PARTENTRY, ListEntry);
+        UpdateVolumeInfo(VolumeEntry);
+    }
 
-        if (PartEntry->PartitionType != 0)
-        {
-            PartSize = PartEntry->SectorCount.QuadPart * CurrentDisk->BytesPerSector;
+    switch (VolumeEntry->VolumeType)
+    {
+        case VOLUME_TYPE_CDROM:
+            nVolumeType = IDS_VOLUME_TYPE_DVD;
+            break;
 
-            if (PartSize >= 10737418240) /* 10 GB */
-            {
-                PartSize = RoundingDivide(PartSize, 1073741824);
-                lpSizeUnit = L"GB";
-            }
-            else if (PartSize >= 10485760) /* 10 MB */
-            {
-                PartSize = RoundingDivide(PartSize, 1048576);
-                lpSizeUnit = L"MB";
-            }
-            else
-            {
-                PartSize = RoundingDivide(PartSize, 1024);
-                lpSizeUnit = L"KB";
-            }
+        case VOLUME_TYPE_PARTITION:
+            nVolumeType = IDS_VOLUME_TYPE_PARTITION;
+            break;
 
-            PartOffset = PartEntry->StartSector.QuadPart * CurrentDisk->BytesPerSector;
+        case VOLUME_TYPE_REMOVABLE:
+            nVolumeType = IDS_VOLUME_TYPE_REMOVABLE;
+            break;
 
-            if (PartOffset >= 10737418240) /* 10 GB */
-            {
-                PartOffset = RoundingDivide(PartOffset, 1073741824);
-                lpOffsetUnit = L"GB";
-            }
-            else if (PartOffset >= 10485760) /* 10 MB */
-            {
-                PartOffset = RoundingDivide(PartOffset, 1048576);
-                lpOffsetUnit = L"MB";
-            }
-            else
-            {
-                PartOffset = RoundingDivide(PartOffset, 1024);
-                lpOffsetUnit = L"KB";
-            }
+        case VOLUME_TYPE_UNKNOWN:
+        default:
+            nVolumeType = IDS_VOLUME_TYPE_UNKNOWN;
+            break;
+    }
 
-            ConResPrintf(StdOut, IDS_LIST_PARTITION_FORMAT,
-                         (CurrentPartition == PartEntry) ? L'*': ' ',
-                         PartNumber++,
-                         L"Logical",
-                         PartSize,
-                         lpSizeUnit,
-                         PartOffset,
-                         lpOffsetUnit);
-        }
+    switch (VolumeEntry->VolumeStatus)
+    {
+        case VOLUME_STATUS_HEALTHY:
+            nVolumeStatus = IDS_STATUS_VOLUME_HEALTHY;
+            break;
+
+        case VOLUME_STATUS_FAILED:
+            nVolumeStatus = IDS_STATUS_VOLUME_FAILED;
+            break;
+
+        case VOLUME_STATUS_NO_MEDIA:
+            nVolumeStatus = IDS_STATUS_VOLUME_NO_MEDIA;
+            break;
+
+        case VOLUME_STATUS_REBUILD:
+            nVolumeStatus = IDS_STATUS_VOLUME_REBUILD;
+            break;
+
+        case VOLUME_STATUS_UNUSABLE:
+        default:
+            nVolumeType = IDS_STATUS_VOLUME_UNUSABLE;
+            break;
+    }
+
+    LoadStringW(GetModuleHandle(NULL), nVolumeType, szVolumeTypeBuffer, ARRAYSIZE(szVolumeTypeBuffer));
+    LoadStringW(GetModuleHandle(NULL), nVolumeStatus, szStatusBuffer, ARRAYSIZE(szStatusBuffer));
+
+    PrintSize(VolumeEntry->Size.QuadPart, szSizeBuffer, ARRAYSIZE(szSizeBuffer));
+
+    szInfoBuffer[0] = UNICODE_NULL;
+    if (VolumeEntry->IsSystem)
+        LoadStringW(GetModuleHandle(NULL), IDS_INFO_VOLUME_SYSTEM, szInfoBuffer, ARRAYSIZE(szInfoBuffer));
+    else if (VolumeEntry->IsBoot)
+        LoadStringW(GetModuleHandle(NULL), IDS_INFO_VOLUME_BOOT, szInfoBuffer, ARRAYSIZE(szInfoBuffer));
+
+    ConResPrintf(StdOut, IDS_LIST_VOLUME_FORMAT,
+                 (CurrentVolume == VolumeEntry) ? L'*' : L' ',
+                 VolumeEntry->VolumeNumber,
+                 VolumeEntry->DriveLetter,
+                 (VolumeEntry->pszLabel) ? VolumeEntry->pszLabel : L"",
+                 (VolumeEntry->pszFilesystem) ? VolumeEntry->pszFilesystem : L"",
+                 szVolumeTypeBuffer,
+                 szSizeBuffer,
+                 szStatusBuffer,
+                 szInfoBuffer);
+}
+
+
+EXIT_CODE
+ListVolume(
+    _In_ INT argc,
+    _In_ PWSTR *argv)
+{
+    PLIST_ENTRY Entry;
+    PVOLENTRY VolumeEntry;
+
+    ConPuts(StdOut, L"\n");
+    ConResPuts(StdOut, IDS_LIST_VOLUME_HEAD);
+    ConResPuts(StdOut, IDS_LIST_VOLUME_LINE);
+
+    Entry = VolumeListHead.Flink;
+    while (Entry != &VolumeListHead)
+    {
+        VolumeEntry = CONTAINING_RECORD(Entry, VOLENTRY, ListEntry);
+
+        PrintVolume(VolumeEntry);
 
         Entry = Entry->Flink;
     }
 
     ConPuts(StdOut, L"\n");
+
+    return EXIT_SUCCESS;
 }
 
-static
-VOID
-ListVolume(VOID)
+
+EXIT_CODE
+ListVirtualDisk(
+    _In_ INT argc,
+    _In_ PWSTR *argv)
 {
-    ConResPuts(StdOut, IDS_LIST_VOLUME_HEAD);
-}
-
-static
-VOID
-ListVdisk(VOID)
-{
-    ConPuts(StdOut, L"List VDisk!!\n");
-}
-
-BOOL
-list_main(
-    INT argc,
-    LPWSTR *argv)
-{
-    /* gets the first word from the string */
-    if (argc == 1)
-    {
-        ConResPuts(StdOut, IDS_HELP_CMD_LIST);
-        return TRUE;
-    }
-
-    /* determines which to list (disk, partition, etc.) */
-    if (!wcsicmp(argv[1], L"disk"))
-        ListDisk();
-    else if (!wcsicmp(argv[1], L"partition"))
-        ListPartition();
-    else if (!wcsicmp(argv[1], L"volume"))
-        ListVolume();
-    else if (!wcsicmp(argv[1], L"vdisk"))
-        ListVdisk();
-    else
-        ConResPuts(StdOut, IDS_HELP_CMD_LIST);
-
-    return TRUE;
+    ConPuts(StdOut, L"The LIST VDISK command is not implemented yet!\n");
+    return EXIT_SUCCESS;
 }

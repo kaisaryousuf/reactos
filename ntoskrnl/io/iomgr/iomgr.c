@@ -13,9 +13,6 @@
 #define NDEBUG
 #include <debug.h>
 
-ULONG IopTraceLevel = 0;
-BOOLEAN PnpSystemInit = FALSE;
-
 VOID
 NTAPI
 IopTimerDispatch(
@@ -32,9 +29,18 @@ WmiInitialize(
 
 /* DATA ********************************************************************/
 
+ULONG IopTraceLevel = 0;
+BOOLEAN PnpSystemInit = FALSE;
+
 POBJECT_TYPE IoDeviceObjectType = NULL;
 POBJECT_TYPE IoFileObjectType = NULL;
 extern POBJECT_TYPE IoControllerObjectType;
+ULONG IopCaseInsensitive =
+#if (NTDDI_VERSION >= NTDDI_WIN7) || (DLL_EXPORT_VERSION >= _WIN32_WINNT_WIN7)
+    TRUE;
+#else
+    FALSE;
+#endif
 BOOLEAN IoCountOperations = TRUE;
 ULONG IoReadOperationCount = 0;
 LARGE_INTEGER IoReadTransferCount = {{0, 0}};
@@ -43,6 +49,7 @@ LARGE_INTEGER IoWriteTransferCount = {{0, 0}};
 ULONG IoOtherOperationCount = 0;
 LARGE_INTEGER IoOtherTransferCount = {{0, 0}};
 KSPIN_LOCK IoStatisticsLock = 0;
+ULONG IopAutoReboot;
 ULONG IopNumTriageDumpDataBlocks;
 PVOID IopTriageDumpDataBlocks[64];
 
@@ -389,29 +396,56 @@ IopCreateRootDirectories(VOID)
     return TRUE;
 }
 
+/* Control\PnP\PollBootPartitionTimeout is in milliseconds */
+#define IOP_BOOT_PARTITION_POLL_INTERVAL    200
+#define IOP_BOOT_PARTITION_MAX_TIMEOUT      180000
+
 CODE_SEG("INIT")
-BOOLEAN
-NTAPI
-IopMarkBootPartition(IN PLOADER_PARAMETER_BLOCK LoaderBlock)
+static
+LONG
+IopGetBootPartitionTimeout(VOID)
+{
+    UNICODE_STRING KeyName = RTL_CONSTANT_STRING(L"\\Registry\\Machine\\System\\CurrentControlSet\\Control\\PnP");
+    PKEY_VALUE_FULL_INFORMATION Information;
+    ULONG Timeout = 0;
+    HANDLE KeyHandle;
+    NTSTATUS Status;
+
+    Status = IopOpenRegistryKeyEx(&KeyHandle, NULL, &KeyName, KEY_READ);
+    if (!NT_SUCCESS(Status))
+        return 0;
+
+    Status = IopGetRegistryValue(KeyHandle, L"PollBootPartitionTimeout", &Information);
+    if (NT_SUCCESS(Status))
+    {
+        if (Information->Type == REG_DWORD && Information->DataLength == sizeof(ULONG))
+            Timeout = *(PULONG)((PUCHAR)Information + Information->DataOffset);
+
+        ExFreePool(Information);
+    }
+
+    ZwClose(KeyHandle);
+
+    if (Timeout < IOP_BOOT_PARTITION_POLL_INTERVAL)
+        return 0;
+
+    return (LONG)min(Timeout, IOP_BOOT_PARTITION_MAX_TIMEOUT);
+}
+
+CODE_SEG("INIT")
+static
+NTSTATUS
+IopOpenBootPartition(
+    _In_ PUNICODE_STRING DeviceName)
 {
     OBJECT_ATTRIBUTES ObjectAttributes;
-    STRING DeviceString;
-    CHAR Buffer[256];
-    UNICODE_STRING DeviceName;
-    NTSTATUS Status;
-    HANDLE FileHandle;
     IO_STATUS_BLOCK IoStatusBlock;
     PFILE_OBJECT FileObject;
+    HANDLE FileHandle;
+    NTSTATUS Status;
 
-    /* Build the ARC device name */
-    sprintf(Buffer, "\\ArcName\\%s", LoaderBlock->ArcBootDeviceName);
-    RtlInitAnsiString(&DeviceString, Buffer);
-    Status = RtlAnsiStringToUnicodeString(&DeviceName, &DeviceString, TRUE);
-    if (!NT_SUCCESS(Status)) return FALSE;
-
-    /* Open it */
     InitializeObjectAttributes(&ObjectAttributes,
-                               &DeviceName,
+                               DeviceName,
                                OBJ_CASE_INSENSITIVE,
                                NULL,
                                NULL);
@@ -422,14 +456,7 @@ IopMarkBootPartition(IN PLOADER_PARAMETER_BLOCK LoaderBlock)
                         0,
                         FILE_NON_DIRECTORY_FILE);
     if (!NT_SUCCESS(Status))
-    {
-        /* Fail */
-        KeBugCheckEx(INACCESSIBLE_BOOT_DEVICE,
-                     (ULONG_PTR)&DeviceName,
-                     Status,
-                     0,
-                     0);
-    }
+        return Status;
 
     /* Get the DO */
     Status = ObReferenceObjectByHandle(FileHandle,
@@ -440,9 +467,8 @@ IopMarkBootPartition(IN PLOADER_PARAMETER_BLOCK LoaderBlock)
                                        NULL);
     if (!NT_SUCCESS(Status))
     {
-        /* Fail */
-        RtlFreeUnicodeString(&DeviceName);
-        return FALSE;
+        NtClose(FileHandle);
+        return Status;
     }
 
     /* Mark it as the boot partition */
@@ -452,10 +478,61 @@ IopMarkBootPartition(IN PLOADER_PARAMETER_BLOCK LoaderBlock)
     ObReferenceObject(FileObject->DeviceObject);
     IopErrorLogObject = FileObject->DeviceObject;
 
-    /* Cleanup and return success */
-    RtlFreeUnicodeString(&DeviceName);
     NtClose(FileHandle);
     ObDereferenceObject(FileObject);
+    return STATUS_SUCCESS;
+}
+
+CODE_SEG("INIT")
+BOOLEAN
+NTAPI
+IopMarkBootPartition(IN PLOADER_PARAMETER_BLOCK LoaderBlock)
+{
+    STRING DeviceString;
+    CHAR Buffer[256];
+    UNICODE_STRING DeviceName;
+    LARGE_INTEGER Interval;
+    NTSTATUS Status;
+    LONG Timeout;
+
+    /* Build the ARC device name */
+    Status = RtlStringCbPrintfA(Buffer,
+                                sizeof(Buffer),
+                                "\\ArcName\\%s",
+                                LoaderBlock->ArcBootDeviceName);
+    if (!NT_SUCCESS(Status)) return FALSE;
+
+    RtlInitAnsiString(&DeviceString, Buffer);
+    Status = RtlAnsiStringToUnicodeString(&DeviceName, &DeviceString, TRUE);
+    if (!NT_SUCCESS(Status)) return FALSE;
+
+    Timeout = IopGetBootPartitionTimeout();
+    Interval.QuadPart = Int32x32To64(IOP_BOOT_PARTITION_POLL_INTERVAL, -10000);
+    if (Timeout > 0)
+        DPRINT1("Polling up to %ld ms for the boot device\n", Timeout);
+
+    /* A boot disk behind a USB hub can still be enumerating, so name the disks
+       that arrived since the last pass and try again until the timeout runs out */
+    Status = IopOpenBootPartition(&DeviceName);
+    while (!NT_SUCCESS(Status) && Timeout > 0)
+    {
+        KeDelayExecutionThread(KernelMode, FALSE, &Interval);
+        Timeout -= IOP_BOOT_PARTITION_POLL_INTERVAL;
+
+        IopCreateArcNames(LoaderBlock);
+        Status = IopOpenBootPartition(&DeviceName);
+    }
+
+    if (!NT_SUCCESS(Status))
+    {
+        KeBugCheckEx(INACCESSIBLE_BOOT_DEVICE,
+                     (ULONG_PTR)&DeviceName,
+                     Status,
+                     0,
+                     0);
+    }
+
+    RtlFreeUnicodeString(&DeviceName);
     return TRUE;
 }
 
@@ -531,6 +608,9 @@ IoInitSystem(IN PLOADER_PARAMETER_BLOCK LoaderBlock)
         return FALSE;
     }
 
+    /* Initialize Kernel Shim engine */
+    KseInitialize(0, LoaderBlock);
+
     /* Initialize PnP manager */
     IopInitializePlugPlayServices();
 
@@ -539,6 +619,9 @@ IoInitSystem(IN PLOADER_PARAMETER_BLOCK LoaderBlock)
 
     /* Initialize WMI */
     WmiInitialize();
+
+    /* Finish Kernel Shim engine initialization */
+    KseInitialize(1, LoaderBlock);
 
     /* Initialize HAL Root Bus Driver */
     HalInitPnpDriver();
@@ -584,17 +667,9 @@ IoInitSystem(IN PLOADER_PARAMETER_BLOCK LoaderBlock)
         return FALSE;
     }
 
-    // the disk subsystem is initialized here and the SystemRoot is set too
-    // we can finally load other drivers from the boot volume
+    /* The disk subsystem is initialized here and the SystemRoot is set too.
+     * We can finally load other drivers from the boot volume. */
     PnPBootDriversInitialized = TRUE;
-
-#if !defined(_WINKD_) && defined(KDBG)
-    /* Read KDB Data */
-    KdbInit();
-
-    /* I/O is now setup for disk access, so phase 3 */
-    KdInitSystem(3, LoaderBlock);
-#endif
 
     /* Load system start drivers */
     IopInitializeSystemDrivers();
@@ -640,7 +715,7 @@ IoInitSystem(IN PLOADER_PARAMETER_BLOCK LoaderBlock)
         return FALSE;
     }
 
-    /* Load the System DLL and its Entrypoints */
+    /* Load the System DLL and its entrypoints */
     Status = PsLocateSystemDll();
     if (!NT_SUCCESS(Status))
     {

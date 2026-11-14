@@ -1,4 +1,4 @@
-﻿/*
+/*
  * PROJECT:         ReactOS Kernel
  * LICENSE:         GPL - See COPYING in the top level directory
  * FILE:            ntoskrnl/mm/mminit.c
@@ -68,6 +68,8 @@ MiInitSystemMemoryAreas(VOID)
     // Create all the static memory areas.
     //
 
+    MmLockAddressSpace(MmGetKernelAddressSpace());
+
 #ifdef _M_AMD64
     // Reserved range FFFF800000000000 - FFFFF68000000000
     MiCreateArm3StaticMemoryArea((PVOID)MI_REAL_SYSTEM_RANGE_START, PTE_BASE - MI_REAL_SYSTEM_RANGE_START, FALSE);
@@ -89,7 +91,7 @@ MiInitSystemMemoryAreas(VOID)
     MiCreateArm3StaticMemoryArea(MmNonPagedPoolStart, MmSizeOfNonPagedPoolInBytes, FALSE);
 
     // System PTE space
-    MiCreateArm3StaticMemoryArea(MmNonPagedSystemStart, (MmNumberOfSystemPtes + 1) * PAGE_SIZE, FALSE);
+    MiCreateArm3StaticMemoryArea(MmSystemPteSpaceStart, (MmNumberOfSystemPtes + 1) * PAGE_SIZE, FALSE);
 
     // Nonpaged pool expansion space
     MiCreateArm3StaticMemoryArea(MmNonPagedPoolExpansionStart, (ULONG_PTR)MmNonPagedPoolEnd - (ULONG_PTR)MmNonPagedPoolExpansionStart, FALSE);
@@ -118,6 +120,8 @@ MiInitSystemMemoryAreas(VOID)
     // KUSER_SHARED_DATA
     MiCreateArm3StaticMemoryArea((PVOID)KI_USER_SHARED_DATA, PAGE_SIZE, FALSE);
 #endif /* _X86_ */
+
+    MmUnlockAddressSpace(MmGetKernelAddressSpace());
 }
 
 CODE_SEG("INIT")
@@ -132,6 +136,13 @@ MiDbgDumpAddressSpace(VOID)
             KSEG0_BASE,
             (ULONG_PTR)KSEG0_BASE + MmBootImageSize,
             "Boot Loaded Image");
+#ifdef _M_IX86
+    DPRINT1("          0x%p - 0x%p\t%s\n",
+            MmSystemPteSpaceStart,
+            (PVOID)((ULONG_PTR)MmSystemPteSpaceStart +
+                    (MmNumberOfSystemPtes + 1) * PAGE_SIZE),
+            "System PTE Space");
+#endif
     DPRINT1("          0x%p - 0x%p\t%s\n",
             MmPfnDatabase,
             (ULONG_PTR)MmPfnDatabase + (MxPfnAllocation << PAGE_SHIFT),
@@ -164,9 +175,13 @@ MiDbgDumpAddressSpace(VOID)
             MmPagedPoolStart,
             (ULONG_PTR)MmPagedPoolStart + MmSizeOfPagedPoolInBytes,
             "ARM3 Paged Pool");
+#ifndef _M_IX86
     DPRINT1("          0x%p - 0x%p\t%s\n",
-            MmNonPagedSystemStart, MmNonPagedPoolExpansionStart,
+            MmSystemPteSpaceStart,
+            (PVOID)((ULONG_PTR)MmSystemPteSpaceStart +
+                    ((MmNumberOfSystemPtes + 1) * PAGE_SIZE)),
             "System PTE Space");
+#endif
     DPRINT1("          0x%p - 0x%p\t%s\n",
             MmNonPagedPoolExpansionStart, MmNonPagedPoolEnd,
             "Non Paged Pool Expansion PTE Space");

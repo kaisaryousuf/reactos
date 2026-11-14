@@ -33,10 +33,15 @@ extern HINSTANCE g_hInstance;
 #define ID_ICON_VOLUME  (WM_APP + 0x4CB)
 #define ID_ICON_HOTPLUG (WM_APP + 0x4CC)
 #define ID_ICON_POWER   (WM_APP + 0x4CD)
+#define ID_ICON_MOUSE   (WM_APP + 0x4CE)
 
 #define POWER_SERVICE_FLAG    0x00000001
 #define HOTPLUG_SERVICE_FLAG  0x00000002
 #define VOLUME_SERVICE_FLAG   0x00000004
+#define SKEYS_SERVICE_FLAG    0x20000000
+#define FKEYS_SERVICE_FLAG    0x40000000
+#define MOUSE_SERVICE_FLAG    0x80000000
+#define STANDALONESERVICEMASK 0xF0000000
 
 #include "csystray.h"
 
@@ -74,6 +79,16 @@ extern HRESULT STDMETHODCALLTYPE Power_Shutdown(_In_ CSysTray * pSysTray);
 extern HRESULT STDMETHODCALLTYPE Power_Update(_In_ CSysTray * pSysTray);
 extern HRESULT STDMETHODCALLTYPE Power_Message(_In_ CSysTray * pSysTray, UINT uMsg, WPARAM wParam, LPARAM lParam, LRESULT &lResult);
 
+extern HRESULT STDMETHODCALLTYPE MouseKeys_Init(_In_ CSysTray * pSysTray);
+extern HRESULT STDMETHODCALLTYPE MouseKeys_Shutdown(_In_ CSysTray * pSysTray);
+extern HRESULT STDMETHODCALLTYPE MouseKeys_Update(_In_ CSysTray * pSysTray);
+extern HRESULT STDMETHODCALLTYPE MouseKeys_Message(_In_ CSysTray * pSysTray, UINT uMsg, WPARAM wParam, LPARAM lParam, LRESULT &lResult);
+
+#define StickyKeys_Update(thisptr) (void)0 // TODO
+
+#define FilterKeys_Update(thisptr) (void)0 // TODO
+
+#define POLL_TIMER_ID    1 // FIXME: Use callbacks instead of polling with this timer
 #define POWER_TIMER_ID   2
 #define VOLUME_TIMER_ID  3
 #define HOTPLUG_TIMER_ID 4

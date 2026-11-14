@@ -25,6 +25,7 @@ TestStackWalk4(VOID)
     ULONG ExpectedHash;
     ULONG i;
     const ULONG FunctionSizeGuess = 0x1000;
+    NTSTATUS ExceptionStatus = STATUS_SUCCESS;
 
     ReturnAddresses[3] = _ReturnAddress();
 
@@ -56,9 +57,19 @@ TestStackWalk4(VOID)
     ok_eq_pointer(Frames[3], ReturnAddresses[1]);
     ok_eq_pointer(Frames[4], (PVOID)(ULONG_PTR)0x5555555555555555);
 
-    KmtStartSeh()
+    _SEH2_TRY
+    {
         RtlCaptureStackBackTrace(0, 5, NULL, NULL);
-    KmtEndSeh(STATUS_ACCESS_VIOLATION);
+    }
+    _SEH2_EXCEPT(EXCEPTION_EXECUTE_HANDLER)
+    {
+        ExceptionStatus = _SEH2_GetExceptionCode();
+    }
+    _SEH2_END;
+    if (GetNTVersion() == _WIN32_WINNT_WS03)
+        ok_eq_hex(ExceptionStatus, STATUS_ACCESS_VIOLATION);
+    else
+        ok_eq_hex(ExceptionStatus, STATUS_SUCCESS);
 
     RtlFillMemory(Frames, sizeof(Frames), 0x55);
     Hash = 0x55555555;
@@ -130,7 +141,71 @@ TestStackWalk1(VOID)
     TestStackWalk2();
 }
 
+#ifdef _M_AMD64
+NTSYSAPI
+PVOID
+NTAPI
+RtlPcToFileHeader(
+    _In_  PVOID PcValue,
+    _Out_ PVOID *BaseOfImage);
+
+extern char __ImageBase;
+
+DECLSPEC_NOINLINE
+static
+VOID
+TestRtlPcToFileHeader(VOID)
+{
+    PVOID ImageBase, Result;
+    PTEB Teb;
+    PPEB Peb;
+
+    /* First test a function from this image */
+    Result = RtlPcToFileHeader(&TestRtlPcToFileHeader, &ImageBase);
+    ok_eq_pointer(Result, ImageBase);
+    ok_eq_pointer(ImageBase, &__ImageBase);
+
+#ifdef NTOS_MODE_USER
+    Teb = NtCurrentTeb();
+#else
+    Teb = PsGetCurrentThreadTeb();
+#endif
+    ok(Teb != NULL, "Teb is NULL!\n");
+    if (Teb == NULL)
+    {
+        return;
+    }
+
+    _SEH2_TRY
+    {
+        Peb = Teb->ProcessEnvironmentBlock;
+        ok(Peb != NULL, "Peb is NULL!\n");
+        if (Peb == NULL)
+        {
+            return;
+        }
+
+        /* Test an address somewhere within the main image of the current process */
+        Result = RtlPcToFileHeader((PUCHAR)Peb->ImageBaseAddress + 0x1000, &ImageBase);
+        ok_eq_pointer(Result, ImageBase);
+#ifdef NTOS_MODE_USER
+        ok_eq_pointer(ImageBase, Peb->ImageBaseAddress);
+#else
+        ok_eq_pointer(ImageBase, NULL);
+#endif
+    }
+    _SEH2_EXCEPT(EXCEPTION_EXECUTE_HANDLER)
+    {
+        ok(FALSE, "Got an exception!\n");
+    }
+    _SEH2_END
+}
+#endif // _M_AMD64
+
 START_TEST(RtlStack)
 {
     TestStackWalk1();
+#ifdef _M_AMD64
+    TestRtlPcToFileHeader();
+#endif // _M_AMD64
 }

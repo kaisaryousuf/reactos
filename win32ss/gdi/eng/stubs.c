@@ -580,34 +580,6 @@ EngPlgBlt(
 /*
  * @unimplemented
  */
-BOOL
-APIENTRY
-EngQueryDeviceAttribute(
-    _In_ HDEV hdev,
-    _In_ ENG_DEVICE_ATTRIBUTE devAttr,
-    _In_reads_bytes_(cjInSize) PVOID pvIn,
-    _In_ ULONG cjInSize,
-    _Out_writes_bytes_(cjOutSize) PVOID pvOut,
-    _In_ ULONG cjOutSize)
-{
-    if (devAttr != QDA_ACCELERATION_LEVEL)
-        return FALSE;
-
-    UNIMPLEMENTED;
-
-    if (cjOutSize >= sizeof(DWORD))
-    {
-        /* Set all accelerations to enabled */
-        *(DWORD*)pvOut = 0;
-        return TRUE;
-    }
-
-    return FALSE;
-}
-
-/*
- * @unimplemented
- */
 LARGE_INTEGER
 APIENTRY
 EngQueryFileTimeStamp(IN LPWSTR FileName)
@@ -784,7 +756,7 @@ NtGdiCheckBitmapBits(
 }
 
 /*
- * @unimplemented
+ * @implemented
  */
 HBITMAP
 APIENTRY
@@ -792,7 +764,13 @@ NtGdiClearBitmapAttributes(
     IN HBITMAP hbm,
     IN DWORD dwFlags)
 {
-    UNIMPLEMENTED;
+    if ( dwFlags & SC_BB_STOCKOBJ )
+    {
+        if (GDIOBJ_ConvertFromStockObj((HGDIOBJ*)&hbm))
+        {
+            return hbm;
+        }
+    }
     return NULL;
 }
 
@@ -1106,23 +1084,6 @@ NtGdiGetSpoolMessage(
 /*
  * @unimplemented
  */
-DWORD
-APIENTRY
-NtGdiGetGlyphIndicesWInternal(
-    IN HDC hdc,
-    IN OPTIONAL LPWSTR pwc,
-    IN INT cwc,
-    OUT OPTIONAL LPWORD pgi,
-    IN DWORD iMode,
-    IN BOOL bSubset)
-{
-    UNIMPLEMENTED;
-    return 0;
-}
-
-/*
- * @unimplemented
- */
 INT
 APIENTRY
 NtGdiGetLinkedUFIs(
@@ -1199,23 +1160,6 @@ NtGdiGetStringBitmapW(
 {
     UNIMPLEMENTED;
     return 0;
-}
-
-/*
- * @unimplemented
- */
-BOOL
-APIENTRY
-NtGdiRemoveFontResourceW(
-    IN WCHAR *pwszFiles,
-    IN ULONG cwc,
-    IN ULONG cFiles,
-    IN ULONG fl,
-    IN DWORD dwPidTid,
-    IN OPTIONAL DESIGNVECTOR *pdv)
-{
-    UNIMPLEMENTED;
-    return FALSE;
 }
 
 /*
@@ -1406,7 +1350,7 @@ NtGdiMonoBitmap(
 }
 
 /*
- * @unimplemented
+ * @implemented
  */
 HBITMAP
 APIENTRY
@@ -1414,7 +1358,13 @@ NtGdiSetBitmapAttributes(
     IN HBITMAP hbm,
     IN DWORD dwFlags)
 {
-    UNIMPLEMENTED;
+    if ( dwFlags & SC_BB_STOCKOBJ )
+    {
+        if (GDIOBJ_ConvertToStockObj((HGDIOBJ*)&hbm))
+        {
+            return hbm;
+        }
+    }
     return NULL;
 }
 

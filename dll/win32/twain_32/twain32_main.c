@@ -29,11 +29,13 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(twain);
 
-extern HINSTANCE DSM_hinstance;
+TW_UINT16 DSM_twCC;
+activeDS *activeSources;
+HINSTANCE DSM_hinstance;
 
 BOOL WINAPI DllMain (HINSTANCE hinstance, DWORD reason, LPVOID reserved)
 {
-    TRACE("%p,%x,%p\n", hinstance, reason, reserved);
+    TRACE("%p,%lx,%p\n", hinstance, reason, reserved);
 
     switch (reason)
     {
@@ -156,7 +158,7 @@ DSM_Entry (pTW_IDENTITY pOrigin,
 {
     TW_UINT16 twRC = TWRC_SUCCESS;  /* Return Code */
 
-    TRACE("(DG=%d DAT=%d MSG=%d)\n", DG, DAT, MSG);
+    TRACE("(DG=%ld DAT=%d MSG=%d)\n", DG, DAT, MSG);
 
     if (DG == DG_CONTROL && DAT == DAT_NULL)
     {
@@ -197,7 +199,7 @@ DSM_Entry (pTW_IDENTITY pOrigin,
         }
 
 	DSM_twCC = TWCC_SUCCESS;
-        TRACE("Forwarding %d/%d/%d/%p to DS.\n", DG, DAT, MSG, pData);
+        TRACE("Forwarding %ld/%d/%d/%p to DS.\n", DG, DAT, MSG, pData);
 	twRC = pSource->dsEntry(pOrigin, DG, DAT, MSG, pData);
 	TRACE("return value is %d\n", twRC);
 	return twRC;
@@ -208,7 +210,7 @@ DSM_Entry (pTW_IDENTITY pOrigin,
             twRC = TWAIN_SourceManagerHandler (pOrigin, DAT, MSG, pData);
             break;
         default:
-            FIXME("The DSM does not handle DG %d\n", DG);
+            FIXME("The DSM does not handle DG %ld\n", DG);
             DSM_twCC = TWCC_BADPROTOCOL;
             twRC = TWRC_FAILURE;
     }

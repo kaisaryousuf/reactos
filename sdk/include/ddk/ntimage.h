@@ -17,6 +17,7 @@
 #define IMAGE_FILE_MACHINE_AMD64      0x8664
 #define IMAGE_FILE_MACHINE_ARM        0x1c0
 #define IMAGE_FILE_MACHINE_ARMV7      0x1c4
+#define IMAGE_FILE_MACHINE_ARM64      0xAA64
 #define IMAGE_FILE_MACHINE_EBC        0xebc
 #define IMAGE_FILE_MACHINE_I386       0x14c
 #define IMAGE_FILE_MACHINE_IA64       0x200
@@ -118,7 +119,7 @@ typedef struct {
   ULONG ProcessHeapFlags;
   ULONG ProcessAffinityMask;
   USHORT CSDVersion;
-  USHORT Reserved1;
+  USHORT DependentLoadFlags;
   ULONG EditList;
   ULONG SecurityCookie;
   ULONG SEHandlerTable;
@@ -141,7 +142,7 @@ typedef struct {
   ULONGLONG ProcessAffinityMask;
   ULONG ProcessHeapFlags;
   USHORT CSDVersion;
-  USHORT Reserved1;
+  USHORT DependentLoadFlags;
   ULONGLONG EditList;
   ULONGLONG SecurityCookie;
   ULONGLONG SEHandlerTable;
@@ -432,7 +433,7 @@ typedef PIMAGE_NT_HEADERS32                 PIMAGE_NT_HEADERS;
 //
 // Subsystems
 //
-#define IMAGE_SUBSYSTEM_UNKNOWN                         0 
+#define IMAGE_SUBSYSTEM_UNKNOWN                         0
 #define IMAGE_SUBSYSTEM_NATIVE                          1
 #define IMAGE_SUBSYSTEM_WINDOWS_GUI                     2
 #define IMAGE_SUBSYSTEM_WINDOWS_CUI                     3

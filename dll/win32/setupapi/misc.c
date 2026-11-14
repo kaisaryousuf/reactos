@@ -445,7 +445,7 @@ BOOL WINAPI pSetupEnablePrivilege(LPCWSTR lpPrivilegeName, BOOL bEnable)
 
     TRACE("%s %s\n", debugstr_w(lpPrivilegeName), bEnable ? "TRUE" : "FALSE");
 
-    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &hToken))
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES, &hToken))
         return FALSE;
 
     Privileges.PrivilegeCount = 1;
@@ -839,7 +839,7 @@ DWORD WINAPI RetreiveFileSecurity(LPCWSTR lpFileName,
 
 
 /*
- * See: https://msdn.microsoft.com/en-us/library/bb432397(v=vs.85).aspx
+ * See: https://learn.microsoft.com/en-us/windows/win32/devnotes/psetupsetglobalflags
  * for more information.
  */
 DWORD GlobalSetupFlags = 0;

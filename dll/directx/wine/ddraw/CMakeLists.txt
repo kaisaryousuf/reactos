@@ -1,10 +1,9 @@
 
 add_definitions(
     -D__WINESRC__
-    -D__ROS_LONG64__
-    -DUSE_WIN32_OPENGL)
+    -D__ROS_LONG64__)
 
-include_directories(${REACTOS_SOURCE_DIR}/sdk/include/reactos/wine)
+include_directories(${VKD3D_INCLUDE_DIRS})
 
 spec2def(ddraw.dll ddraw.spec ADD_IMPORTLIB)
 
@@ -20,24 +19,24 @@ list(APPEND SOURCE
     surface.c
     utils.c
     vertexbuffer.c
-    viewport.c
-    precomp.h
-    ${CMAKE_CURRENT_BINARY_DIR}/ddraw_stubs.c)
-
-if(MSVC)
-    # FIXME: http://www.cmake.org/Bug/view.php?id=12998
-    #target_compile_options(ddraw PRIVATE "/FIwine/typeof.h")
-    set_source_files_properties(${SOURCE} PROPERTIES COMPILE_FLAGS "/FIwine/typeof.h")
-endif()
+    viewport.c)
 
 add_library(ddraw MODULE
     ${SOURCE}
-    ddraw.rc
+    version.rc
+    ${CMAKE_CURRENT_BINARY_DIR}/ddraw_stubs.c
     ${CMAKE_CURRENT_BINARY_DIR}/ddraw.def)
 
-set_module_type(ddraw win32dll)
-target_link_libraries(ddraw wine uuid dxguid ${PSEH_LIB})
-add_importlibs(ddraw advapi32 gdi32 user32 d3dwine msvcrt kernel32 ntdll)
-add_dependencies(ddraw wineheaders)
-add_pch(ddraw precomp.h SOURCE)
+add_idl_reg_scripts(ddraw registry ddraw_classes.idl)
+
+if(MSVC)
+    # C5286: implicit conversion between enum types
+    target_compile_options(ddraw PRIVATE /wd5286)
+endif()
+
+set_module_type(ddraw win32dll UNICODE)
+target_link_libraries(ddraw wine wine_dll_register wine_dll_canunload dxguid uuid ${PSEH_LIB})
+add_importlibs(ddraw d3dwine user32 gdi32 advapi32 msvcrt kernel32 ntdll)
+add_dependencies(ddraw wineheaders d3d_idl_headers)
 add_cd_file(TARGET ddraw DESTINATION reactos/system32 FOR all)
+set_wine_module(ddraw)

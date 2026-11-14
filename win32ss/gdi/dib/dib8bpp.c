@@ -36,6 +36,9 @@ DIB_8BPP_GetPixel(SURFOBJ *SurfObj, LONG x, LONG y)
 VOID
 DIB_8BPP_HLine(SURFOBJ *SurfObj, LONG x1, LONG x2, LONG y, ULONG c)
 {
+  if (x1 >= x2)
+    return;
+
   memset((PBYTE)SurfObj->pvScan0 + y * SurfObj->lDelta + x1, (BYTE) c, x2 - x1);
 }
 
@@ -175,7 +178,7 @@ DIB_8BPP_BitBltSrcCopy(PBLTINFO BltInfo)
       break;
 
     case BMF_8BPP:
-      DPRINT("8BPP-dstRect: (%d,%d)-(%d,%d) and Width of '%d'.\n", 
+      DPRINT("8BPP-dstRect: (%d,%d)-(%d,%d) and Width of '%d'.\n",
               BltInfo->DestRect.left, BltInfo->DestRect.top,
               BltInfo->DestRect.right, BltInfo->DestRect.bottom,
               BltInfo->DestRect.right - BltInfo->DestRect.left);
@@ -318,8 +321,9 @@ DIB_8BPP_BitBltSrcCopy(PBLTINFO BltInfo)
           if (bTopToBottom)
           {
             DPRINT("Flip is bTopToBottom.\n");
-    
+
             DWORD  Index;
+            LONG   SrcDelta;
 
             /* Allocate enough pixels for a column in BYTE's */
             BYTE *store = ExAllocatePoolWithTag(NonPagedPool,
@@ -338,9 +342,10 @@ DIB_8BPP_BitBltSrcCopy(PBLTINFO BltInfo)
             if (OneDone)
             {
               /* This sets SourceLine to the bottom line of our previous destination */
-              SourceLine = (PBYTE)BltInfo->DestSurface->pvScan0 + 
+              SourceLine = (PBYTE)BltInfo->DestSurface->pvScan0 +
                 (BltInfo->DestRect.top * BltInfo->DestSurface->lDelta) + BltInfo->DestRect.left  +
                 (BltInfo->DestRect.bottom - BltInfo->DestRect.top - 1) * BltInfo->DestSurface->lDelta;
+              SrcDelta = BltInfo->DestSurface->lDelta;
             }
             else
             {
@@ -349,6 +354,7 @@ DIB_8BPP_BitBltSrcCopy(PBLTINFO BltInfo)
                 ((BltInfo->SourcePoint.y + BltInfo->DestRect.bottom - BltInfo->DestRect.top - 1)
                 * BltInfo->SourceSurface->lDelta) +
                 BltInfo->SourcePoint.x;
+              SrcDelta = BltInfo->SourceSurface->lDelta;
             }
 
             /* This set the DestLine to the top line */
@@ -368,12 +374,12 @@ DIB_8BPP_BitBltSrcCopy(PBLTINFO BltInfo)
               /* Read up the column and store the pixels */
               for (j = BltInfo->DestRect.top; j < BltInfo->DestRect.bottom; j++)
               {
-                store[Index] = (BYTE)XLATEOBJ_iXlate(BltInfo->XlateSourceToDest, *SourceBits);
+                store[Index] = OneDone ? *SourceBits : (BYTE)XLATEOBJ_iXlate(BltInfo->XlateSourceToDest, *SourceBits);
                 /* Go up a line */
-                SourceBits -= BltInfo->SourceSurface->lDelta;
+                SourceBits -= SrcDelta;
                 Index++;
               }
- 
+
               Index = 0;
 
               /* Get the stored pixel and copy then down the column */
@@ -381,7 +387,7 @@ DIB_8BPP_BitBltSrcCopy(PBLTINFO BltInfo)
               {
                 *DestBits = store[Index];
                 /* Go down a line */
-                DestBits += BltInfo->SourceSurface->lDelta;
+                DestBits += BltInfo->DestSurface->lDelta;
                 Index++;
               }
               /* Index to next column */
@@ -399,7 +405,7 @@ DIB_8BPP_BitBltSrcCopy(PBLTINFO BltInfo)
       DPRINT("16BPP Case Selected with DestRect Width of '%d'.\n",
              BltInfo->DestRect.right - BltInfo->DestRect.left);
 
-      DPRINT("BMF_16BPP-dstRect: (%d,%d)-(%d,%d) and Width of '%d'.\n", 
+      DPRINT("BMF_16BPP-dstRect: (%d,%d)-(%d,%d) and Width of '%d'.\n",
              BltInfo->DestRect.left, BltInfo->DestRect.top,
              BltInfo->DestRect.right, BltInfo->DestRect.bottom,
              BltInfo->DestRect.right - BltInfo->DestRect.left);
@@ -438,7 +444,7 @@ DIB_8BPP_BitBltSrcCopy(PBLTINFO BltInfo)
       break;
 
     case BMF_24BPP:
-      DPRINT("24BPP-dstRect: (%d,%d)-(%d,%d) and Width of '%d'.\n", 
+      DPRINT("24BPP-dstRect: (%d,%d)-(%d,%d) and Width of '%d'.\n",
              BltInfo->DestRect.left, BltInfo->DestRect.top,
              BltInfo->DestRect.right, BltInfo->DestRect.bottom,
              BltInfo->DestRect.right - BltInfo->DestRect.left);

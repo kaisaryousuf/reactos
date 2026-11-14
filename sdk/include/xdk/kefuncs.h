@@ -14,6 +14,8 @@ $include(ppc/ke.h)
 $include(mips/ke.h)
 #elif defined(_M_ARM)
 $include(arm/ke.h)
+#elif defined(_M_ARM64)
+$include(arm64/ke.h)
 #else
 #error Unknown Architecture
 #endif
@@ -137,21 +139,9 @@ VOID
 NTAPI
 KeSetSystemAffinityThread(
   _In_ KAFFINITY Affinity);
-
-NTKERNELAPI
-VOID
-NTAPI
-KeSetTargetProcessorDpc(
-  _Inout_ PRKDPC Dpc,
-  _In_ CCHAR Number);
-
-NTKERNELAPI
-KAFFINITY
-NTAPI
-KeQueryActiveProcessors(VOID);
 $endif (_WDMDDK_)
-$if (_NTDDK_)
 
+$if (_WDMDDK_ || _NTDDK_)
 NTKERNELAPI
 VOID
 NTAPI
@@ -163,8 +153,6 @@ NTKERNELAPI
 KAFFINITY
 NTAPI
 KeQueryActiveProcessors(VOID);
-$endif (_NTDDK_)
-$if (_WDMDDK_ || _NTDDK_)
 #endif /* defined(SINGLE_GROUP_LEGACY_API) */
 $endif (_WDMDDK_ || _NTDDK_)
 
@@ -1272,15 +1260,6 @@ KeQueryLogicalProcessorRelationship(
 $endif (_WDMDDK_ || _NTDDK_)
 
 $if (_WDMDDK_)
-_IRQL_requires_max_(DISPATCH_LEVEL)
-_IRQL_requires_min_(PASSIVE_LEVEL)
-_IRQL_requires_same_
-ULONG64
-NTAPI
-KeQueryTotalCycleTimeProcess(
-  _Inout_ PKPROCESS Process,
-  _Out_ PULONG64 CycleTimeStamp);
-
 _IRQL_requires_max_(APC_LEVEL)
 _IRQL_requires_min_(PASSIVE_LEVEL)
 _IRQL_requires_same_

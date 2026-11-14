@@ -342,7 +342,7 @@ CallQueryIPIOCTL(
     IN PVOID InputBuffer,
     IN ULONG InputBufferLength,
     IN PVOID OutputBuffer,
-    IN ULONG OutputBufferLength, 
+    IN ULONG OutputBufferLength,
     IN BOOLEAN PrintMessage,
     OUT PBOOLEAN MessagePrinted
     )
@@ -399,7 +399,7 @@ DoRebootCommand(IN BOOLEAN Reboot)
 
     /* We came back from a reboot, this doesn't make sense, tell the user */
     SacPutSimpleMessage(Reboot ? SAC_RESTART_FAIL_PROMPT : SAC_SHUTDOWN_FAIL_PROMPT);
-    swprintf(GlobalBuffer, GetMessage(SAC_FAIL_PROMPT), Status);
+    _swprintf(GlobalBuffer, GetMessage(SAC_FAIL_PROMPT), Status);
     SacPutString(GlobalBuffer);
     SAC_DBG(SAC_DBG_ENTRY_EXIT, "SAC DoRebootCommand: Exiting.\n");
 }
@@ -628,7 +628,7 @@ DoTlistCommand(VOID)
     {
         /* Nope, print out a failure message */
         SacPutSimpleMessage(68);
-        swprintf(GlobalBuffer, GetMessage(48), Status);
+        _swprintf(GlobalBuffer, GetMessage(48), Status);
         SacPutString(GlobalBuffer);
     }
     else

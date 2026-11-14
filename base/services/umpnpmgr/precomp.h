@@ -4,7 +4,7 @@
  * FILE:             base/services/umpnpmgr/install.c
  * PURPOSE:          Device installer
  * PROGRAMMER:       Eric Kohl (eric.kohl@reactos.org)
- *                   Hervé Poussineau (hpoussin@reactos.org)
+ *                   HervÃ© Poussineau (hpoussin@reactos.org)
  *                   Colin Finck (colin@reactos.org)
  */
 
@@ -26,18 +26,47 @@
 #include <rtlfuncs.h>
 #include <setypes.h>
 #include <umpnpmgr/sysguid.h>
+#include <wdmguid.h>
 #include <cfgmgr32.h>
 #include <regstr.h>
 #include <userenv.h>
 #include <shlwapi.h>
+#include <winsvc_undoc.h>
 #include <pnp_s.h>
 
+
+#define LOGCONF_NAME_BUFFER_SIZE 32
 
 typedef struct
 {
     LIST_ENTRY ListEntry;
     WCHAR DeviceIds[ANYSIZE_ARRAY];
 } DeviceInstallParams;
+
+typedef enum
+{
+    CLASS_NOTIFICATION = 1,
+    TARGET_NOTIFICATION
+} NOTIFICATION_TYPE;
+
+
+typedef struct
+{
+    LIST_ENTRY ListEntry;
+    NOTIFICATION_TYPE dwType;
+    PWSTR pszName;
+    DWORD_PTR hRecipient;
+    DWORD ulFlags;
+    GUID ClassGuid;
+} NOTIFY_ENTRY, *PNOTIFY_ENTRY;
+
+/* event.c */
+
+DWORD
+WINAPI
+PnpEventThread(
+    LPVOID lpParameter);
+
 
 /* install.c */
 
@@ -61,6 +90,9 @@ DeviceInstallThread(
 
 /* rpcserver.c */
 
+extern LIST_ENTRY NotificationListHead;
+extern RTL_RESOURCE NotificationListLock;
+
 DWORD
 WINAPI
 RpcServerThread(
@@ -72,6 +104,8 @@ RpcServerThread(
 extern HKEY hEnumKey;
 extern HKEY hClassKey;
 extern BOOL g_IsUISuppressed;
+extern BOOL g_ShuttingDown;
+extern BOOL g_IsMiniNT;
 
 BOOL
 GetSuppressNewUIValue(VOID);

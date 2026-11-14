@@ -9,7 +9,7 @@ list(APPEND SOURCE
 
 add_library(rshell MODULE ${SOURCE})
 
-set_module_type(rshell win32dll UNICODE)
+set_module_type(rshell win32dll UNICODE IMAGEBASE default)
 
 target_link_libraries(rshell
     shellbars
@@ -19,6 +19,11 @@ target_link_libraries(rshell
     wine
     cpprt
     atl_classes)
+
+if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
+    # FIXME: GCC 13+ warning, should be fixed properly
+    target_compile_options(rshell PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:-Wno-overloaded-virtual>")
+endif()
 
 add_importlibs(rshell
     browseui

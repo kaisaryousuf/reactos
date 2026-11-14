@@ -15,24 +15,15 @@
 extern EX_WORK_QUEUE ExWorkerQueue[MaximumWorkQueue];
 extern LIST_ENTRY PspReaperListHead;
 
-ULONG KiMask32Array[MAXIMUM_PRIORITY] =
-{
-    0x1,        0x2,       0x4,       0x8,       0x10,       0x20,
-    0x40,       0x80,      0x100,     0x200,     0x400,      0x800,
-    0x1000,     0x2000,    0x4000,    0x8000,    0x10000,    0x20000,
-    0x40000,    0x80000,   0x100000,  0x200000,  0x400000,   0x800000,
-    0x1000000,  0x2000000, 0x4000000, 0x8000000, 0x10000000, 0x20000000,
-    0x40000000, 0x80000000
-};
-
 /* FUNCTIONS *****************************************************************/
 
 UCHAR
 NTAPI
 KeFindNextRightSetAffinity(IN UCHAR Number,
-                           IN ULONG Set)
+                           IN KAFFINITY Set)
 {
-    ULONG Bit, Result;
+    KAFFINITY Bit;
+    ULONG Result;
     ASSERT(Set != 0);
 
     /* Calculate the mask */
@@ -42,7 +33,7 @@ KeFindNextRightSetAffinity(IN UCHAR Number,
     if (!Bit) Bit = Set;
 
     /* Now find the right set and return it */
-    BitScanReverse(&Result, Bit);
+    BitScanReverseAffinity(&Result, Bit);
     return (UCHAR)Result;
 }
 
@@ -501,7 +492,7 @@ KeStartThread(IN OUT PKTHREAD Thread)
 #ifdef CONFIG_SMP
     PKNODE Node;
     PKPRCB NodePrcb;
-    ULONG Set, Mask;
+    KAFFINITY Set, Mask;
 #endif
     UCHAR IdealProcessor = 0;
     PKPROCESS Process = Thread->ApcState.Process;
@@ -536,7 +527,7 @@ KeStartThread(IN OUT PKTHREAD Thread)
 #else
     Set = ~NodePrcb->MultiThreadProcessorSet;
 #endif
-    Mask = (ULONG)(Node->ProcessorMask & Process->Affinity);
+    Mask = Node->ProcessorMask & Process->Affinity;
     Set &= Mask;
     if (Set) Mask = Set;
 
@@ -1128,28 +1119,10 @@ KeSetSystemAffinityThread(IN KAFFINITY Affinity)
     CurrentThread->Affinity = Affinity;
     CurrentThread->SystemAffinityActive = TRUE;
 
-    /* Check if the ideal processor is part of the affinity */
 #ifdef CONFIG_SMP
-    if (!(Affinity & AFFINITY_MASK(CurrentThread->IdealProcessor)))
-    {
-        ULONG AffinitySet, NodeMask;
-
-        /* It's not! Get the PRCB */
-        Prcb = KiProcessorBlock[CurrentThread->IdealProcessor];
-
-        /* Calculate the affinity set */
-        AffinitySet = KeActiveProcessors & Affinity;
-        NodeMask = Prcb->ParentNode->ProcessorMask & AffinitySet;
-        if (NodeMask)
-        {
-            /* Use the Node set instead */
-            AffinitySet = NodeMask;
-        }
-
-        /* Calculate the ideal CPU from the affinity set */
-        BitScanReverse(&NodeMask, AffinitySet);
-        CurrentThread->IdealProcessor = (UCHAR)NodeMask;
-    }
+    /* Calculate the ideal processor from the affinity set */
+    CurrentThread->IdealProcessor =
+        KiFindIdealProcessor(Affinity, CurrentThread->IdealProcessor);
 #endif
 
     /* Get the current PRCB and check if it doesn't match this affinity */
@@ -1466,4 +1439,71 @@ KeTerminateThread(IN KPRIORITY Increment)
     /* Swap to a new thread */
     KiReleaseDispatcherLockFromSynchLevel();
     KiSwapThread(Thread, KeGetCurrentPrcb());
+}
+
+_IRQL_requires_max_(APC_LEVEL)
+_IRQL_requires_min_(PASSIVE_LEVEL)
+_IRQL_requires_same_
+ULONG64
+NTAPI
+KeQueryTotalCycleTimeThread(
+    _Inout_ PKTHREAD Thread,
+    _Out_ PULONG64 CycleTimeStamp)
+{
+    PKPRCB Prcb;
+    ULONG64 CurrentCycleTime, StartCycles, ThreadCycles, ElapsedCycles, TotalCycleTime;
+
+    /* Check if the current thread's cycle time was requested */
+    if (Thread == KeGetCurrentThread())
+    {
+        /* Disable interrupts to prevent preemption */
+        NT_VERIFY(KeDisableInterrupts());
+
+        /* Get the current cycle counter value */
+        CurrentCycleTime = KxQueryProcessorCycleTime();
+
+        /* Get the cycle counter value at the last preemption */
+        Prcb = KeGetCurrentPrcb();
+        StartCycles = Prcb->StartCycles;
+
+        /* Get the thread's cycle time from the last preemption.
+           We don't need synchronization here, since only the thread itself updates its cycle time. */
+        ThreadCycles = ((PETHREAD)Thread)->CycleTime;
+
+        /* Enable interrupts */
+        KeRestoreInterrupts(TRUE);
+
+        /* Calculate the elapsed cycles since the thread was scheduled */
+        ElapsedCycles = CurrentCycleTime - StartCycles;
+
+        /* Calculate the total cycle time */
+        TotalCycleTime = ThreadCycles + ElapsedCycles;
+    }
+    else
+    {
+#ifdef CONFIG_SMP
+        /* Check if the thread is running */
+        if (Thread->State == Running)
+        {
+            /* FIXME: On SMP, if the thread runs on a different CPU we need to
+               send an IPI to update the threads cycle time */
+            DPRINT1("Warning: Thread cycle time for remote thread %p is inaccurate!\n", Thread);
+        }
+#endif
+
+        /* Get the current cycle counter value */
+        CurrentCycleTime = KxQueryProcessorCycleTime();
+
+        /* Get the thread's cycle time from the last update (preemption or IPI) */
+        TotalCycleTime = KiReadThreadCycleTime(Thread);
+    }
+
+    /* Return the current cycle counter value as the time stamp */
+    if (CycleTimeStamp)
+    {
+        *CycleTimeStamp = CurrentCycleTime;
+    }
+
+    /* Return the total cycle time */
+    return TotalCycleTime;
 }

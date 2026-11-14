@@ -296,6 +296,8 @@ VOID
     _In_ PIO_STATUS_BLOCK IoStatusBlock,
     _In_ ULONG Reserved);
 
+#define PIO_APC_ROUTINE_DEFINED
+
 __kernel_entry
 NTSYSCALLAPI
 NTSTATUS
@@ -414,7 +416,8 @@ NTAPI
 NtQueryInformationProcess(
     _In_ HANDLE ProcessHandle,
     _In_ PROCESSINFOCLASS ProcessInformationClass,
-    _Out_ PVOID ProcessInformation,
+    _Out_writes_bytes_to_opt_(ProcessInformationLength, *ReturnLength)
+        PVOID ProcessInformation,
     _In_ ULONG ProcessInformationLength,
     _Out_opt_ PULONG ReturnLength);
 
@@ -430,7 +433,8 @@ NTAPI
 NtQueryInformationThread(
     _In_ HANDLE ThreadHandle,
     _In_ THREADINFOCLASS ThreadInformationClass,
-    _Out_ PVOID ThreadInformation,
+    _Out_writes_bytes_to_opt_(ThreadInformationLength, *ReturnLength)
+        PVOID ThreadInformation,
     _In_ ULONG ThreadInformationLength,
     _Out_opt_ PULONG ReturnLength);
 
@@ -490,7 +494,13 @@ typedef struct _SYSTEM_BASIC_INFORMATION
 
 typedef struct _SYSTEM_PERFORMANCE_INFORMATION
 {
+#if (_WIN32_WINNT >= _WIN32_WINNT_WIN8)
+    BYTE Reserved1[344];
+#elif (_WIN32_WINNT >= _WIN32_WINNT_WIN7)
+    BYTE Reserved1[328];
+#else
     BYTE Reserved1[312];
+#endif
 } SYSTEM_PERFORMANCE_INFORMATION, *PSYSTEM_PERFORMANCE_INFORMATION;
 
 typedef struct _SYSTEM_TIMEOFDAY_INFORMATION

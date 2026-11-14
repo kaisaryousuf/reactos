@@ -155,11 +155,13 @@ static INT ServiceActivate (LPTSTR param, HWND hWnd)
 
     if (iAction & A_CLOSE)
     {
-        FIXME("!!!FIXME:  CLOSE Not implemented!!!\n");
+        PostMessage(hWnd, WM_CLOSE, 0, 0);
     }
-
-    wp.length = sizeof(WINDOWPLACEMENT);
-    SetWindowPlacement(hWnd, &wp);
+    else
+    {
+        wp.length = sizeof(WINDOWPLACEMENT);
+        SetWindowPlacement(hWnd, &wp);
+    }
 
     if (p)
         freep(p);
@@ -213,7 +215,7 @@ INT CommandActivate (LPTSTR param)
     {
         if (arg != NULL)
             freep(arg);
-        ConErrResPuts(STRING_WINDOW_ERROR1);
+        ConErrResPuts(STRING_WINDOW_ERROR);
         return 1;
     }
     if (arg != NULL)

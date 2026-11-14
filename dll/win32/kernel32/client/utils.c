@@ -23,6 +23,7 @@
 
 UNICODE_STRING Restricted = RTL_CONSTANT_STRING(L"Restricted");
 BOOL bIsFileApiAnsi = TRUE; // set the file api to ansi or oem
+
 PRTL_CONVERT_STRING Basep8BitStringToUnicodeString = RtlAnsiStringToUnicodeString;
 PRTL_CONVERT_STRINGA BasepUnicodeStringTo8BitString = RtlUnicodeStringToAnsiString;
 PRTL_COUNT_STRING BasepUnicodeStringTo8BitSize = BasepUnicodeStringToAnsiSize;
@@ -58,15 +59,21 @@ BasepAnsiStringToUnicodeSize(IN PANSI_STRING String)
     return RtlAnsiStringToUnicodeSize(String);
 }
 
-HANDLE
+NTSTATUS
 WINAPI
-BaseGetNamedObjectDirectory(VOID)
+BaseGetNamedObjectDirectory(
+    _Out_ PHANDLE DirectoryHandle)
 {
     OBJECT_ATTRIBUTES ObjectAttributes;
     NTSTATUS Status;
     HANDLE DirHandle, BnoHandle, Token, NewToken;
 
-    if (BaseNamedObjectDirectory) return BaseNamedObjectDirectory;
+    *DirectoryHandle = BaseNamedObjectDirectory;
+
+    if (BaseNamedObjectDirectory)
+    {
+        return STATUS_SUCCESS;
+    }
 
     if (NtCurrentTeb()->IsImpersonating)
     {
@@ -74,7 +81,10 @@ BaseGetNamedObjectDirectory(VOID)
                                    TOKEN_IMPERSONATE,
                                    TRUE,
                                    &Token);
-        if (!NT_SUCCESS(Status)) return BaseNamedObjectDirectory;
+        if (!NT_SUCCESS(Status))
+        {
+            return Status;
+        }
 
         NewToken = NULL;
         Status = NtSetInformationThread(NtCurrentThread(),
@@ -84,7 +94,7 @@ BaseGetNamedObjectDirectory(VOID)
         if (!NT_SUCCESS (Status))
         {
             NtClose(Token);
-            return BaseNamedObjectDirectory;
+            return Status;
         }
     }
     else
@@ -148,7 +158,24 @@ Quickie:
         NtClose(Token);
     }
 
-    return BaseNamedObjectDirectory;
+    *DirectoryHandle = BaseNamedObjectDirectory;
+    return STATUS_SUCCESS;
+}
+
+HANDLE
+WINAPI
+BasepGetNamedObjectDirectory(VOID)
+{
+    NTSTATUS Status;
+    HANDLE DirectoryHandle;
+
+    Status = BaseGetNamedObjectDirectory(&DirectoryHandle);
+    if (!NT_SUCCESS(Status))
+    {
+        return NULL;
+    }
+
+    return DirectoryHandle;
 }
 
 VOID
@@ -327,7 +354,7 @@ BaseFormatObjectAttributes(OUT POBJECT_ATTRIBUTES ObjectAttributes,
     if (ObjectName)
     {
         Attributes |= OBJ_OPENIF;
-        RootDirectory = BaseGetNamedObjectDirectory();
+        RootDirectory = BasepGetNamedObjectDirectory();
     }
     else
     {
@@ -587,7 +614,7 @@ BaseInitializeContext(IN PCONTEXT Context,
     /* Setup the Initial Win32 Thread Context */
     Context->Rcx = (ULONG_PTR)StartAddress;
     Context->Rdx = (ULONG_PTR)Parameter;
-    Context->Rsp = (ULONG_PTR)StackAddress - 5 * sizeof(PVOID);
+    Context->Rsp = (ULONG_PTR)StackAddress;
 
     /* Setup the Segments */
     Context->SegGs = KGDT64_R3_DATA | RPL_MASK;
@@ -599,6 +626,9 @@ BaseInitializeContext(IN PCONTEXT Context,
 
     /* Set the EFLAGS */
     Context->EFlags = 0x3000 | EFLAGS_INTERRUPT_MASK; /* IOPL 3 */
+
+    /* Set MXCSR */
+    Context->MxCsr = INITIAL_MXCSR;
 
     if (ContextType == 1)      /* For Threads */
     {
@@ -684,7 +714,7 @@ NTSTATUS
 WINAPI
 BasepMapFile(IN LPCWSTR lpApplicationName,
              OUT PHANDLE hSection,
-             IN PUNICODE_STRING ApplicationName)
+             OUT PUNICODE_STRING ApplicationName)
 {
     RTL_RELATIVE_NAME_U RelativeName;
     OBJECT_ATTRIBUTES ObjectAttributes;
@@ -729,6 +759,7 @@ BasepMapFile(IN LPCWSTR lpApplicationName,
                         &IoStatusBlock,
                         FILE_SHARE_DELETE | FILE_SHARE_READ,
                         FILE_SYNCHRONOUS_IO_NONALERT | FILE_NON_DIRECTORY_FILE);
+    RtlReleaseRelativeName(&RelativeName);
     if (!NT_SUCCESS(Status))
     {
         DPRINT1("Failed to open file\n");

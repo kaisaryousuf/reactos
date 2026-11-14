@@ -89,6 +89,9 @@ AfdBindSocket(PDEVICE_OBJECT DeviceObject, PIRP Irp,
     if( !(BindReq = LockRequest( Irp, IrpSp, FALSE, NULL )) )
         return UnlockAndMaybeComplete( FCB, STATUS_NO_MEMORY,
                                        Irp, 0 );
+    
+    if (FCB->SharedData.State != SOCKET_STATE_CREATED)
+        return UnlockAndMaybeComplete(FCB, STATUS_INVALID_PARAMETER, Irp, 0);
 
     if (FCB->LocalAddress)
     {
@@ -115,7 +118,7 @@ AfdBindSocket(PDEVICE_OBJECT DeviceObject, PIRP Irp,
                                        Irp->RequestorMode,
                                        &UserHandle);
         if (NT_SUCCESS(Status))
-            FCB->State = SOCKET_STATE_BOUND;
+            FCB->SharedData.State = SOCKET_STATE_BOUND;
     }
 
     /* MSAFD relies on us returning the address file handle in the IOSB */

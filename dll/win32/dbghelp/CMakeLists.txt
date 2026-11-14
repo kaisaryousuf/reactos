@@ -1,6 +1,6 @@
 
 if(NOT CMAKE_CROSSCOMPILING)
-    add_definitions(-DDBGHELP_STATIC_LIB)
+    add_definitions(-DDBGHELP_STATIC_LIB -DNONAMELESSUNION -D_CRT_NON_CONFORMING_SWPRINTFS)
 
     include_directories(
         ${REACTOS_SOURCE_DIR}/tools)
@@ -26,17 +26,13 @@ if(NOT CMAKE_CROSSCOMPILING)
     target_link_libraries(dbghelphost PRIVATE host_includes)
 else()
     add_definitions(
-        -D__WINESRC__
         -D_WINE
         -DHAVE_ALLOCA_H
+        -D_CRT_NON_CONFORMING_SWPRINTFS
         -D_IMAGEHLP_SOURCE_)
 
-    if(ARCH STREQUAL "amd64")
-        add_definitions(-DUNW_FLAG_NHANDLER=0 -DUNW_FLAG_EHANDLER=1 -DUNW_FLAG_UHANDLER=2 -DUNW_FLAG_CHAININFO=3)
-    endif()
-
     include_directories(
-        BEFORE ${REACTOS_SOURCE_DIR}/sdk/include/reactos/wine)
+        BEFORE ${REACTOS_SOURCE_DIR}/sdk/include/wine)
 
     spec2def(dbghelp.dll dbghelp.spec ADD_IMPORTLIB)
 
@@ -79,9 +75,11 @@ else()
     add_importlibs(dbghelp psapi msvcrt kernel32 ntdll)
     add_pch(dbghelp precomp.h SOURCE)
     add_cd_file(TARGET dbghelp DESTINATION reactos/system32 FOR all)
+    set_wine_module_FIXME(dbghelp) # CORE-5743: No ARRAY_SIZE macro
 
     if(MSVC)
+        # Disable warning C4146: unary minus operator applied to unsigned type, result still unsigned
         # Disable warning C4477 (printf format warnings)
-        remove_target_compile_option(dbghelp "/we4477")
+        target_compile_options(dbghelp PRIVATE /wd4146 /wd4477)
     endif()
 endif()

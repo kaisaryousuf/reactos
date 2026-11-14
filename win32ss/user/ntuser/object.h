@@ -16,10 +16,13 @@ PVOID UserGetObject(PUSER_HANDLE_TABLE ht, HANDLE handle, HANDLE_TYPE type );
 PVOID UserGetObjectNoErr(PUSER_HANDLE_TABLE, HANDLE, HANDLE_TYPE);
 BOOL FASTCALL UserCreateHandleTable(VOID);
 BOOL FASTCALL UserObjectInDestroy(HANDLE);
+BOOL FASTCALL UserMarkHandleGranted(HANDLE);
 void DbgUserDumpHandleTable();
 PVOID FASTCALL ValidateHandle(HANDLE handle, HANDLE_TYPE type);
 BOOLEAN UserDestroyObjectsForOwner(PUSER_HANDLE_TABLE Table, PVOID Owner);
 BOOL FASTCALL UserMarkObjectDestroy(PVOID);
+PVOID FASTCALL UserAssignmentLock(PVOID *ppvObj, PVOID pvNew);
+PVOID FASTCALL UserAssignmentUnlock(PVOID *ppvObj);
 
 static __inline VOID
 UserRefObjectCo(PVOID obj, PUSER_REFERENCE_ENTRY UserReferenceEntry)
@@ -32,6 +35,9 @@ UserRefObjectCo(PVOID obj, PUSER_REFERENCE_ENTRY UserReferenceEntry)
     UserReferenceEntry->obj = obj;
     UserReferenceObject(obj);
     PushEntryList(&W32Thread->ReferencesList, &UserReferenceEntry->Entry);
+#if DBG
+    W32Thread->cRefObjectCo++;
+#endif
 }
 
 static __inline VOID
@@ -51,6 +57,9 @@ UserDerefObjectCo(PVOID obj)
 
     ASSERT(obj == UserReferenceEntry->obj);
     UserDereferenceObject(obj);
+#if DBG
+    W32Thread->cRefObjectCo--;
+#endif
 }
 
 void FreeProcMarkObject(_In_ PVOID Object);

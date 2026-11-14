@@ -99,9 +99,9 @@ HRESULT STDMETHODCALLTYPE  CMenuBand::GetMenuInfo(
 
     if (ppsmc)
     {
-        if (m_psmc)
-            m_psmc->AddRef();
         *ppsmc = m_psmc;
+        if (*ppsmc)
+            (*ppsmc)->AddRef();
     }
 
     if (puId)
@@ -588,6 +588,8 @@ HRESULT STDMETHODCALLTYPE CMenuBand::OnSelect(DWORD dwSelectType)
     case MPOS_CANCELLEVEL:
         if (m_subMenuChild)
             m_subMenuChild->OnSelect(dwSelectType);
+        // Deselect the currently selected item
+        _ChangeHotItem(NULL, -1, 0);
         break;
     }
     return S_FALSE;
@@ -632,7 +634,7 @@ HRESULT STDMETHODCALLTYPE CMenuBand::SetClient(IUnknown *punkClient)
     CComPtr<IMenuPopup> child = m_subMenuChild;
 
     m_subMenuChild = NULL;
-        
+
     if (child)
     {
         IUnknown_SetSite(child, NULL);
@@ -655,8 +657,8 @@ HRESULT STDMETHODCALLTYPE CMenuBand::GetClient(IUnknown **ppunkClient)
 
     if (m_subMenuChild)
     {
-        m_subMenuChild->AddRef();
         *ppunkClient = m_subMenuChild;
+        (*ppunkClient)->AddRef();
     }
 
     return S_OK;
@@ -822,7 +824,7 @@ HRESULT CMenuBand::_TrackContextMenu(IContextMenu * contextMenu, INT x, INT y)
 {
     HRESULT hr;
     UINT uCommand;
-    
+
     // Ensure that the menu doesn't disappear on us
     CComPtr<IContextMenu> ctxMenu = contextMenu;
 
@@ -832,7 +834,12 @@ HRESULT CMenuBand::_TrackContextMenu(IContextMenu * contextMenu, INT x, INT y)
         return E_FAIL;
 
     TRACE("Before Query\n");
-    hr = contextMenu->QueryContextMenu(popup, 0, 0, UINT_MAX, CMF_NORMAL);
+    UINT cmf = CMF_NORMAL;
+    if (GetKeyState(VK_SHIFT) < 0)
+        cmf |= CMF_EXTENDEDVERBS;
+
+    const UINT idCmdFirst = 100, idCmdLast = 0xffff;
+    hr = contextMenu->QueryContextMenu(popup, 0, idCmdFirst, idCmdLast, cmf);
     if (FAILED_UNEXPECTEDLY(hr))
     {
         TRACE("Query failed\n");
@@ -854,10 +861,14 @@ HRESULT CMenuBand::_TrackContextMenu(IContextMenu * contextMenu, INT x, INT y)
         _MenuItemSelect(MPOS_FULLCANCEL);
 
         TRACE("Before InvokeCommand\n");
-        CMINVOKECOMMANDINFO cmi = { 0 };
-        cmi.cbSize = sizeof(cmi);
-        cmi.lpVerb = MAKEINTRESOURCEA(uCommand);
-        cmi.hwnd = hwnd;
+        // Note: Not passing hwnd to InvokeCommand because it can be a BaseBar window that is about to die
+        CMINVOKECOMMANDINFO cmi = { sizeof(cmi), 0, NULL };
+        cmi.lpVerb = MAKEINTRESOURCEA(uCommand - idCmdFirst);
+        if (GetKeyState(VK_SHIFT) < 0)
+            cmi.fMask |= CMIC_MASK_SHIFT_DOWN;
+        if (GetKeyState(VK_CONTROL) < 0)
+            cmi.fMask |= CMIC_MASK_CONTROL_DOWN;
+        cmi.nShow = SW_SHOW;
         hr = contextMenu->InvokeCommand(&cmi);
         TRACE("InvokeCommand returned hr=%08x\n", hr);
     }
@@ -1075,7 +1086,7 @@ HRESULT CMenuBand::_OnPopupSubMenu(IShellMenu * childShellMenu, POINTL * pAt, RE
     if (FAILED_UNEXPECTEDLY(hr))
         return hr;
 
-    // 
+    //
     CComPtr<IMenuPopup> popup;
     hr = pDeskBar->QueryInterface(IID_PPV_ARG(IMenuPopup, &popup));
     if (FAILED_UNEXPECTEDLY(hr))
@@ -1161,6 +1172,8 @@ HRESULT CMenuBand::AdjustForTheme(BOOL bFlatStyle)
 HRESULT STDMETHODCALLTYPE CMenuBand::InvalidateItem(LPSMDATA psmd, DWORD dwFlags)
 {
     UNIMPLEMENTED;
+    if (!psmd && (dwFlags & SMINV_REFRESH))
+        _CallCB(SMC_REFRESH, 0, 0);
     return S_OK;
 }
 

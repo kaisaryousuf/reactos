@@ -37,8 +37,14 @@ CmpInitializeRegistryNode(IN PCONFIGURATION_COMPONENT_DATA CurrentEntry,
     /* Get the component */
     Component = &CurrentEntry->ComponentEntry;
 
-    /* Set system class components to ARC system type */
-    if (Component->Class == SystemClass) Component->Type = ArcSystem;
+    /*
+     * Normalize the system class component to ARC system type.
+     * The NT OS loader already sets the component type to
+     * ArcSystem for ARC-compatible systems, but sets it to
+     * MaximumType for non-ARC-compatible ones.
+     */
+    if (Component->Class == SystemClass)
+        Component->Type = ArcSystem;
 
     /* Create a key for the component */
     InitializeObjectAttributes(&ObjectAttributes,
@@ -53,7 +59,8 @@ CmpInitializeRegistryNode(IN PCONFIGURATION_COMPONENT_DATA CurrentEntry,
                          NULL,
                          0,
                          &Disposition);
-    if (!NT_SUCCESS(Status)) return Status;
+    if (!NT_SUCCESS(Status))
+        return Status;
 
     /* Check if this is anything but a system class component */
     if (Component->Class != SystemClass)
@@ -61,7 +68,7 @@ CmpInitializeRegistryNode(IN PCONFIGURATION_COMPONENT_DATA CurrentEntry,
         /* Build the sub-component string */
         RtlIntegerToChar(DeviceIndexTable[Component->Type]++,
                          10,
-                         12,
+                         _countof(TempBuffer),
                          TempBuffer);
         RtlInitAnsiString(&TempString, TempBuffer);
 
@@ -209,7 +216,8 @@ CmpSetupConfigurationTree(IN PCONFIGURATION_COMPONENT_DATA CurrentEntry,
 {
     PCONFIGURATION_COMPONENT Component;
     USHORT DeviceIndexTable[MaximumType + 1] = {0};
-    ULONG Interface = InterfaceType, Bus = BusNumber, i;
+    INTERFACE_TYPE Interface = InterfaceType;
+    ULONG Bus = BusNumber, i;
     NTSTATUS Status;
     HANDLE NewHandle;
 
@@ -227,7 +235,7 @@ CmpSetupConfigurationTree(IN PCONFIGURATION_COMPONENT_DATA CurrentEntry,
                 /* EISA */
                 case EisaAdapter:
                 {
-                    /* Fixup information */
+                    /* Adjust information */
                     Interface = Eisa;
                     Bus = CmpTypeCount[EisaAdapter]++;
                     break;
@@ -236,13 +244,13 @@ CmpSetupConfigurationTree(IN PCONFIGURATION_COMPONENT_DATA CurrentEntry,
                 /* Turbo-channel */
                 case TcAdapter:
                 {
-                    /* Fixup information */
+                    /* Adjust information */
                     Interface = TurboChannel;
                     Bus = CmpTypeCount[TurboChannel]++;
                     break;
                 }
 
-                /* ISA, PCI, etc busses */
+                /* ISA, PCI, etc. buses */
                 case MultiFunctionAdapter:
                 {
                     /* Check if we have an  identifier */
@@ -260,7 +268,7 @@ CmpSetupConfigurationTree(IN PCONFIGURATION_COMPONENT_DATA CurrentEntry,
                             }
                         }
 
-                        /* Fix up information */
+                        /* Adjust information */
                         Interface = CmpMultifunctionTypes[i].InterfaceType;
                         Bus = CmpMultifunctionTypes[i].Count++;
                     }
@@ -270,7 +278,7 @@ CmpSetupConfigurationTree(IN PCONFIGURATION_COMPONENT_DATA CurrentEntry,
                 /* SCSI Bus */
                 case ScsiAdapter:
                 {
-                    /* Fix up */
+                    /* Adjust information */
                     Interface = Internal;
                     Bus = CmpTypeCount[ScsiAdapter]++;
                     break;
@@ -279,7 +287,7 @@ CmpSetupConfigurationTree(IN PCONFIGURATION_COMPONENT_DATA CurrentEntry,
                 /* Unknown */
                 default:
                 {
-                    Interface = -1;
+                    Interface = InterfaceTypeUndefined;
                     Bus = CmpUnknownBusCount++;
                     break;
                 }
@@ -295,7 +303,8 @@ CmpSetupConfigurationTree(IN PCONFIGURATION_COMPONENT_DATA CurrentEntry,
                                            Interface,
                                            Bus,
                                            DeviceIndexTable);
-        if (!NT_SUCCESS(Status)) return Status;
+        if (!NT_SUCCESS(Status))
+            return Status;
 
         /* Check for children */
         if (CurrentEntry->Child)
@@ -354,7 +363,7 @@ CmpInitializeHardwareConfiguration(IN PLOADER_PARAMETER_BLOCK LoaderBlock)
         return Status;
     NtClose(KeyHandle);
 
-    /* Nobody should've created this key yet! */
+    /* Nobody should have created this key yet! */
     ASSERT(Disposition == REG_CREATED_NEW_KEY);
 
     /* Setup the key name */
@@ -377,7 +386,7 @@ CmpInitializeHardwareConfiguration(IN PLOADER_PARAMETER_BLOCK LoaderBlock)
     if (!NT_SUCCESS(Status))
         return Status;
 
-    /* Nobody should've created this key yet! */
+    /* Nobody should have created this key yet! */
     ASSERT(Disposition == REG_CREATED_NEW_KEY);
 
     /* Allocate the configuration data buffer */
@@ -393,10 +402,32 @@ CmpInitializeHardwareConfiguration(IN PLOADER_PARAMETER_BLOCK LoaderBlock)
     /* Check if we got anything from NTLDR */
     if (LoaderBlock->ConfigurationRoot)
     {
+#ifdef _M_IX86
+        PCONFIGURATION_COMPONENT_DATA ConfigData;
+
+        ConfigData = KeFindConfigurationEntry(LoaderBlock->ConfigurationRoot,
+                                              SystemClass,
+                                              MaximumType,
+                                              NULL);
+        if (ConfigData)
+        {
+            /* Check if the system identifier starts with a known string.
+             * Set kernel flags and initialize variables accordingly. */
+            if (!strncmp(ConfigData->ComponentEntry.Identifier,
+                         "NEC PC-98",
+                         sizeof("NEC PC-98") - 1))
+            {
+                /* Running on a NEC PC-9800 or compatible */
+                KeI386MachineType |= 0x100; /* Should probably be one of MACHINE_TYPE_* consts */
+                SharedUserData->AlternativeArchitecture = NEC98x86;
+            }
+        }
+#endif
+
         /* Setup the configuration tree */
         Status = CmpSetupConfigurationTree(LoaderBlock->ConfigurationRoot,
                                            KeyHandle,
-                                           -1,
+                                           InterfaceTypeUndefined,
                                            -1);
     }
     else

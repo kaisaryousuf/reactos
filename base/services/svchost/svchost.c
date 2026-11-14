@@ -516,8 +516,8 @@ SvchostStopCallback (
 DWORD
 WINAPI
 SvcRegisterStopCallback (
-    _In_ PHANDLE phNewWaitObject,
-    _In_ LPCWSTR ServiceName,
+    _Out_ PHANDLE phNewWaitObject,
+    _In_ PCWSTR ServiceName,
     _In_ HANDLE hObject,
     _In_ PSVCHOST_STOP_CALLBACK pfnStopCallback,
     _In_ PVOID pContext,
@@ -682,13 +682,13 @@ GetServiceDllFunction (
     {
         /* We don't -- load it */
         hModule = LoadLibraryExW(pDll->pszDllPath,
-                                    NULL,
-                                    LOAD_WITH_ALTERED_SEARCH_PATH);
+                                 NULL,
+                                 LOAD_WITH_ALTERED_SEARCH_PATH);
         if (!hModule)
         {
             /* We failed to load it, bail out */
             if (lpdwError) *lpdwError = GetLastError();
-            DBG_ERR("LoadLibrary (%ws) failed.  Error %d.\n",
+            DBG_ERR("LoadLibrary(%ws) failed. Error %d.\n",
                     pDll->pszDllPath,
                     GetLastError());
             DeactivateActCtx(0, ulCookie);

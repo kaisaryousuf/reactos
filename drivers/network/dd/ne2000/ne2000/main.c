@@ -26,7 +26,8 @@ ULONG DebugTraceLevel = 0;
 
 
 /* List of supported OIDs */
-static ULONG MiniportOIDList[] = {
+static const NDIS_OID MiniportOIDList[] =
+{
     OID_GEN_SUPPORTED_LIST,
     OID_GEN_HARDWARE_STATUS,
     OID_GEN_MEDIA_SUPPORTED,
@@ -53,7 +54,8 @@ static ULONG MiniportOIDList[] = {
     OID_802_3_CURRENT_ADDRESS,
     OID_802_3_MULTICAST_LIST,
     OID_802_3_MAXIMUM_LIST_SIZE,
-    OID_802_3_MAC_OPTIONS
+    OID_802_3_MAC_OPTIONS,
+    OID_GEN_PHYSICAL_MEDIUM
 };
 
 DRIVER_INFORMATION      DriverInfo = { NULL, NULL, { NULL, NULL } };
@@ -494,7 +496,7 @@ static NDIS_STATUS NTAPI MiniportQueryInformation(
  */
 {
     NDIS_STATUS Status;
-    PVOID CopyFrom;
+    const VOID* CopyFrom;
     UINT CopySize;
     ULONG GenericULONG;
     USHORT GenericUSHORT;
@@ -509,7 +511,7 @@ static NDIS_STATUS NTAPI MiniportQueryInformation(
 
     switch (Oid) {
     case OID_GEN_SUPPORTED_LIST:
-        CopyFrom = (PVOID)&MiniportOIDList;
+        CopyFrom = MiniportOIDList;
         CopySize = sizeof(MiniportOIDList);
         break;
     case OID_GEN_HARDWARE_STATUS:
@@ -605,6 +607,9 @@ static NDIS_STATUS NTAPI MiniportQueryInformation(
     case OID_802_3_MAC_OPTIONS:
         NDIS_DbgPrint(MID_TRACE, ("OID_802_3_MAC_OPTIONS.\n"));
         Status = NDIS_STATUS_NOT_SUPPORTED;
+        break;
+    case OID_GEN_PHYSICAL_MEDIUM:
+        GenericULONG = NdisPhysicalMedium802_3;
         break;
     default:
         NDIS_DbgPrint(MIN_TRACE, ("Unknown OID (0x%X).\n", Oid));

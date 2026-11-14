@@ -93,7 +93,7 @@ RtlpInitEnvironment(HANDLE ProcessHandle,
                                          PAGE_READWRITE);
         if (!NT_SUCCESS(Status))
         {
-            DPRINT1("Failed to reserve 1MB of space \n");
+            DPRINT1("Failed to reserve 1MB of space\n");
             return Status;
         }
     }
@@ -484,14 +484,6 @@ RtlSetProcessIsCritical(IN BOOLEAN NewValue,
                                    ProcessBreakOnTermination,
                                    &BreakOnTermination,
                                    sizeof(ULONG));
-}
-
-ULONG
-NTAPI
-RtlGetCurrentProcessorNumber(VOID)
-{
-    /* Forward to kernel */
-    return NtGetCurrentProcessorNumber();
 }
 
 _IRQL_requires_max_(APC_LEVEL)

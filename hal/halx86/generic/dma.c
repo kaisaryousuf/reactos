@@ -77,8 +77,6 @@
 #define NDEBUG
 #include <debug.h>
 
-#define MAX_SG_ELEMENTS 0x10
-
 #ifndef _MINIHAL_
 static KEVENT HalpDmaLock;
 static KSPIN_LOCK HalpDmaAdapterListLock;
@@ -102,6 +100,39 @@ static const ULONG_PTR HalpEisaPortPage[8] = {
 };
 
 #ifndef _MINIHAL_
+NTSTATUS
+NTAPI
+HalCalculateScatterGatherListSize(
+    IN PADAPTER_OBJECT AdapterObject,
+    IN PMDL Mdl OPTIONAL,
+    IN PVOID CurrentVa,
+    IN ULONG Length,
+    OUT PULONG ScatterGatherListSize,
+    OUT PULONG pNumberOfMapRegisters);
+
+NTSTATUS
+NTAPI
+HalBuildScatterGatherList(
+    IN PADAPTER_OBJECT AdapterObject,
+    IN PDEVICE_OBJECT DeviceObject,
+    IN PMDL Mdl,
+    IN PVOID CurrentVa,
+    IN ULONG Length,
+    IN PDRIVER_LIST_CONTROL ExecutionRoutine,
+    IN PVOID Context,
+    IN BOOLEAN WriteToDevice,
+    IN PVOID ScatterGatherBuffer,
+    IN ULONG ScatterGatherLength);
+
+NTSTATUS
+NTAPI
+HalBuildMdlFromScatterGatherList(
+    IN PDMA_ADAPTER DmaAdapter,
+    IN PSCATTER_GATHER_LIST ScatterGather,
+    IN PMDL OriginalMdl,
+    OUT PMDL *TargetMdl);
+
+
 static DMA_OPERATIONS HalpDmaOperations = {
    sizeof(DMA_OPERATIONS),
    (PPUT_DMA_ADAPTER)HalPutDmaAdapter,
@@ -114,12 +145,11 @@ static DMA_OPERATIONS HalpDmaOperations = {
    NULL, /* Initialized in HalpInitDma() */
    (PGET_DMA_ALIGNMENT)HalpDmaGetDmaAlignment,
    (PREAD_DMA_COUNTER)HalReadDmaCounter,
-   /* FIXME: Implement the S/G funtions. */
    (PGET_SCATTER_GATHER_LIST)HalGetScatterGatherList,
    (PPUT_SCATTER_GATHER_LIST)HalPutScatterGatherList,
-   NULL /*(PCALCULATE_SCATTER_GATHER_LIST_SIZE)HalCalculateScatterGatherListSize*/,
-   NULL /*(PBUILD_SCATTER_GATHER_LIST)HalBuildScatterGatherList*/,
-   NULL /*(PBUILD_MDL_FROM_SCATTER_GATHER_LIST)HalBuildMdlFromScatterGatherList*/
+   (PCALCULATE_SCATTER_GATHER_LIST_SIZE)HalCalculateScatterGatherListSize,
+   (PBUILD_SCATTER_GATHER_LIST)HalBuildScatterGatherList,
+   (PBUILD_MDL_FROM_SCATTER_GATHER_LIST)HalBuildMdlFromScatterGatherList
 };
 #endif
 
@@ -445,12 +475,6 @@ HalpDmaAllocateChildAdapter(IN ULONG NumberOfMapRegisters,
                             (PVOID)&AdapterObject);
     if (!NT_SUCCESS(Status)) return NULL;
 
-    Status = ObReferenceObjectByPointer(AdapterObject,
-                                        FILE_READ_DATA | FILE_WRITE_DATA,
-                                        IoAdapterObjectType,
-                                        KernelMode);
-    if (!NT_SUCCESS(Status)) return NULL;
-
     RtlZeroMemory(AdapterObject, sizeof(ADAPTER_OBJECT));
 
     Status = ObInsertObject(AdapterObject,
@@ -460,6 +484,8 @@ HalpDmaAllocateChildAdapter(IN ULONG NumberOfMapRegisters,
                             NULL,
                             &Handle);
     if (!NT_SUCCESS(Status)) return NULL;
+
+    ObReferenceObject(AdapterObject);
 
     ZwClose(Handle);
 
@@ -942,6 +968,7 @@ HalFreeCommonBuffer(IN PADAPTER_OBJECT AdapterObject,
 }
 
 typedef struct _SCATTER_GATHER_CONTEXT {
+    BOOLEAN UsingUserBuffer;
 	PADAPTER_OBJECT AdapterObject;
 	PMDL Mdl;
 	PUCHAR CurrentVa;
@@ -953,6 +980,8 @@ typedef struct _SCATTER_GATHER_CONTEXT {
 	WAIT_CONTEXT_BLOCK Wcb;
 } SCATTER_GATHER_CONTEXT, *PSCATTER_GATHER_CONTEXT;
 
+// FIXME: This value needs to be calculated at runtime
+#define MAX_SG_ELEMENTS 0x30
 
 IO_ALLOCATION_ACTION
 NTAPI
@@ -964,12 +993,27 @@ HalpScatterGatherAdapterControl(IN PDEVICE_OBJECT DeviceObject,
 	PSCATTER_GATHER_CONTEXT AdapterControlContext = Context;
 	PADAPTER_OBJECT AdapterObject = AdapterControlContext->AdapterObject;
 	PSCATTER_GATHER_LIST ScatterGatherList;
-	SCATTER_GATHER_ELEMENT TempElements[MAX_SG_ELEMENTS];
+	PSCATTER_GATHER_ELEMENT TempElements;
 	ULONG ElementCount = 0, RemainingLength = AdapterControlContext->Length;
 	PUCHAR CurrentVa = AdapterControlContext->CurrentVa;
+    // RemainingLength / PAGE_SIZE + 1 for the remainder of our division
+    // + 1 for a safety cushion gives a good safe value. Using the
+    // min function with MAX_SG_ELEMENTS keeps us from getting too large.
+    ULONG Est_SG_Elements = min(RemainingLength / PAGE_SIZE + 2, MAX_SG_ELEMENTS);
 
 	/* Store the map register base for later in HalPutScatterGatherList */
 	AdapterControlContext->MapRegisterBase = MapRegisterBase;
+
+    // FIXME: HACK Allocate TempElements from pool to minimize stack usage.
+    // A more efficient algorithm should be found to avoid allocations during S/G I/O operations.
+    TempElements = ExAllocatePoolUninitialized(NonPagedPool,
+                                               sizeof(*TempElements) * Est_SG_Elements,
+                                               TAG_DMA);
+    if (!TempElements)
+	{
+		DPRINT1("Scatter/gather list construction failed!\n");
+		return DeallocateObject;
+	}
 
 	while (RemainingLength > 0 && ElementCount < MAX_SG_ELEMENTS)
 	{
@@ -993,9 +1037,13 @@ HalpScatterGatherAdapterControl(IN PDEVICE_OBJECT DeviceObject,
 		ElementCount++;
 	}
 
+    DPRINT("Est_SG_Elements %d\n", Est_SG_Elements);
+    DPRINT("ElementCount is %d\n", ElementCount);
+
 	if (RemainingLength > 0)
 	{
 		DPRINT1("Scatter/gather list construction failed!\n");
+        ExFreePoolWithTag(TempElements, TAG_DMA);
 		return DeallocateObject;
 	}
 
@@ -1009,6 +1057,8 @@ HalpScatterGatherAdapterControl(IN PDEVICE_OBJECT DeviceObject,
 	RtlCopyMemory(ScatterGatherList->Elements,
 	              TempElements,
 				  sizeof(SCATTER_GATHER_ELEMENT) * ElementCount);
+
+    ExFreePoolWithTag(TempElements, TAG_DMA);
 
 	DPRINT("Initiating S/G DMA with %d element(s)\n", ElementCount);
 
@@ -1044,7 +1094,7 @@ HalpScatterGatherAdapterControl(IN PDEVICE_OBJECT DeviceObject,
  *
  * @return The status of the operation.
  *
- * @see HalPutScatterGatherList
+ * @see HalBuildScatterGatherList
  *
  * @implemented
  */
@@ -1052,41 +1102,29 @@ HalpScatterGatherAdapterControl(IN PDEVICE_OBJECT DeviceObject,
  NTAPI
  HalGetScatterGatherList(IN PADAPTER_OBJECT AdapterObject,
                          IN PDEVICE_OBJECT DeviceObject,
-						 IN PMDL Mdl,
-						 IN PVOID CurrentVa,
-						 IN ULONG Length,
-						 IN PDRIVER_LIST_CONTROL ExecutionRoutine,
-						 IN PVOID Context,
-						 IN BOOLEAN WriteToDevice)
+                         IN PMDL Mdl,
+                         IN PVOID CurrentVa,
+                         IN ULONG Length,
+                         IN PDRIVER_LIST_CONTROL ExecutionRoutine,
+                         IN PVOID Context,
+                         IN BOOLEAN WriteToDevice)
 {
-	PSCATTER_GATHER_CONTEXT AdapterControlContext;
-
-	AdapterControlContext = ExAllocatePoolWithTag(NonPagedPool, sizeof(SCATTER_GATHER_CONTEXT), TAG_DMA);
-	if (!AdapterControlContext) return STATUS_INSUFFICIENT_RESOURCES;
-
-	AdapterControlContext->AdapterObject = AdapterObject;
-	AdapterControlContext->Mdl = Mdl;
-	AdapterControlContext->CurrentVa = CurrentVa;
-	AdapterControlContext->Length = Length;
-	AdapterControlContext->MapRegisterCount = PAGE_ROUND_UP(Length) >> PAGE_SHIFT;
-	AdapterControlContext->AdapterListControlRoutine = ExecutionRoutine;
-	AdapterControlContext->AdapterListControlContext = Context;
-	AdapterControlContext->WriteToDevice = WriteToDevice;
-
-	AdapterControlContext->Wcb.DeviceObject = DeviceObject;
-	AdapterControlContext->Wcb.DeviceContext = AdapterControlContext;
-	AdapterControlContext->Wcb.CurrentIrp = DeviceObject->CurrentIrp;
-
-	return HalAllocateAdapterChannel(AdapterObject,
-		&AdapterControlContext->Wcb,
-		AdapterControlContext->MapRegisterCount,
-		HalpScatterGatherAdapterControl);
+    return HalBuildScatterGatherList(AdapterObject,
+                                     DeviceObject,
+                                     Mdl,
+                                     CurrentVa,
+                                     Length,
+                                     ExecutionRoutine,
+                                     Context,
+                                     WriteToDevice,
+                                     NULL,
+                                     0);
 }
 
 /**
  * @name HalPutScatterGatherList
  *
- * Frees a scatter-gather list allocated from HalGetScatterGatherList
+ * Frees a scatter-gather list allocated from HalBuildScatterGatherList
  *
  * @param AdapterObject
  *        Adapter object representing the bus master or system dma controller.
@@ -1097,7 +1135,7 @@ HalpScatterGatherAdapterControl(IN PDEVICE_OBJECT DeviceObject,
  *
  * @return None
  *
- * @see HalGetScatterGatherList
+ * @see HalBuildScatterGatherList
  *
  * @implemented
  */
@@ -1125,10 +1163,164 @@ HalpScatterGatherAdapterControl(IN PDEVICE_OBJECT DeviceObject,
 	                   AdapterControlContext->MapRegisterBase,
 					   AdapterControlContext->MapRegisterCount);
 
-	DPRINT("S/G DMA has finished!\n");
 
-	ExFreePoolWithTag(AdapterControlContext, TAG_DMA);
 	ExFreePoolWithTag(ScatterGather, TAG_DMA);
+
+    /* If this is our buffer, release it */
+    if (!AdapterControlContext->UsingUserBuffer)
+        ExFreePoolWithTag(AdapterControlContext, TAG_DMA);
+
+    DPRINT("S/G DMA has finished!\n");
+}
+
+NTSTATUS
+NTAPI
+HalCalculateScatterGatherListSize(
+    IN PADAPTER_OBJECT AdapterObject,
+    IN PMDL Mdl OPTIONAL,
+    IN PVOID CurrentVa,
+    IN ULONG Length,
+    OUT PULONG ScatterGatherListSize,
+    OUT PULONG pNumberOfMapRegisters)
+{
+    ULONG NumberOfMapRegisters;
+    ULONG SgSize;
+
+    UNIMPLEMENTED_ONCE;
+
+    NumberOfMapRegisters = PAGE_ROUND_UP(Length) >> PAGE_SHIFT;
+    SgSize = sizeof(SCATTER_GATHER_CONTEXT);
+
+    *ScatterGatherListSize = SgSize;
+    if (pNumberOfMapRegisters) *pNumberOfMapRegisters = NumberOfMapRegisters;
+
+    return STATUS_SUCCESS;
+}
+
+/**
+ * @name HalBuildScatterGatherList
+ *
+ * Creates a scatter-gather list to be using in scatter/gather DMA
+ *
+ * @param AdapterObject
+ *        Adapter object representing the bus master or system dma controller.
+ * @param DeviceObject
+ *        The device target for DMA.
+ * @param Mdl
+ *        The MDL that describes the buffer to be mapped.
+ * @param CurrentVa
+ *        The current VA in the buffer to be mapped for transfer.
+ * @param Length
+ *        Specifies the length of data in bytes to be mapped.
+ * @param ExecutionRoutine
+ *        A caller supplied AdapterListControl routine to be called when DMA is available.
+ * @param Context
+ *        Context passed to the AdapterListControl routine.
+ * @param WriteToDevice
+ *        Indicates direction of DMA operation.
+ *
+ * @param ScatterGatherBuffer
+ *        User buffer for the scatter-gather list
+ *
+ * @param ScatterGatherBufferLength
+ *        Buffer length
+ *
+ * @return The status of the operation.
+ *
+ * @see HalPutScatterGatherList
+ *
+ * @implemented
+ */
+NTSTATUS
+NTAPI
+HalBuildScatterGatherList(
+    IN PADAPTER_OBJECT AdapterObject,
+    IN PDEVICE_OBJECT DeviceObject,
+    IN PMDL Mdl,
+    IN PVOID CurrentVa,
+    IN ULONG Length,
+    IN PDRIVER_LIST_CONTROL ExecutionRoutine,
+    IN PVOID Context,
+    IN BOOLEAN WriteToDevice,
+    IN PVOID ScatterGatherBuffer,
+    IN ULONG ScatterGatherBufferLength)
+{
+    NTSTATUS Status;
+    ULONG SgSize, NumberOfMapRegisters;
+    PSCATTER_GATHER_CONTEXT ScatterGatherContext;
+    BOOLEAN UsingUserBuffer;
+
+    Status = HalCalculateScatterGatherListSize(AdapterObject,
+                                               Mdl,
+                                               CurrentVa,
+                                               Length,
+                                               &SgSize,
+                                               &NumberOfMapRegisters);
+    if (!NT_SUCCESS(Status)) return Status;
+
+    if (ScatterGatherBuffer)
+    {
+        /* Checking if user buffer is enough */
+        if (ScatterGatherBufferLength < SgSize)
+        {
+            return STATUS_BUFFER_TOO_SMALL;
+        }
+        UsingUserBuffer = TRUE;
+    }
+    else
+    {
+        ScatterGatherBuffer = ExAllocatePoolWithTag(NonPagedPool, SgSize, TAG_DMA);
+        if (!ScatterGatherBuffer)
+        {
+            return STATUS_INSUFFICIENT_RESOURCES;
+        }
+        UsingUserBuffer = FALSE;
+    }
+
+    {
+        ScatterGatherContext = (PSCATTER_GATHER_CONTEXT)ScatterGatherBuffer;
+
+        /* Fill the scatter-gather context */
+        ScatterGatherContext->UsingUserBuffer = UsingUserBuffer;
+        ScatterGatherContext->AdapterObject = AdapterObject;
+        ScatterGatherContext->Mdl = Mdl;
+        ScatterGatherContext->CurrentVa = CurrentVa;
+        ScatterGatherContext->Length = Length;
+        ScatterGatherContext->MapRegisterCount = NumberOfMapRegisters;
+        ScatterGatherContext->AdapterListControlRoutine = ExecutionRoutine;
+        ScatterGatherContext->AdapterListControlContext = Context;
+        ScatterGatherContext->WriteToDevice = WriteToDevice;
+
+        ScatterGatherContext->Wcb.DeviceObject = DeviceObject;
+        ScatterGatherContext->Wcb.DeviceContext = (PVOID)ScatterGatherContext;
+        ScatterGatherContext->Wcb.CurrentIrp = DeviceObject->CurrentIrp;
+
+        Status = HalAllocateAdapterChannel(AdapterObject,
+                                           &ScatterGatherContext->Wcb,
+                                           NumberOfMapRegisters,
+                                           HalpScatterGatherAdapterControl);
+
+        if (!NT_SUCCESS(Status))
+        {
+            if (!UsingUserBuffer)
+                ExFreePoolWithTag(ScatterGatherBuffer, TAG_DMA);
+            return Status;
+        }
+    }
+
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS
+NTAPI
+HalBuildMdlFromScatterGatherList(
+    IN PDMA_ADAPTER DmaAdapter,
+    IN PSCATTER_GATHER_LIST ScatterGather,
+    IN PMDL OriginalMdl,
+    OUT PMDL *TargetMdl)
+{
+    UNIMPLEMENTED;
+    return STATUS_NOT_IMPLEMENTED;
 }
 #endif
 

@@ -6,10 +6,10 @@ add_definitions(
     -DNDIS_WRAPPER
     -DNDIS51
     -DNDIS51_MINIPORT
-    -DNDIS_LEGACY_DRIVER
-    -DNDIS_LEGACY_MINIPORT
-    -DNDIS_LEGACY_PROTOCOL
-    -DNDIS_MINIPORT_DRIVER)
+    -DNDIS_MINIPORT_DRIVER
+    -DNDIS_LEGACY_DRIVER=1
+    -DNDIS_LEGACY_MINIPORT=1
+    -DNDIS_LEGACY_PROTOCOL=1)
 
 list(APPEND SOURCE
     ndis/30stubs.c
@@ -22,6 +22,7 @@ list(APPEND SOURCE
     ndis/config.c
     ndis/control.c
     ndis/efilter.c
+    ndis/guid.c
     ndis/hardware.c
     ndis/io.c
     ndis/main.c

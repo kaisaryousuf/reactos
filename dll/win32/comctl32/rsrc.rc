@@ -31,6 +31,15 @@ LANGUAGE LANG_NEUTRAL, SUBLANG_NEUTRAL
 #define WINE_PRODUCTVERSION WINE_FILEVERSION
 #define WINE_PRODUCTVERSION_STR WINE_FILEVERSION_STR
 
+#ifdef __REACTOS__
+/*
+ * SIV 5.80 expects that the "product version" string of the comctl32.dll file
+ * will have the "file version" format. This value is used to determine
+ * whether tooltip support is available.
+ */
+#define REACTOS_PRODUCTVERSION REACTOS_FILEVERSION
+#endif
+
 #include "wine/wine_common_ver.rc"
 
 /* @makedep: idt_check.bmp */
@@ -117,6 +126,9 @@ IDI_TT_ERROR_SM ICON idi_tt_error_sm.ico
 #ifdef LANGUAGE_ET_EE
     #include "lang/comctl_Et.rc"
 #endif
+#ifdef LANGUAGE_EU_ES
+    #include "lang/comctl_Eu.rc"
+#endif
 #ifdef LANGUAGE_FR_FR
     #include "lang/comctl_Fr.rc"
 #endif
@@ -125,6 +137,9 @@ IDI_TT_ERROR_SM ICON idi_tt_error_sm.ico
 #endif
 #ifdef LANGUAGE_HI_IN
     #include "lang/comctl_Hi.rc"
+#endif
+#ifdef LANGUAGE_HR_HR
+    #include "lang/comctl_Hr.rc"
 #endif
 #ifdef LANGUAGE_HU_HU
     #include "lang/comctl_Hu.rc"
@@ -186,9 +201,9 @@ IDI_TT_ERROR_SM ICON idi_tt_error_sm.ico
 #ifdef LANGUAGE_UK_UA
     #include "lang/comctl_Uk.rc"
 #endif
-#ifdef LANGUAGE_ZH_TW
-    #include "lang/comctl_Tw.rc"
-#endif
 #ifdef LANGUAGE_ZH_CN
-    #include "lang/comctl_Zh.rc"
+    #include "lang/comctl_Zh-CN.rc"
+#endif
+#ifdef LANGUAGE_ZH_TW
+    #include "lang/comctl_Zh-TW.rc"
 #endif

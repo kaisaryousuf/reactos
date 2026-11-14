@@ -1,10 +1,9 @@
-spec2def(libtirpc.dll libtirpc/libtirpc.spec ADD_IMPORTLIB)
 
 remove_definitions(-D_WIN32_WINNT=0x502)
 add_definitions(-D_WIN32_WINNT=0x600)
-add_definitions(-DUNICODE -D_WIN32 -DPORTMAP -Dstrdup=_strdup -D_CRT_NONSTDC_NO_DEPRECATE=1)
+add_definitions(-DUNICODE -D_WIN32 -DPORTMAP -D_CRT_NONSTDC_NO_DEPRECATE=1)
 
-include_directories(${REACTOS_SOURCE_DIR}/dll/3rdparty/libtirpc/tirpc)
+spec2def(libtirpc.dll libtirpc/libtirpc.spec ADD_IMPORTLIB)
 
 list(APPEND SOURCE
     src/asprintf.c
@@ -92,16 +91,14 @@ add_library(libtirpc MODULE
 #    libtirpc/libtirpc.rc
     libtirpc/libtirpc_ros.rc
     ${CMAKE_CURRENT_BINARY_DIR}/libtirpc.def)
+add_pch(libtirpc precomp.h SOURCE)
+target_include_directories(libtirpc PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tirpc)
 
 if(MSVC)
-    # error C4133: '=': incompatible types - from 'char *' to 'int32_t *'
-    remove_target_compile_option(libtirpc "/we4133")
-    # Disable warning C4313 (format string conflicts)
-    remove_target_compile_option(libtirpc "/we4313")
-    # Disable warning C4477 (printf format warnings)
-    remove_target_compile_option(libtirpc "/we4477")
-    if (NOT USE_CLANG_CL)
-        remove_target_compile_option(libtirpc "/we4101")
+    # Disable warning C4273: 'strtok_s': inconsistent dll linkage
+    # Disable warning C4313: 'fprintf': '%x' in format string conflicts with argument 2 of type 'HANDLE'
+    target_compile_options(libtirpc PRIVATE /wd4273 /wd4313)
+    if(CMAKE_C_COMPILER_ID STREQUAL "MSVC")
         target_compile_options(libtirpc PRIVATE /wd4101 /wd4133 /wd4473 /wd4477)
     endif()
 else()
@@ -110,7 +107,7 @@ else()
 endif()
 
 set_module_type(libtirpc win32dll)
+target_link_libraries(libtirpc oldnames)
 add_importlibs(libtirpc user32 advapi32 kernel32_vista ws2_32 msvcrt kernel32 ntdll)
 add_delay_importlibs(libtirpc secur32)
-add_pch(libtirpc precomp.h SOURCE)
 add_cd_file(TARGET libtirpc DESTINATION reactos/system32 FOR all)

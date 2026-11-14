@@ -18,9 +18,6 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-/* UTF-8 */
-#pragma code_page(65001)
-
 LANGUAGE LANG_RUSSIAN, SUBLANG_DEFAULT
 
 STRINGTABLE
@@ -36,6 +33,11 @@ STRINGTABLE
     IDS_TB_FORMAT "%s ТБ"
     IDS_PB_FORMAT "%s ПБ"
     IDS_EB_FORMAT "%s ЭБ"
+    IDS_RESTRICTED "Операция отменена из-за ограничений, действующих на этом компьютере. Обратитесь к системному администратору."
+    IDS_RESTRICTIONS "Ограничения"
+    IDS_ANY_FILE "%s File"
+    IDS_FILE "File"
+    IDS_FOLDER "Folder"
 #endif
 }
 

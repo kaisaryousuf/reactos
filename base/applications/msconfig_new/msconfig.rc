@@ -84,6 +84,10 @@ END
     #include "lang/it-IT.rc"
     APP_TOOLS   HTML    "lang/mscfgtl/it-IT.xml"
 #endif
+#ifdef LANGUAGE_JA_JP
+    #include "lang/ja-JP.rc"
+    APP_TOOLS   HTML    "lang/mscfgtl/ja-JP.xml"
+#endif
 #ifdef LANGUAGE_KO_KR
     #include "lang/ko-KR.rc"
     APP_TOOLS   HTML    "lang/mscfgtl/ko-KR.xml"
@@ -139,6 +143,10 @@ END
 #ifdef LANGUAGE_ZH_CN
     #include "lang/zh-CN.rc"
     APP_TOOLS   HTML    "lang/mscfgtl/zh-CN.xml"
+#endif
+#ifdef LANGUAGE_ZH_HK
+    #include "lang/zh-HK.rc"
+    APP_TOOLS   HTML    "lang/mscfgtl/zh-HK.xml"
 #endif
 #ifdef LANGUAGE_ZH_TW
     #include "lang/zh-TW.rc"

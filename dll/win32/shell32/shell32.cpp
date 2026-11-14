@@ -32,7 +32,7 @@ EXTERN_C LPWSTR
 WINAPI
 AddCommasW(DWORD lValue, LPWSTR lpNumber)
 {
-    WCHAR szValue[MAX_PATH], szSeparator[8 + 1];
+    WCHAR szValue[MAX_PATH], szSeparator[8 + 1], szGrouping[10 + 1];
     NUMBERFMTW numFormat;
 
     GetLocaleInfoW(LOCALE_USER_DEFAULT,
@@ -40,14 +40,34 @@ AddCommasW(DWORD lValue, LPWSTR lpNumber)
                    szSeparator,
                    _countof(szSeparator));
 
-    numFormat.NumDigits     = 0;
-    numFormat.LeadingZero   = 0;
-    numFormat.Grouping      = 3; // FIXME! Use GetLocaleInfoW with LOCALE_SGROUPING and interpret the result.
-    numFormat.lpDecimalSep  = szSeparator;
+    /* Parse LOCALE_SGROUPING into NUMBERFMTW::Grouping.
+     * Accumulate the digit groups left-to-right. If there's no trailing ';0'
+     * the last group repeats, so multiply by 10. */
+    DWORD dwGrouping = 3;
+    if (GetLocaleInfoW(LOCALE_USER_DEFAULT,
+                       LOCALE_SGROUPING,
+                       szGrouping,
+                       _countof(szGrouping)))
+    {
+        PWSTR p = szGrouping;
+        dwGrouping = 0;
+        while (*p)
+        {
+            if (*p >= L'1' && *p <= L'9')
+                dwGrouping = dwGrouping * 10 + (*p - L'0');
+            p++;
+        }
+        if (p > szGrouping && *(p - 1) != L'0')
+            dwGrouping *= 10;
+    }
+    numFormat.NumDigits = 0;
+    numFormat.LeadingZero = 0;
+    numFormat.Grouping = dwGrouping;
+    numFormat.lpDecimalSep = szSeparator;
     numFormat.lpThousandSep = szSeparator;
     numFormat.NegativeOrder = 0;
 
-    swprintf(szValue, L"%lu", lValue);
+    _swprintf(szValue, L"%lu", lValue);
 
     if (GetNumberFormatW(LOCALE_USER_DEFAULT,
                          0,
@@ -70,38 +90,83 @@ EXTERN_C BOOL
 WINAPI
 RegenerateUserEnvironment(LPVOID *lpEnvironment, BOOL bUpdateSelf)
 {
-    HANDLE hUserToken;
-    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_READ | TOKEN_WRITE, &hUserToken))
+    HANDLE hUserToken = NULL;
+    LPVOID pEnv = NULL;
+    BOOL bResult = FALSE;
+
+    if (!lpEnvironment)
         return FALSE;
 
-    BOOL bResult = CreateEnvironmentBlock(lpEnvironment, hUserToken, TRUE);
-    if (!bResult || !lpEnvironment)
+    if (!OpenProcessToken(GetCurrentProcess(),
+                          TOKEN_QUERY | TOKEN_DUPLICATE | TOKEN_ASSIGN_PRIMARY,
+                          &hUserToken))
+    {
+        return FALSE;
+    }
+
+    if (!CreateEnvironmentBlock(&pEnv, hUserToken, TRUE))
     {
         CloseHandle(hUserToken);
         return FALSE;
     }
 
+    *lpEnvironment = pEnv;
+    bResult = TRUE;
+
     if (bUpdateSelf)
     {
-        LPWSTR pszz = (LPWSTR)*lpEnvironment;
-        if (!pszz)
-            return FALSE;
+        CSimpleMap<CStringW, bool> newVarNames;
 
-        while (*pszz)
+        LPWSTR pszz = (LPWSTR)pEnv;
+        while (pszz && *pszz)
         {
-            size_t cch = wcslen(pszz);
-            LPWSTR pchEqual = wcschr(pszz, L'=');
-            if (pchEqual)
+            if (pszz[0] != L'=')
             {
-                CStringW strName(pszz, pchEqual - pszz);
-                SetEnvironmentVariableW(strName, pchEqual + 1);
+                LPWSTR pchEqual = wcschr(pszz, L'=');
+                if (pchEqual)
+                {
+                    *pchEqual = L'\0';
+                    CStringW key(pszz);
+                    key.MakeUpper();
+                    newVarNames.Add(key, true);
+                    SetEnvironmentVariableW(pszz, pchEqual + 1);
+                    *pchEqual = L'=';
+                }
             }
-            pszz += cch + 1;
+            pszz += wcslen(pszz) + 1;
         }
+
+        LPWCH pCurEnv = GetEnvironmentStringsW();
+        if (pCurEnv)
+        {
+            LPWSTR pCur = (LPWSTR)pCurEnv;
+            while (pCur && *pCur)
+            {
+                if (pCur[0] != L'=')
+                {
+                    LPWSTR pchEqual = wcschr(pCur, L'=');
+                    if (pchEqual)
+                    {
+                        *pchEqual = L'\0';
+                        CStringW key(pCur);
+                        key.MakeUpper();
+                        if (newVarNames.FindKey(key) < 0)
+                            SetEnvironmentVariableW(pCur, NULL);
+                        *pchEqual = L'=';
+                    }
+                }
+                pCur += wcslen(pCur) + 1;
+            }
+            FreeEnvironmentStringsW(pCurEnv);
+        }
+
+        /* We free the environment block now that we have applied it to the process;
+         * the caller gets NULL back in *lpEnvironment in this case. */
+        DestroyEnvironmentBlock(pEnv);
+        *lpEnvironment = NULL;
     }
 
     CloseHandle(hUserToken);
-
     return bResult;
 }
 
@@ -137,8 +202,8 @@ public:
     HRESULT Initialize(LPFNCREATEINSTANCE lpfnCI, PLONG pcRefDll, const IID *riidInstx);
 
     // IClassFactory
-    virtual HRESULT WINAPI CreateInstance(IUnknown * pUnkOuter, REFIID riid, LPVOID *ppvObject);
-    virtual HRESULT WINAPI LockServer(BOOL fLock);
+    STDMETHOD(CreateInstance)(IUnknown * pUnkOuter, REFIID riid, LPVOID *ppvObject) override;
+    STDMETHOD(LockServer)(BOOL fLock) override;
 
 BEGIN_COM_MAP(IDefClFImpl)
     COM_INTERFACE_ENTRY_IID(IID_IClassFactory, IClassFactory)
@@ -189,8 +254,34 @@ HRESULT WINAPI IDefClFImpl::CreateInstance(IUnknown * pUnkOuter, REFIID riid, LP
  */
 HRESULT WINAPI IDefClFImpl::LockServer(BOOL fLock)
 {
-    TRACE("%p->(0x%x), not implemented\n", this, fLock);
-    return E_NOTIMPL;
+    TRACE("%p->(0x%x)\n", this, fLock);
+
+    if (fLock)
+    {
+        if (pcRefDll)
+        {
+            if (*pcRefDll == LONG_MAX)
+                ERR("pcRefDll is pinned, not incrementing\n");
+            else
+                InterlockedIncrement(pcRefDll);
+        }
+        _pAtlModule->Lock();
+    }
+    else
+    {
+        _pAtlModule->Unlock();
+        if (pcRefDll)
+        {
+            if (*pcRefDll == LONG_MAX)
+                ERR("pcRefDll is pinned, not decrementing\n");
+            else if (*pcRefDll > 0)
+                InterlockedDecrement(pcRefDll);
+            else
+                ERR("pcRefDll underflow\n");
+        }
+    }
+
+    return S_OK;
 }
 
 /**************************************************************************
@@ -275,11 +366,15 @@ BEGIN_OBJECT_MAP(ObjectMap)
     OBJECT_ENTRY(CLSID_ShellFSFolder, CFSFolder)
     OBJECT_ENTRY(CLSID_MyComputer, CDrivesFolder)
     OBJECT_ENTRY(CLSID_ShellDesktop, CDesktopFolder)
+    OBJECT_ENTRY(CLSID_ShellFileDefExt, CFileDefExt)
+    OBJECT_ENTRY(CLSID_ShellDrvDefExt, CDrvDefExt)
     OBJECT_ENTRY(CLSID_ShellItem, CShellItem)
     OBJECT_ENTRY(CLSID_ShellLink, CShellLink)
     OBJECT_ENTRY(CLSID_Shell, CShellDispatch)
+    OBJECT_ENTRY(CLSID_ShellLibrary, CShellLibrary)
     OBJECT_ENTRY(CLSID_DragDropHelper, CDropTargetHelper)
     OBJECT_ENTRY(CLSID_ControlPanel, CControlPanelFolder)
+    OBJECT_ENTRY(CLSID_OpenControlPanel, COpenControlPanel)
     OBJECT_ENTRY(CLSID_MyDocuments, CMyDocsFolder)
     OBJECT_ENTRY(CLSID_NetworkPlaces, CNetFolder)
     OBJECT_ENTRY(CLSID_FontsFolderShortcut, CFontsFolder)
@@ -290,6 +385,7 @@ BEGIN_OBJECT_MAP(ObjectMap)
     OBJECT_ENTRY(CLSID_OpenWithMenu, COpenWithMenu)
     OBJECT_ENTRY(CLSID_NewMenu, CNewMenu)
     OBJECT_ENTRY(CLSID_SendToMenu, CSendToMenu)
+    OBJECT_ENTRY(CLSID_CopyAsPathMenu, CCopyAsPathMenu)
     OBJECT_ENTRY(CLSID_CopyToMenu, CCopyToMenu)
     OBJECT_ENTRY(CLSID_MoveToMenu, CMoveToMenu)
     OBJECT_ENTRY(CLSID_StartMenu, CStartMenuDummy)
@@ -300,6 +396,7 @@ BEGIN_OBJECT_MAP(ObjectMap)
     OBJECT_ENTRY(CLSID_ExeDropHandler, CExeDropHandler)
     OBJECT_ENTRY(CLSID_QueryAssociations, CQueryAssociations)
     OBJECT_ENTRY(CLSID_UserNotification, CUserNotification)
+    OBJECT_ENTRY(CLSID_UserEventTimer, CUserEventTimer)
 END_OBJECT_MAP()
 
 CShell32Module  gModule;
@@ -422,6 +519,20 @@ STDAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, LPVOID *ppv)
     return hResult;
 }
 
+static HRESULT UpdateRegistryFromResource(BOOL Register)
+{
+    static const BYTE resid[] =
+    {
+        IDR_FOLDEROPTIONS,
+        IDR_EXPLORER,
+        IDR_SYSTEMFILEASSOC,
+    };
+    HRESULT hr = S_OK;
+    for (SIZE_T i = 0; i < _countof(resid) && SUCCEEDED(hr); ++i)
+        hr = gModule.UpdateRegistryFromResource(resid[i], Register, NULL);
+    return hr;
+}
+
 /***********************************************************************
  *              DllRegisterServer (SHELL32.@)
  */
@@ -433,8 +544,7 @@ STDAPI DllRegisterServer()
     if (FAILED(hr))
         return hr;
 
-    hr = gModule.UpdateRegistryFromResource(IDR_FOLDEROPTIONS, TRUE, NULL);
-    if (FAILED(hr))
+    if (FAILED(hr = UpdateRegistryFromResource(TRUE)))
         return hr;
 
     hr = SHELL_RegisterShellFolders();
@@ -455,8 +565,7 @@ STDAPI DllUnregisterServer()
     if (FAILED(hr))
         return hr;
 
-    hr = gModule.UpdateRegistryFromResource(IDR_FOLDEROPTIONS, FALSE, NULL);
-    if (FAILED(hr))
+    if (FAILED(hr = UpdateRegistryFromResource(FALSE)))
         return hr;
 
     return S_OK;

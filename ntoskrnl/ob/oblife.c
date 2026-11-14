@@ -110,13 +110,12 @@ ObpDeallocateObject(IN PVOID Object)
             }
 
             /* Return the quota */
-            DPRINT("FIXME: Should return quotas: %lx %lx\n", PagedPoolCharge, NonPagedPoolCharge);
-#if 0
-            PsReturnSharedPoolQuota(ObjectHeader->QuotaBlockCharged,
-                                    PagedPoolCharge,
-                                    NonPagedPoolCharge);
-#endif
-
+            if (Header->QuotaBlockCharged != OBP_SYSTEM_PROCESS_QUOTA)
+            {
+                PsReturnSharedPoolQuota(Header->QuotaBlockCharged,
+                                        PagedPoolCharge,
+                                        NonPagedPoolCharge);
+            }
         }
     }
 
@@ -196,7 +195,8 @@ ObpDeleteObject(IN PVOID Object,
                                                NULL,
                                                &Header->SecurityDescriptor,
                                                0,
-                                               NULL);
+                                               NULL,
+                                               ExGetPreviousMode());
         ObpCalloutEnd(CalloutIrql, "Security", ObjectType, Object);
     }
 
@@ -635,7 +635,7 @@ ObpAllocateObject(IN POBJECT_CREATE_INFORMATION ObjectCreateInfo,
     {
         /* Use default tag and non-paged pool */
         PoolType = NonPagedPool;
-        Tag = 'TjbO';
+        Tag = TAG_OBJECT_TYPE;
     }
     else
     {
@@ -870,24 +870,112 @@ ObpAllocateObject(IN POBJECT_CREATE_INFORMATION ObjectCreateInfo,
     return STATUS_SUCCESS;
 }
 
+/**
+ * @brief
+ * Queries the name info size of a given resource object.
+ * The function loops through all the parent directories
+ * of the object and computes the name size.
+ *
+ * @param[in] ObjectHeader
+ * A pointer to an object header, of which name and
+ * directory info are to be retrieved.
+ *
+ * @return
+ * Returns the name info size that is pointed by the
+ * given object by the caller of this function. If
+ * an object does not have a name or no directories,
+ * it returns 0.
+ */
+static
+ULONG
+ObpQueryNameInfoSize(
+    _In_ POBJECT_HEADER ObjectHeader)
+{
+    ULONG NameSize = 0;
+    POBJECT_DIRECTORY ParentDirectory;
+    POBJECT_HEADER_NAME_INFO NameInfo;
+    PAGED_CODE();
+
+    /* Get the name info */
+    NameInfo = OBJECT_HEADER_TO_NAME_INFO(ObjectHeader);
+    if (!NameInfo)
+    {
+        return 0;
+    }
+
+    /* Get the parent directory from the object name too */
+    ParentDirectory = NameInfo->Directory;
+    if (!ParentDirectory)
+    {
+        return 0;
+    }
+
+    /* Take into account the name size of this object and loop for all parent directories */
+    NameSize = sizeof(OBJ_NAME_PATH_SEPARATOR) + NameInfo->Name.Length;
+    for (;;)
+    {
+        /* Get the name info from the parent directory */
+        NameInfo = OBJECT_HEADER_TO_NAME_INFO(
+            OBJECT_TO_OBJECT_HEADER(ParentDirectory));
+        if (!NameInfo)
+        {
+            /* Stop looking if this is the last one */
+            break;
+        }
+
+        /* Get the parent directory */
+        ParentDirectory = NameInfo->Directory;
+        if (!ParentDirectory)
+        {
+            /* This is the last directory, stop looking */
+            break;
+        }
+
+        /*
+         * Take into account the size of this name info,
+         * keep looking for other parent directories.
+         */
+        NameSize += sizeof(OBJ_NAME_PATH_SEPARATOR) + NameInfo->Name.Length;
+    }
+
+    /* Include the size of the object name information as well as the NULL terminator */
+    NameSize += sizeof(OBJECT_NAME_INFORMATION) + sizeof(UNICODE_NULL);
+    return NameSize;
+}
+
 NTSTATUS
 NTAPI
-ObQueryTypeInfo(IN POBJECT_TYPE ObjectType,
-                OUT POBJECT_TYPE_INFORMATION ObjectTypeInfo,
-                IN ULONG Length,
-                OUT PULONG ReturnLength)
+ObQueryTypeInfo(
+    _In_ POBJECT_TYPE ObjectType,
+    _Out_writes_bytes_to_(Length, *ReturnLength)
+        POBJECT_TYPE_INFORMATION ObjectTypeInfo,
+    _In_ ULONG Length,
+    _Out_ PULONG ReturnLength)
 {
     NTSTATUS Status = STATUS_SUCCESS;
     PWSTR InfoBuffer;
 
+    /* The string of the object type name has to be NULL-terminated */
+    ASSERT(ObjectType->Name.MaximumLength >= ObjectType->Name.Length + sizeof(UNICODE_NULL));
+
     /* Enter SEH */
     _SEH2_TRY
     {
-        /* Set return length aligned to 4-byte boundary */
+        /*
+         * Set return length aligned to 4-byte or 8-byte boundary. Windows has a bug
+         * where the returned length pointer is always aligned to a 4-byte boundary.
+         * If one were to allocate a pool of memory in kernel mode to retrieve all
+         * the object types info with this return length, Windows will bugcheck with
+         * BAD_POOL_HEADER in 64-bit upon you free the said allocated memory.
+         *
+         * More than that, Windows uses MaximumLength for the calculation of the returned
+         * length and MaximumLength does not always guarantee the name type is NULL-terminated
+         * leading the ObQueryTypeInfo function to overrun the buffer.
+         */
         *ReturnLength += sizeof(*ObjectTypeInfo) +
-                         ALIGN_UP(ObjectType->Name.MaximumLength, ULONG);
+                         ALIGN_UP(ObjectType->Name.Length + sizeof(UNICODE_NULL), ULONG_PTR);
 
-        /* Check if thats too much though. */
+        /* Check if that is too much */
         if (Length < *ReturnLength)
         {
             _SEH2_YIELD(return STATUS_INFO_LENGTH_MISMATCH);
@@ -946,6 +1034,15 @@ ObQueryTypeInfo(IN POBJECT_TYPE ObjectType,
 
 
 /* PUBLIC FUNCTIONS **********************************************************/
+
+POBJECT_TYPE
+FASTCALL
+ObGetObjectType(
+    _In_ PVOID Object)
+{
+    UNIMPLEMENTED;
+    return NULL;
+}
 
 NTSTATUS
 NTAPI
@@ -1036,6 +1133,7 @@ ObCreateObject(IN KPROCESSOR_MODE ProbeMode OPTIONAL,
         /* Release the Capture Info, we don't need it */
         ObpFreeObjectCreateInformation(ObjectCreateInfo);
         if (ObjectName.Buffer) ObpFreeObjectNameBuffer(&ObjectName);
+        return Status;
     }
 
     /* We failed, so release the Buffer */
@@ -1093,8 +1191,8 @@ ObCreateObjectType(IN PUNICODE_STRING TypeName,
     /* Check if we've already created the directory of types */
     if (ObpTypeDirectoryObject)
     {
-        /* Acquire the directory lock */
-        ObpAcquireDirectoryLockExclusive(ObpTypeDirectoryObject, &Context);
+        /* Lock the lookup context */
+        ObpAcquireLookupContextLock(&Context, ObpTypeDirectoryObject);
 
         /* Do the lookup */
         if (ObpLookupEntryDirectory(ObpTypeDirectoryObject,
@@ -1159,7 +1257,7 @@ ObCreateObjectType(IN PUNICODE_STRING TypeName,
 
         /* Set the hard-coded key and object count */
         LocalObjectType->TotalNumberOfObjects = 1;
-        LocalObjectType->Key = 'TjbO';
+        LocalObjectType->Key = TAG_OBJECT_TYPE;
     }
     else
     {
@@ -1483,7 +1581,7 @@ NtQueryObject(IN HANDLE ObjectHandle,
 {
     OBJECT_HANDLE_INFORMATION HandleInfo;
     POBJECT_HEADER ObjectHeader = NULL;
-    POBJECT_HANDLE_ATTRIBUTE_INFORMATION HandleFlags;
+    POBJECT_HANDLE_FLAG_INFORMATION HandleFlags;
     POBJECT_BASIC_INFORMATION BasicInfo;
     ULONG InfoLength = 0;
     PVOID Object = NULL;
@@ -1584,8 +1682,9 @@ NtQueryObject(IN HANDLE ObjectHandle,
                 }
 
                 /* Copy name information */
-                BasicInfo->NameInfoSize = 0; /* FIXME*/
-                BasicInfo->TypeInfoSize = 0; /* FIXME*/
+                BasicInfo->NameInfoSize = ObpQueryNameInfoSize(ObjectHeader);
+                BasicInfo->TypeInfoSize = sizeof(OBJECT_TYPE_INFORMATION) + ObjectType->Name.Length +
+                                          sizeof(UNICODE_NULL);
 
                 /* Check if this is a symlink */
                 if (ObjectHeader->Type == ObpSymbolicLinkObjectType)
@@ -1617,7 +1716,8 @@ NtQueryObject(IN HANDLE ObjectHandle,
                                                            &BasicInfo->SecurityDescriptorSize,
                                                            &ObjectHeader->SecurityDescriptor,
                                                            ObjectType->TypeInfo.PoolType,
-                                                           &ObjectType->TypeInfo.GenericMapping);
+                                                           &ObjectType->TypeInfo.GenericMapping,
+                                                           ExGetPreviousMode());
                 }
 
                 /* Break out with success */
@@ -1657,16 +1757,15 @@ NtQueryObject(IN HANDLE ObjectHandle,
             case ObjectHandleFlagInformation:
 
                 /* Validate length */
-                InfoLength = sizeof (OBJECT_HANDLE_ATTRIBUTE_INFORMATION);
-                if (Length != sizeof (OBJECT_HANDLE_ATTRIBUTE_INFORMATION))
+                InfoLength = sizeof(OBJECT_HANDLE_FLAG_INFORMATION);
+                if (Length != sizeof(OBJECT_HANDLE_FLAG_INFORMATION))
                 {
                     Status = STATUS_INFO_LENGTH_MISMATCH;
                     break;
                 }
 
                 /* Get the structure */
-                HandleFlags = (POBJECT_HANDLE_ATTRIBUTE_INFORMATION)
-                               ObjectInformation;
+                HandleFlags = (POBJECT_HANDLE_FLAG_INFORMATION)ObjectInformation;
 
                 /* Set the flags */
                 HandleFlags->Inherit = HandleInfo.HandleAttributes & OBJ_INHERIT;
@@ -1707,72 +1806,84 @@ NtQueryObject(IN HANDLE ObjectHandle,
     return Status;
 }
 
-/*++
-* @name NtSetInformationObject
-* @implemented NT4
-*
-*     The NtSetInformationObject routine <FILLMEIN>
-*
-* @param ObjectHandle
-*        <FILLMEIN>
-*
-* @param ObjectInformationClass
-*        <FILLMEIN>
-*
-* @param ObjectInformation
-*        <FILLMEIN>
-*
-* @param Length
-*        <FILLMEIN>
-*
-* @return STATUS_SUCCESS or appropriate error value.
-*
-* @remarks None.
-*
-*--*/
+/**
+ * @brief
+ * Sets information for an object or for a handle to an object.
+ *
+ * @param[in]   ObjectHandle
+ * Handle to the target object.
+ * For the @p ObjectHandleFlagInformation class, this is the handle
+ * whose attributes are to be modified.
+ * For the @p ObjectSessionInformation class, this must be a handle
+ * to a directory object.
+ *
+ * @param[in]   ObjectInformationClass
+ * Specifies the type of information to set. The only supported classes
+ * are: ObjectHandleFlagInformation and ObjectSessionInformation.
+ * (Windows 10 RS2 added support for ObjectSessionObjectInformation.
+ *  Windows 11 25H2 added support for ObjectSetRefTraceInformation.)
+ *
+ * @param[in]   ObjectInformation
+ * Pointer to a caller-supplied buffer containing the information to set.
+ * For the @p ObjectHandleFlagInformation class, this buffer must point
+ * to an @p OBJECT_HANDLE_FLAG_INFORMATION structure describing the
+ * desired handle attributes (inherit and protect-from-close).
+ * For the @p ObjectSessionInformation class, this parameter is ignored.
+ *
+ * @param[in]   Length
+ * The size in bytes, of the buffer pointed to by @p ObjectInformation.
+ * For the @p ObjectHandleFlagInformation class, this must be
+ * sizeof(OBJECT_HANDLE_FLAG_INFORMATION).
+ * For the @p ObjectSessionInformation class, this parameter is ignored.
+ *
+ * @return
+ * STATUS_SUCCESS or an appropriate error value.
+ *
+ * @remarks
+ * This routine only supports the following classes:
+ * - @p ObjectHandleFlagInformation, to set the @p OBJ_INHERIT and
+ *   @p OBJ_PROTECT_CLOSE attributes of a handle.
+ * - @p ObjectSessionInformation, to associate a directory object with the
+ *   caller's current session identifier; this requires the SeTcbPrivilege.
+ *
+ * @p ObjectHandleFlagInformation operates on per-handle state rather than
+ * on the underlying object itself.
+ **/
 NTSTATUS
 NTAPI
-NtSetInformationObject(IN HANDLE ObjectHandle,
-                       IN OBJECT_INFORMATION_CLASS ObjectInformationClass,
-                       IN PVOID ObjectInformation,
-                       IN ULONG Length)
+NtSetInformationObject(
+    _In_ HANDLE ObjectHandle,
+    _In_ OBJECT_INFORMATION_CLASS ObjectInformationClass,
+    _In_reads_bytes_(Length) PVOID ObjectInformation,
+    _In_ ULONG Length)
 {
     NTSTATUS Status;
-    OBP_SET_HANDLE_ATTRIBUTES_CONTEXT Context;
-    PVOID ObjectTable;
-    KAPC_STATE ApcState;
-    POBJECT_DIRECTORY Directory;
     KPROCESSOR_MODE PreviousMode;
-    BOOLEAN AttachedToProcess = FALSE;
+
     PAGED_CODE();
 
     /* Validate the information class */
     switch (ObjectInformationClass)
     {
         case ObjectHandleFlagInformation:
+        {
+            OBJECT_HANDLE_FLAG_INFORMATION HandleFlags;
 
             /* Validate the length */
-            if (Length != sizeof(OBJECT_HANDLE_ATTRIBUTE_INFORMATION))
-            {
-                /* Invalid length */
+            if (Length != sizeof(HandleFlags))
                 return STATUS_INFO_LENGTH_MISMATCH;
-            }
 
             /* Save the previous mode */
-            Context.PreviousMode = ExGetPreviousMode();
+            PreviousMode = ExGetPreviousMode();
 
-            /* Check if we were called from user mode */
-            if (Context.PreviousMode != KernelMode)
+            /* If we were called from user mode, probe and capture the
+             * attribute buffer, otherwise just copy it directly. */
+            if (PreviousMode != KernelMode)
             {
-                /* Enter SEH */
                 _SEH2_TRY
                 {
-                    /* Probe and capture the attribute buffer */
-                    ProbeForRead(ObjectInformation,
-                                 sizeof(OBJECT_HANDLE_ATTRIBUTE_INFORMATION),
-                                 sizeof(BOOLEAN));
-                    Context.Information = *(POBJECT_HANDLE_ATTRIBUTE_INFORMATION)
-                                            ObjectInformation;
+                    ProbeForRead(ObjectInformation, sizeof(HandleFlags), sizeof(BOOLEAN));
+                    HandleFlags = *(POBJECT_HANDLE_FLAG_INFORMATION)ObjectInformation;
                 }
                 _SEH2_EXCEPT(EXCEPTION_EXECUTE_HANDLER)
                 {
@@ -1783,79 +1894,52 @@ NtSetInformationObject(IN HANDLE ObjectHandle,
             }
             else
             {
-                /* Just copy the buffer directly */
-                Context.Information = *(POBJECT_HANDLE_ATTRIBUTE_INFORMATION)
-                                        ObjectInformation;
+                HandleFlags = *(POBJECT_HANDLE_FLAG_INFORMATION)ObjectInformation;
             }
 
-            /* Check if this is a kernel handle */
-            if (ObpIsKernelHandle(ObjectHandle, Context.PreviousMode))
-            {
-                /* Get the actual handle */
-                ObjectHandle = ObKernelHandleToHandle(ObjectHandle);
-                ObjectTable = ObpKernelHandleTable;
-
-                /* Check if we're not in the system process */
-                if (PsGetCurrentProcess() != PsInitialSystemProcess)
-                {
-                    /* Attach to it */
-                    KeStackAttachProcess(&PsInitialSystemProcess->Pcb, &ApcState);
-                    AttachedToProcess = TRUE;
-                }
-            }
-            else
-            {
-                /* Use the current table */
-                ObjectTable = PsGetCurrentProcess()->ObjectTable;
-            }
-
-            /* Change the handle attributes */
-            if (!ExChangeHandle(ObjectTable,
-                                ObjectHandle,
-                                ObpSetHandleAttributes,
-                                (ULONG_PTR)&Context))
-            {
-                /* Some failure */
-                Status = STATUS_ACCESS_DENIED;
-            }
-            else
-            {
-                /* We are done */
-                Status = STATUS_SUCCESS;
-            }
-
-            /* De-attach if we were attached, and return status */
-            if (AttachedToProcess) KeUnstackDetachProcess(&ApcState);
+            Status = ObSetHandleAttributes(ObjectHandle, &HandleFlags, PreviousMode);
             break;
+        }
 
         case ObjectSessionInformation:
+        {
+            POBJECT_DIRECTORY Directory;
+
+            UNREFERENCED_PARAMETER(ObjectInformation);
+            UNREFERENCED_PARAMETER(Length);
 
             /* Only a system process can do this */
             PreviousMode = ExGetPreviousMode();
             if (!SeSinglePrivilegeCheck(SeTcbPrivilege, PreviousMode))
             {
-                /* Fail */
                 DPRINT1("Privilege not held\n");
-                Status = STATUS_PRIVILEGE_NOT_HELD;
+                return STATUS_PRIVILEGE_NOT_HELD;
             }
-            else
+
+            /* Get the object directory */
+            Status = ObReferenceObjectByHandle(ObjectHandle,
+                                               0,
+                                               ObpDirectoryObjectType,
+                                               PreviousMode,
+                                               (PVOID*)&Directory,
+                                               NULL);
+            if (NT_SUCCESS(Status))
             {
-                /* Get the object directory */
-                Status = ObReferenceObjectByHandle(ObjectHandle,
-                                                   0,
-                                                   ObpDirectoryObjectType,
-                                                   PreviousMode,
-                                                   (PVOID*)&Directory,
-                                                   NULL);
-                if (NT_SUCCESS(Status))
-                {
-                    /* FIXME: Missng locks */
-                    /* Set its session ID */
-                    Directory->SessionId = PsGetCurrentProcessSessionId();
-                    ObDereferenceObject(Directory);
-                }
+                /* Setup a lookup context */
+                OBP_LOOKUP_CONTEXT LookupContext;
+                ObpInitializeLookupContext(&LookupContext);
+
+                /* Set the directory session ID */
+                ObpAcquireDirectoryLockExclusive(Directory, &LookupContext);
+                Directory->SessionId = PsGetCurrentProcessSessionId();
+                ObpReleaseDirectoryLock(Directory, &LookupContext);
+
+                /* We're done, release the context and dereference the directory */
+                ObpReleaseLookupContext(&LookupContext);
+                ObDereferenceObject(Directory);
             }
             break;
+        }
 
         default:
             /* Unsupported class */

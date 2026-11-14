@@ -7,43 +7,6 @@
 
 #include "precomp.h"
 
-#if 0
-/*
- * RTL_SYSTEM_TIME is almost the same as the SYSTEMTIME structure defined
- * in winbase.h, however we need to define it differently here.
- * This is used by RtlQueryTimeZoneInformation and RtlSetTimeZoneInformation.
- * See: https://social.msdn.microsoft.com/Forums/en-US/home?forum=en-US and
- * Search: Reading TimeZone binary data from registry by Patrick
- *    and then look at the last post showing typedef struct SYSTEMTIME_TZI.
- */
-typedef struct _RTL_SYSTEM_TIME {
-    WORD wYear;
-    WORD wMonth;
-    WORD wDay;                  /* wDayOfWeek was here normally */
-    WORD wHour;
-    WORD wMinute;
-    WORD wSecond;
-    WORD wMilliseconds;
-    WORD wDayOfWeek;            /* wDayOfWeek relocated to here */
-} RTL_SYSTEM_TIME;
-
-/*
- * RTL_TIME_ZONE_INFORMATION is the same as the TIME_ZONE_INFORMATION structure
- * defined in winbase.h, however we need to define RTL_TIME_ZONE_INFORMATION
- * seperately here so we don't depend on winbase.h.
- * This is used by RtlQueryTimeZoneInformation and RtlSetTimeZoneInformation.
- */
-typedef struct _RTL_TIME_ZONE_INFORMATION {
-    LONG Bias;
-    WCHAR StandardName[32];
-    RTL_SYSTEM_TIME StandardDate;
-    LONG StandardBias;
-    WCHAR DaylightName[32];
-    RTL_SYSTEM_TIME DaylightDate;
-    LONG DaylightBias;
-} RTL_TIME_ZONE_INFORMATION;
-#endif
-
 static NTSTATUS (WINAPI *pRtlQueryTimeZoneInformation)( RTL_TIME_ZONE_INFORMATION *);
 
 static void test_RtlQueryTimeZoneInformation(void)
@@ -58,7 +21,7 @@ static void test_RtlQueryTimeZoneInformation(void)
     dwRet = GetTimeZoneInformation(&tziOld);
 
     ok(dwRet == TIME_ZONE_ID_STANDARD || dwRet == TIME_ZONE_ID_UNKNOWN || dwRet == TIME_ZONE_ID_DAYLIGHT,
-        "Get Time Zone Name failed with error = %ld.\n", GetLastError()); 
+        "Get Time Zone Name failed with error = %ld.\n", GetLastError());
 
     // Adjust the time zone information
 
@@ -82,7 +45,7 @@ static void test_RtlQueryTimeZoneInformation(void)
 
     SetLastError(0xDEADBEEF);
 
-    ok(SetTimeZoneInformation(&tziNew) , 
+    ok(SetTimeZoneInformation(&tziNew) ,
         "Set Time Zone Information failed with error = %ld.\n", GetLastError());
 
     // if we got an error the function failed, so there is not much else we can do
@@ -98,7 +61,7 @@ static void test_RtlQueryTimeZoneInformation(void)
     dwRet = GetTimeZoneInformation(&tziTest);
 
     ok(dwRet == TIME_ZONE_ID_STANDARD || dwRet == TIME_ZONE_ID_UNKNOWN || dwRet == TIME_ZONE_ID_DAYLIGHT,
-        "Get Time Zone Information Returned failed with error = %ld.\n", GetLastError()); 
+        "Get Time Zone Information Returned failed with error = %ld.\n", GetLastError());
 
     ok(!wcscmp(tziTest.StandardName, tziNew.StandardName),
         "Standard Time Zone Name = %ls, expected %ls.\n", tziTest.StandardName, tziNew.StandardName);

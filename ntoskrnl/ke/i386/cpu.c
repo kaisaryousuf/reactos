@@ -9,6 +9,8 @@
 /* INCLUDES *****************************************************************/
 
 #include <ntoskrnl.h>
+#include <xmmintrin.h>
+
 #define NDEBUG
 #include <debug.h>
 
@@ -24,7 +26,7 @@ UCHAR KiNMITSS[KTSS_IO_MAPS];
 ULONG KeI386CpuType;
 ULONG KeI386CpuStep;
 ULONG KiFastSystemCallDisable = 0;
-ULONG KeI386NpxPresent = 0;
+ULONG KeI386NpxPresent = TRUE;
 ULONG KiMXCsrMask = 0;
 ULONG MxcsrFeatureMask = 0;
 ULONG KeI386XMMIPresent = 0;
@@ -52,13 +54,8 @@ BOOLEAN KiFastCallCopyDoneOnce;
 /* Flush data */
 volatile LONG KiTbFlushTimeStamp;
 
-/* CPU Signatures */
-static const CHAR CmpIntelID[]       = "GenuineIntel";
-static const CHAR CmpAmdID[]         = "AuthenticAMD";
-static const CHAR CmpCyrixID[]       = "CyrixInstead";
-static const CHAR CmpTransmetaID[]   = "GenuineTMx86";
-static const CHAR CmpCentaurID[]     = "CentaurHauls";
-static const CHAR CmpRiseID[]        = "RiseRiseRise";
+/* FX area alignment size */
+#define FXSAVE_ALIGN 15
 
 /* SUPPORT ROUTINES FOR MSVC COMPATIBILITY ***********************************/
 
@@ -82,140 +79,45 @@ setCx86(UCHAR reg, UCHAR data)
     WRITE_PORT_UCHAR((PUCHAR)(ULONG_PTR)0x23, data);
 }
 
-
 /* FUNCTIONS *****************************************************************/
+
+CODE_SEG("INIT")
+static
+ULONG
+KiGetCpuVendor(VOID)
+{
+    ASSERT(KeGetCurrentPrcb()->VendorString[0] != 0);
+    return KiIdentifyCpuVendor(KeGetCurrentPrcb()->VendorString);
+}
 
 CODE_SEG("INIT")
 VOID
 NTAPI
 KiSetProcessorType(VOID)
 {
-    ULONG EFlags, NewEFlags;
-    CPU_INFO CpuInfo;
-    ULONG Stepping, Type;
-
-    /* Start by assuming no CPUID data */
-    KeGetCurrentPrcb()->CpuID = 0;
-
-    /* Save EFlags */
-    EFlags = __readeflags();
-
-    /* XOR out the ID bit and update EFlags */
-    NewEFlags = EFlags ^ EFLAGS_ID;
-    __writeeflags(NewEFlags);
-
-    /* Get them back and see if they were modified */
-    NewEFlags = __readeflags();
-    if (NewEFlags != EFlags)
-    {
-        /* The modification worked, so CPUID exists. Set the ID Bit again. */
-        EFlags |= EFLAGS_ID;
-        __writeeflags(EFlags);
-
-        /* Peform CPUID 0 to see if CPUID 1 is supported */
-        KiCpuId(&CpuInfo, 0);
-        if (CpuInfo.Eax > 0)
-        {
-            /* Do CPUID 1 now */
-            KiCpuId(&CpuInfo, 1);
-
-            /*
-             * Get the Stepping and Type. The stepping contains both the
-             * Model and the Step, while the Type contains the returned Type.
-             * We ignore the family.
-             *
-             * For the stepping, we convert this: zzzzzzxy into this: x0y
-             */
-            Stepping = CpuInfo.Eax & 0xF0;
-            Stepping <<= 4;
-            Stepping += (CpuInfo.Eax & 0xFF);
-            Stepping &= 0xF0F;
-            Type = CpuInfo.Eax & 0xF00;
-            Type >>= 8;
-
-            /* Save them in the PRCB */
-            KeGetCurrentPrcb()->CpuID = TRUE;
-            KeGetCurrentPrcb()->CpuType = (UCHAR)Type;
-            KeGetCurrentPrcb()->CpuStep = (USHORT)Stepping;
-        }
-        else
-        {
-            DPRINT1("CPUID Support lacking\n");
-        }
-    }
-    else
-    {
-        DPRINT1("CPUID Support lacking\n");
-    }
-
-    /* Restore EFLAGS */
-    __writeeflags(EFlags);
-}
-
-CODE_SEG("INIT")
-ULONG
-NTAPI
-KiGetCpuVendor(VOID)
-{
     PKPRCB Prcb = KeGetCurrentPrcb();
-    CPU_INFO CpuInfo;
+    USHORT Family, Model, Stepping;
 
-    /* Assume no Vendor ID and fail if no CPUID Support. */
-    Prcb->VendorString[0] = 0;
-    if (!Prcb->CpuID) return 0;
+    /* Get the CPU vendor string */
+    KiGetCpuVendorString(Prcb->VendorString);
 
-    /* Get the Vendor ID */
-    KiCpuId(&CpuInfo, 0);
+    /* Get the family, model and stepping */
+    KiGetCpuSignature(&Family, &Model, &Stepping);
 
-    /* Copy it to the PRCB and null-terminate it */
-    *(ULONG*)&Prcb->VendorString[0] = CpuInfo.Ebx;
-    *(ULONG*)&Prcb->VendorString[4] = CpuInfo.Edx;
-    *(ULONG*)&Prcb->VendorString[8] = CpuInfo.Ecx;
-    Prcb->VendorString[12] = 0;
-
-    /* Now check the CPU Type */
-    if (!strcmp(Prcb->VendorString, CmpIntelID))
-    {
-        return CPU_INTEL;
-    }
-    else if (!strcmp(Prcb->VendorString, CmpAmdID))
-    {
-        return CPU_AMD;
-    }
-    else if (!strcmp(Prcb->VendorString, CmpCyrixID))
-    {
-        DPRINT1("Cyrix CPU support not fully tested!\n");
-        return CPU_CYRIX;
-    }
-    else if (!strcmp(Prcb->VendorString, CmpTransmetaID))
-    {
-        DPRINT1("Transmeta CPU support not fully tested!\n");
-        return CPU_TRANSMETA;
-    }
-    else if (!strcmp(Prcb->VendorString, CmpCentaurID))
-    {
-        DPRINT1("Centaur CPU support not fully tested!\n");
-        return CPU_CENTAUR;
-    }
-    else if (!strcmp(Prcb->VendorString, CmpRiseID))
-    {
-        DPRINT1("Rise CPU support not fully tested!\n");
-        return CPU_RISE;
-    }
-
-    /* Unknown CPU */
-    DPRINT1("%s CPU support not fully tested!\n", Prcb->VendorString);
-    return CPU_UNKNOWN;
+    /* Save them in the PRCB */
+    Prcb->CpuID = TRUE;
+    Prcb->CpuType = (UCHAR)Family;
+    Prcb->CpuStep = ((Model << 8) | Stepping);
 }
 
 CODE_SEG("INIT")
-ULONG
+ULONG64
 NTAPI
 KiGetFeatureBits(VOID)
 {
     PKPRCB Prcb = KeGetCurrentPrcb();
     ULONG Vendor;
-    ULONG FeatureBits = KF_WORKING_PTE;
+    ULONG64 FeatureBits = KF_WORKING_PTE;
     CPU_INFO CpuInfo, DummyCpuInfo;
     UCHAR Ccr1;
     BOOLEAN ExtendedCPUID = TRUE;
@@ -361,27 +263,35 @@ KiGetFeatureBits(VOID)
             break;
     }
 
+    /* Get some features from ECX */
+    if (CpuInfo.Ecx & X86_FEATURE_SSE3) FeatureBits |= KF_SSE3;
+    if (CpuInfo.Ecx & X86_FEATURE_SSSE3) FeatureBits |= KF_SSSE3;
+    if (CpuInfo.Ecx & X86_FEATURE_SSE4_1) FeatureBits |= KF_SSE4_1;
+    if (CpuInfo.Ecx & X86_FEATURE_SSE4_2) FeatureBits |= KF_SSE4_2;
+    if (CpuInfo.Ecx & X86_FEATURE_XSAVE) FeatureBits |= KF_XSTATE;
+    if (CpuInfo.Ecx & X86_FEATURE_RDRAND) FeatureBits |= KF_RDRAND;
+
     /* Set the current features */
     CpuFeatures = CpuInfo.Edx;
 
     /* Convert all CPUID Feature bits into our format */
-    if (CpuFeatures & 0x00000002) FeatureBits |= KF_V86_VIS | KF_CR4;
-    if (CpuFeatures & 0x00000008) FeatureBits |= KF_LARGE_PAGE | KF_CR4;
-    if (CpuFeatures & 0x00000010) FeatureBits |= KF_RDTSC;
-    if (CpuFeatures & 0x00000100) FeatureBits |= KF_CMPXCHG8B;
-    if (CpuFeatures & 0x00000800) FeatureBits |= KF_FAST_SYSCALL;
-    if (CpuFeatures & 0x00001000) FeatureBits |= KF_MTRR;
-    if (CpuFeatures & 0x00002000) FeatureBits |= KF_GLOBAL_PAGE | KF_CR4;
-    if (CpuFeatures & 0x00008000) FeatureBits |= KF_CMOV;
-    if (CpuFeatures & 0x00010000) FeatureBits |= KF_PAT;
-    if (CpuFeatures & 0x00200000) FeatureBits |= KF_DTS;
-    if (CpuFeatures & 0x00800000) FeatureBits |= KF_MMX;
-    if (CpuFeatures & 0x01000000) FeatureBits |= KF_FXSR;
-    if (CpuFeatures & 0x02000000) FeatureBits |= KF_XMMI;
-    if (CpuFeatures & 0x04000000) FeatureBits |= KF_XMMI64;
+    if (CpuFeatures & X86_FEATURE_VME)     FeatureBits |= KF_V86_VIS | KF_CR4;
+    if (CpuFeatures & X86_FEATURE_PSE)     FeatureBits |= KF_LARGE_PAGE | KF_CR4;
+    if (CpuFeatures & X86_FEATURE_TSC)     FeatureBits |= KF_RDTSC;
+    if (CpuFeatures & X86_FEATURE_CX8)     FeatureBits |= KF_CMPXCHG8B;
+    if (CpuFeatures & X86_FEATURE_SYSCALL) FeatureBits |= KF_FAST_SYSCALL;
+    if (CpuFeatures & X86_FEATURE_MTRR)    FeatureBits |= KF_MTRR;
+    if (CpuFeatures & X86_FEATURE_PGE)     FeatureBits |= KF_GLOBAL_PAGE | KF_CR4;
+    if (CpuFeatures & X86_FEATURE_CMOV)    FeatureBits |= KF_CMOV;
+    if (CpuFeatures & X86_FEATURE_PAT)     FeatureBits |= KF_PAT;
+    if (CpuFeatures & X86_FEATURE_DS)      FeatureBits |= KF_DTS;
+    if (CpuFeatures & X86_FEATURE_MMX)     FeatureBits |= KF_MMX;
+    if (CpuFeatures & X86_FEATURE_FXSR)    FeatureBits |= KF_FXSR;
+    if (CpuFeatures & X86_FEATURE_SSE)     FeatureBits |= KF_XMMI;
+    if (CpuFeatures & X86_FEATURE_SSE2)    FeatureBits |= KF_XMMI64;
 
     /* Check if the CPU has hyper-threading */
-    if (CpuFeatures & 0x10000000)
+    if (CpuFeatures & X86_FEATURE_HT)
     {
         /* Set the number of logical CPUs */
         Prcb->LogicalProcessorsPerPhysicalProcessor = (UCHAR)(CpuInfo.Ebx >> 16);
@@ -411,7 +321,7 @@ KiGetFeatureBits(VOID)
                 KiCpuId(&CpuInfo, 0x80000001);
 
                 /* Check if NX-bit is supported */
-                if (CpuInfo.Edx & 0x00100000) FeatureBits |= KF_NX_BIT;
+                if (CpuInfo.Edx & X86_FEATURE_NX) FeatureBits |= KF_NX_BIT;
 
                 /* Now handle each features for each CPU Vendor */
                 switch (Vendor)
@@ -425,34 +335,59 @@ KiGetFeatureBits(VOID)
         }
     }
 
-#define print_supported(kf_value) ((FeatureBits & kf_value) ? #kf_value : "")
-    DPRINT1("Supported CPU features : %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s\n",
-    print_supported(KF_V86_VIS),
-    print_supported(KF_RDTSC),
-    print_supported(KF_CR4),
-    print_supported(KF_CMOV),
-    print_supported(KF_GLOBAL_PAGE),
-    print_supported(KF_LARGE_PAGE),
-    print_supported(KF_MTRR),
-    print_supported(KF_CMPXCHG8B),
-    print_supported(KF_MMX),
-    print_supported(KF_WORKING_PTE),
-    print_supported(KF_PAT),
-    print_supported(KF_FXSR),
-    print_supported(KF_FAST_SYSCALL),
-    print_supported(KF_XMMI),
-    print_supported(KF_3DNOW),
-    print_supported(KF_AMDK6MTRR),
-    print_supported(KF_XMMI64),
-    print_supported(KF_DTS),
-    print_supported(KF_NX_BIT),
-    print_supported(KF_NX_DISABLED),
-    print_supported(KF_NX_ENABLED));
-#undef print_supported
-
     /* Return the Feature Bits */
     return FeatureBits;
 }
+
+#if DBG
+CODE_SEG("INIT")
+VOID
+KiReportCpuFeatures(VOID)
+{
+    ULONG CpuFeatures = 0;
+    CPU_INFO CpuInfo;
+
+    if (KiGetCpuVendor())
+    {
+        KiCpuId(&CpuInfo, 1);
+        CpuFeatures = CpuInfo.Edx;
+    }
+
+    DPRINT1("Supported CPU features:");
+
+#define print_kf_bit(kf_value) if (KeFeatureBits & kf_value) DbgPrint(" " #kf_value)
+    print_kf_bit(KF_V86_VIS);
+    print_kf_bit(KF_RDTSC);
+    print_kf_bit(KF_CR4);
+    print_kf_bit(KF_CMOV);
+    print_kf_bit(KF_GLOBAL_PAGE);
+    print_kf_bit(KF_LARGE_PAGE);
+    print_kf_bit(KF_MTRR);
+    print_kf_bit(KF_CMPXCHG8B);
+    print_kf_bit(KF_MMX);
+    print_kf_bit(KF_WORKING_PTE);
+    print_kf_bit(KF_PAT);
+    print_kf_bit(KF_FXSR);
+    print_kf_bit(KF_FAST_SYSCALL);
+    print_kf_bit(KF_XMMI);
+    print_kf_bit(KF_3DNOW);
+    print_kf_bit(KF_AMDK6MTRR);
+    print_kf_bit(KF_XMMI64);
+    print_kf_bit(KF_DTS);
+    print_kf_bit(KF_NX_BIT);
+    print_kf_bit(KF_NX_DISABLED);
+    print_kf_bit(KF_NX_ENABLED);
+#undef print_kf_bit
+
+#define print_cf(cpu_flag) if (CpuFeatures & cpu_flag) DbgPrint(" " #cpu_flag)
+    print_cf(X86_FEATURE_PAE);
+    print_cf(X86_FEATURE_APIC);
+    print_cf(X86_FEATURE_HT);
+#undef print_cf
+
+    DbgPrint("\n");
+}
+#endif // DBG
 
 CODE_SEG("INIT")
 VOID
@@ -460,261 +395,42 @@ NTAPI
 KiGetCacheInformation(VOID)
 {
     PKIPCR Pcr = (PKIPCR)KeGetPcr();
-    ULONG Vendor;
-    CPU_INFO CpuInfo;
-    ULONG CacheRequests = 0, i;
-    ULONG CurrentRegister;
-    UCHAR RegisterByte, Associativity = 0;
-    ULONG Size, CacheLine = 64, CurrentSize = 0;
-    BOOLEAN FirstPass = TRUE;
+    ULONG CacheCount;
 
     /* Set default L2 size */
     Pcr->SecondLevelCacheSize = 0;
 
-    /* Get the Vendor ID and make sure we support CPUID */
-    Vendor = KiGetCpuVendor();
-    if (!Vendor) return;
+#if (NTDDI_VERSION >= NTDDI_VISTA)
+    /* Retrieve the cache descriptors */
+    PKPRCB Prcb = KeGetCurrentPrcb();
+    CacheCount = KiGetCpuCacheDescriptors(Prcb->Cache,
+                                          ARRAYSIZE(Prcb->Cache),
+                                          KiGetCpuVendor());
+    Prcb->CacheCount = CacheCount;
+#else
+    /* Retrieve the cache descriptors */
+    CACHE_DESCRIPTOR CacheDescriptors[5];
+    CacheCount = KiGetCpuCacheDescriptors(CacheDescriptors,
+                                          ARRAYSIZE(CacheDescriptors),
+                                          KiGetCpuVendor());
+#endif
 
-    /* Check the Vendor ID */
-    switch (Vendor)
+    /* Loop the descriptors to find the L2 cache size */
+    for (ULONG i = 0; i < CacheCount; i++)
     {
-        /* Handle Intel case */
-        case CPU_INTEL:
-
-            /*Check if we support CPUID 2 */
-            KiCpuId(&CpuInfo, 0);
-            if (CpuInfo.Eax >= 2)
-            {
-                /* We need to loop for the number of times CPUID will tell us to */
-                do
-                {
-                    /* Do the CPUID call */
-                    KiCpuId(&CpuInfo, 2);
-
-                    /* Check if it was the first call */
-                    if (FirstPass)
-                    {
-                        /*
-                         * The number of times to loop is the first byte. Read
-                         * it and then destroy it so we don't get confused.
-                         */
-                        CacheRequests = CpuInfo.Eax & 0xFF;
-                        CpuInfo.Eax &= 0xFFFFFF00;
-
-                        /* Don't go over this again */
-                        FirstPass = FALSE;
-                    }
-
-                    /* Loop all 4 registers */
-                    for (i = 0; i < 4; i++)
-                    {
-                        /* Get the current register */
-                        CurrentRegister = CpuInfo.AsUINT32[i];
-
-                        /*
-                         * If the upper bit is set, then this register should
-                         * be skipped.
-                         */
-                        if (CurrentRegister & 0x80000000) continue;
-
-                        /* Keep looping for every byte inside this register */
-                        while (CurrentRegister)
-                        {
-                            /* Read a byte, skip a byte. */
-                            RegisterByte = (UCHAR)(CurrentRegister & 0xFF);
-                            CurrentRegister >>= 8;
-                            if (!RegisterByte) continue;
-
-                            Size = 0;
-                            switch (RegisterByte)
-                            {
-                                case 0x06:
-                                case 0x08:
-                                    KePrefetchNTAGranularity = 32;
-                                    break;
-                                case 0x09:
-                                    KePrefetchNTAGranularity = 64;
-                                    break;
-                                case 0x0a:
-                                case 0x0c:
-                                    KePrefetchNTAGranularity = 32;
-                                    break;
-                                case 0x0d:
-                                case 0x0e:
-                                    KePrefetchNTAGranularity = 64;
-                                    break;
-                                case 0x1d:
-                                    Size = 128 * 1024;
-                                    Associativity = 2;
-                                    break;
-                                case 0x21:
-                                    Size = 256 * 1024;
-                                    Associativity = 8;
-                                    break;
-                                case 0x24:
-                                    Size = 1024 * 1024;
-                                    Associativity = 16;
-                                    break;
-                                case 0x2c:
-                                case 0x30:
-                                    KePrefetchNTAGranularity = 64;
-                                    break;
-                                case 0x41:
-                                case 0x42:
-                                case 0x43:
-                                case 0x44:
-                                case 0x45:
-                                    Size = (1 << (RegisterByte - 0x41)) * 128 * 1024;
-                                    Associativity = 4;
-                                    break;
-                                case 0x48:
-                                    Size = 3 * 1024 * 1024;
-                                    Associativity = 12;
-                                    break;
-                                case 0x49:
-                                    Size = 4 * 1024 * 1024;
-                                    Associativity = 16;
-                                    break;
-                                case 0x4e:
-                                    Size = 6 * 1024 * 1024;
-                                    Associativity = 24;
-                                    break;
-                                case 0x60:
-                                case 0x66:
-                                case 0x67:
-                                case 0x68:
-                                    KePrefetchNTAGranularity = 64;
-                                    break;
-                                case 0x78:
-                                    Size = 1024 * 1024;
-                                    Associativity = 4;
-                                    break;
-                                case 0x79:
-                                case 0x7a:
-                                case 0x7b:
-                                case 0x7c:
-                                case 0x7d:
-                                    Size = (1 << (RegisterByte - 0x79)) * 128 * 1024;
-                                    Associativity = 8;
-                                    break;
-                                case 0x7f:
-                                    Size = 512 * 1024;
-                                    Associativity = 2;
-                                    break;
-                                case 0x80:
-                                    Size = 512 * 1024;
-                                    Associativity = 8;
-                                    break;
-                                case 0x82:
-                                case 0x83:
-                                case 0x84:
-                                case 0x85:
-                                    Size = (1 << (RegisterByte - 0x82)) * 256 * 1024;
-                                    Associativity = 8;
-                                    break;
-                                case 0x86:
-                                    Size = 512 * 1024;
-                                    Associativity = 4;
-                                    break;
-                                case 0x87:
-                                    Size = 1024 * 1024;
-                                    Associativity = 8;
-                                    break;
-                                case 0xf0:
-                                    KePrefetchNTAGranularity = 64;
-                                    break;
-                                case 0xf1:
-                                    KePrefetchNTAGranularity = 128;
-                                    break;
-                            }
-                            if (Size && (Size / Associativity) > CurrentSize)
-                            {
-                                /* Set the L2 Cache Size and Associativity */
-                                CurrentSize = Size / Associativity;
-                                Pcr->SecondLevelCacheSize = Size;
-                                Pcr->SecondLevelCacheAssociativity = Associativity;
-                            }
-                        }
-                    }
-                } while (--CacheRequests);
-            }
-            break;
-
-        case CPU_AMD:
-
-            /* Check if we support CPUID 0x80000005 */
-            KiCpuId(&CpuInfo, 0x80000000);
-            if (CpuInfo.Eax >= 0x80000005)
-            {
-                /* Get L1 size first */
-                KiCpuId(&CpuInfo, 0x80000005);
-                KePrefetchNTAGranularity = CpuInfo.Ecx & 0xFF;
-
-                /* Check if we support CPUID 0x80000006 */
-                KiCpuId(&CpuInfo, 0x80000000);
-                if (CpuInfo.Eax >= 0x80000006)
-                {
-                    /* Get 2nd level cache and tlb size */
-                    KiCpuId(&CpuInfo, 0x80000006);
-
-                    /* Cache line size */
-                    CacheLine = CpuInfo.Ecx & 0xFF;
-
-                    /* Hardcode associativity */
-                    RegisterByte = (CpuInfo.Ecx >> 12) & 0xFF;
-                    switch (RegisterByte)
-                    {
-                        case 2:
-                            Associativity = 2;
-                            break;
-
-                        case 4:
-                            Associativity = 4;
-                            break;
-
-                        case 6:
-                            Associativity = 8;
-                            break;
-
-                        case 8:
-                        case 15:
-                            Associativity = 16;
-                            break;
-
-                        default:
-                            Associativity = 1;
-                            break;
-                    }
-
-                    /* Compute size */
-                    Size = (CpuInfo.Ecx >> 16) << 10;
-
-                    /* Hack for Model 6, Steping 300 */
-                    if ((KeGetCurrentPrcb()->CpuType == 6) &&
-                        (KeGetCurrentPrcb()->CpuStep == 0x300))
-                    {
-                        /* Stick 64K in there */
-                        Size = 64 * 1024;
-                    }
-
-                    /* Set the L2 Cache Size and associativity */
-                    Pcr->SecondLevelCacheSize = Size;
-                    Pcr->SecondLevelCacheAssociativity = Associativity;
-                }
-            }
-            break;
-
-        case CPU_CYRIX:
-        case CPU_TRANSMETA:
-        case CPU_CENTAUR:
-        case CPU_RISE:
-
-            /* FIXME */
-            break;
+        KeLargestCacheLine = max(KeLargestCacheLine, CacheDescriptors[i].LineSize);
+        if ((CacheDescriptors[i].Level == 1) && (CacheDescriptors[i].Type != CacheInstruction))
+        {
+            KePrefetchNTAGranularity = CacheDescriptors[i].LineSize;
+        }
+        else if (CacheDescriptors[i].Level == 2)
+        {
+            Pcr->SecondLevelCacheSize = CacheDescriptors[i].Size;
+            Pcr->SecondLevelCacheAssociativity = CacheDescriptors[i].Associativity;
+        }
     }
 
     /* Set the cache line */
-    if (CacheLine > KeLargestCacheLine) KeLargestCacheLine = CacheLine;
     DPRINT1("Prefetch Cache: %lu bytes\tL2 Cache: %lu bytes\tL2 Cache Line: %lu bytes\tL2 Cache Associativity: %lu\n",
             KePrefetchNTAGranularity,
             Pcr->SecondLevelCacheSize,
@@ -979,7 +695,7 @@ KiSaveProcessorControlState(OUT PKPROCESSOR_STATE ProcessorState)
     Ke386GetGlobalDescriptorTable(&ProcessorState->SpecialRegisters.Gdtr.Limit);
     __sidt(&ProcessorState->SpecialRegisters.Idtr.Limit);
     ProcessorState->SpecialRegisters.Tr = Ke386GetTr();
-    ProcessorState->SpecialRegisters.Ldtr = Ke386GetLocalDescriptorTable();
+    Ke386GetLocalDescriptorTable(&ProcessorState->SpecialRegisters.Ldtr);
 }
 
 CODE_SEG("INIT")
@@ -1089,6 +805,7 @@ KiI386PentiumLockErrataFixup(VOID)
 {
     KDESCRIPTOR IdtDescriptor = {0, 0, 0};
     PKIDTENTRY NewIdt, NewIdt2;
+    PMMPTE PointerPte;
 
     /* Allocate memory for a new IDT */
     NewIdt = ExAllocatePool(NonPagedPool, 2 * PAGE_SIZE);
@@ -1114,7 +831,10 @@ KiI386PentiumLockErrataFixup(VOID)
     _enable();
 
     /* Set the first 7 entries as read-only to produce a fault */
-    MmSetPageProtect(NULL, NewIdt, PAGE_READONLY);
+    PointerPte = MiAddressToPte(NewIdt);
+    ASSERT(PointerPte->u.Hard.Write == 1);
+    PointerPte->u.Hard.Write = 0;
+    KeInvalidateTlbEntry(NewIdt);
 }
 
 BOOLEAN
@@ -1127,15 +847,6 @@ KeInvalidateAllCaches(VOID)
     /* Invalidate all caches */
     __wbinvd();
     return TRUE;
-}
-
-VOID
-FASTCALL
-KeZeroPages(IN PVOID Address,
-            IN ULONG Size)
-{
-    /* Not using XMMI in this routine */
-    RtlZeroMemory(Address, Size);
 }
 
 VOID
@@ -1161,55 +872,14 @@ KiSaveProcessorState(IN PKTRAP_FRAME TrapFrame,
 CODE_SEG("INIT")
 BOOLEAN
 NTAPI
-KiIsNpxPresent(VOID)
-{
-    ULONG Cr0;
-    USHORT Magic;
-
-    /* Set magic */
-    Magic = 0xFFFF;
-
-    /* Read CR0 and mask out FPU flags */
-    Cr0 = __readcr0() & ~(CR0_MP | CR0_TS | CR0_EM | CR0_ET);
-
-    /* Store on FPU stack */
-#ifdef _MSC_VER
-    __asm fninit;
-    __asm fnstsw Magic;
-#else
-    asm volatile ("fninit;" "fnstsw %0" : "+m"(Magic));
-#endif
-
-    /* Magic should now be cleared */
-    if (Magic & 0xFF)
-    {
-        /* You don't have an FPU -- enable emulation for now */
-        __writecr0(Cr0 | CR0_EM | CR0_TS);
-        return FALSE;
-    }
-
-    /* You have an FPU, enable it */
-    Cr0 |= CR0_ET;
-
-    /* Enable INT 16 on 486 and higher */
-    if (KeGetCurrentPrcb()->CpuType >= 3) Cr0 |= CR0_NE;
-
-    /* Set FPU state */
-    __writecr0(Cr0 | CR0_EM | CR0_TS);
-    return TRUE;
-}
-
-CODE_SEG("INIT")
-BOOLEAN
-NTAPI
 KiIsNpxErrataPresent(VOID)
 {
     static double Value1 = 4195835.0, Value2 = 3145727.0;
     INT ErrataPresent;
     ULONG Cr0;
 
-    /* Disable interrupts */
-    _disable();
+    /* Interrupts have to be disabled here. */
+    ASSERT(!(__readeflags() & EFLAGS_INTERRUPT_MASK));
 
     /* Read CR0 and remove FPU flags */
     Cr0 = __readcr0();
@@ -1246,9 +916,6 @@ KiIsNpxErrataPresent(VOID)
 
     /* Restore CR0 */
     __writecr0(Cr0);
-
-    /* Enable interrupts */
-    _enable();
 
     /* Return if there's an errata */
     return ErrataPresent != 0;
@@ -1359,62 +1026,230 @@ KiCoprocessorError(VOID)
     __writecr0(__readcr0() | CR0_TS);
 }
 
-/*
- * @implemented
+/**
+ * @brief
+ * Saves the current floating point unit state
+ * context of the current calling thread.
+ *
+ * @param[out] Save
+ * The saved floating point context given to the
+ * caller at the end of function's operations.
+ * The structure whose data contents are opaque
+ * to the calling thread.
+ *
+ * @return
+ * Returns STATUS_SUCCESS if the function has
+ * successfully completed its operations.
+ * STATUS_INSUFFICIENT_RESOURCES is returned
+ * if the function couldn't allocate memory
+ * for FPU state information.
+ *
+ * @remarks
+ * The function performs a FPU state save
+ * in two ways. A normal FPU save (FNSAVE)
+ * is performed if the system doesn't have
+ * SSE/SSE2, otherwise the function performs
+ * a save of FPU, MMX and SSE states save (FXSAVE).
  */
+#if defined(__clang__)
+__attribute__((__target__("sse")))
+#endif
 NTSTATUS
 NTAPI
-KeSaveFloatingPointState(OUT PKFLOATING_SAVE Save)
+KeSaveFloatingPointState(
+    _Out_ PKFLOATING_SAVE Save)
 {
-    PFNSAVE_FORMAT FpState;
+    PFLOATING_SAVE_CONTEXT FsContext;
+    PFX_SAVE_AREA FxSaveAreaFrame;
+    PKPRCB CurrentPrcb;
+
+    /* Sanity checks */
+    ASSERT(Save);
     ASSERT(KeGetCurrentIrql() <= DISPATCH_LEVEL);
-    UNIMPLEMENTED_ONCE;
+    ASSERT(KeI386NpxPresent);
 
-    /* check if we are doing software emulation */
-    if (!KeI386NpxPresent) return STATUS_ILLEGAL_FLOAT_CONTEXT;
-
-    FpState = ExAllocatePool(NonPagedPool, sizeof (FNSAVE_FORMAT));
-    if (!FpState) return STATUS_INSUFFICIENT_RESOURCES;
-
-    *((PVOID *) Save) = FpState;
-#ifdef __GNUC__
-    asm volatile("fnsave %0\n\t" : "=m" (*FpState));
-#else
-    __asm
+    /* Initialize the floating point context */
+    FsContext = ExAllocatePoolWithTag(NonPagedPool,
+                                      sizeof(FLOATING_SAVE_CONTEXT),
+                                      TAG_FLOATING_POINT_CONTEXT);
+    if (!FsContext)
     {
-        mov eax, [FpState]
-        fnsave [eax]
-    };
-#endif
+        /* Bail out if we failed */
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
 
-    KeGetCurrentThread()->Header.NpxIrql = KeGetCurrentIrql();
+    /*
+     * Allocate some memory pool for the buffer. The size
+     * of this allocated buffer is the FX area plus the
+     * alignment requirement needed for FXSAVE as a 16-byte
+     * aligned pointer is compulsory in order to save the
+     * FPU state.
+     */
+    FsContext->Buffer = ExAllocatePoolWithTag(NonPagedPool,
+                                              sizeof(FX_SAVE_AREA) + FXSAVE_ALIGN,
+                                              TAG_FLOATING_POINT_FX);
+    if (!FsContext->Buffer)
+    {
+        /* Bail out if we failed */
+        ExFreePoolWithTag(FsContext, TAG_FLOATING_POINT_CONTEXT);
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+
+    /*
+     * Now cache the allocated buffer into the save area
+     * and align the said area to a 16-byte boundary. Why
+     * do we have to do this is because of ExAllocate function.
+     * We gave the necessary alignment requirement in the pool
+     * allocation size although the function will always return
+     * a 8-byte aligned pointer. Aligning the given pointer directly
+     * can cause issues when freeing it from memory afterwards. With
+     * that said, we have to cache the buffer to the area so that we
+     * do not touch or mess the allocated buffer any further.
+     */
+    FsContext->PfxSaveArea = ALIGN_UP_POINTER_BY(FsContext->Buffer, 16);
+
+    /* Disable interrupts and get the current processor control region */
+    _disable();
+    CurrentPrcb = KeGetCurrentPrcb();
+
+    /* Store the current thread to context */
+    FsContext->CurrentThread = KeGetCurrentThread();
+
+    /*
+     * Save the previous NPX thread state registers (aka Numeric
+     * Processor eXtension) into the current context so that
+     * we are informing the scheduler the current FPU state
+     * belongs to this thread.
+     */
+    if (FsContext->CurrentThread != CurrentPrcb->NpxThread)
+    {
+        if ((CurrentPrcb->NpxThread != NULL) &&
+            (CurrentPrcb->NpxThread->NpxState == NPX_STATE_LOADED))
+        {
+            /* Get the FX frame */
+            FxSaveAreaFrame = KiGetThreadNpxArea(CurrentPrcb->NpxThread);
+
+            /* Save the FPU state */
+            Ke386SaveFpuState(FxSaveAreaFrame);
+
+            /* NPX thread has lost its state */
+            CurrentPrcb->NpxThread->NpxState = NPX_STATE_NOT_LOADED;
+            FxSaveAreaFrame->NpxSavedCpu = 0;
+        }
+
+        /* The new NPX thread is the current thread */
+        CurrentPrcb->NpxThread = FsContext->CurrentThread;
+    }
+
+    /* Perform the save */
+    Ke386SaveFpuState(FsContext->PfxSaveArea);
+
+    /* Store the NPX IRQL */
+    FsContext->OldNpxIrql = FsContext->CurrentThread->Header.NpxIrql;
+
+    /* Set the current IRQL to NPX */
+    FsContext->CurrentThread->Header.NpxIrql = KeGetCurrentIrql();
+
+    /* Initialize the FPU */
+    Ke386FnInit();
+
+    /* Enable interrupts back */
+    _enable();
+
+    /* Give the saved FPU context to the caller */
+    *((PVOID *) Save) = FsContext;
     return STATUS_SUCCESS;
 }
 
-/*
- * @implemented
+/**
+ * @brief
+ * Restores the original FPU state context that has
+ * been saved by a API call of KeSaveFloatingPointState.
+ * Callers are expected to restore the floating point
+ * state by calling this function when they've finished
+ * doing FPU operations.
+ *
+ * @param[in] Save
+ * The saved floating point context that is to be given
+ * to the function to restore the FPU state.
+ *
+ * @return
+ * Returns STATUS_SUCCESS indicating the function
+ * has fully completed its operations.
  */
+#if defined(__clang__)
+__attribute__((__target__("sse")))
+#endif
 NTSTATUS
 NTAPI
-KeRestoreFloatingPointState(IN PKFLOATING_SAVE Save)
+KeRestoreFloatingPointState(
+    _In_ PKFLOATING_SAVE Save)
 {
-    PFNSAVE_FORMAT FpState = *((PVOID *) Save);
-    ASSERT(KeGetCurrentThread()->Header.NpxIrql == KeGetCurrentIrql());
-    UNIMPLEMENTED_ONCE;
+    PFLOATING_SAVE_CONTEXT FsContext;
 
-#ifdef __GNUC__
-    asm volatile("fnclex\n\t");
-    asm volatile("frstor %0\n\t" : "=m" (*FpState));
-#else
-    __asm
+    /* Sanity checks */
+    ASSERT(Save);
+    ASSERT(KeGetCurrentIrql() <= DISPATCH_LEVEL);
+    ASSERT(KeI386NpxPresent);
+
+    /* Cache the saved FS context */
+    FsContext = *((PVOID *) Save);
+
+    /*
+     * We have to restore the regular saved FPU
+     * state. For this we must first do some
+     * validation checks so that we are sure
+     * ourselves the state context is saved
+     * properly. Check if we are in the same
+     * calling thread.
+     */
+    if (FsContext->CurrentThread != KeGetCurrentThread())
     {
-        fnclex
-        mov eax, [FpState]
-        frstor [eax]
-    };
-#endif
+        /*
+         * This isn't the thread that saved the
+         * FPU state context, crash the system!
+         */
+        KeBugCheckEx(INVALID_FLOATING_POINT_STATE,
+                     0x2,
+                     (ULONG_PTR)FsContext->CurrentThread,
+                     (ULONG_PTR)KeGetCurrentThread(),
+                     0);
+    }
 
-    ExFreePool(FpState);
+    /* Are we under the same NPX interrupt level? */
+    if (FsContext->CurrentThread->Header.NpxIrql != KeGetCurrentIrql())
+    {
+        /* The interrupt level has changed, crash the system! */
+        KeBugCheckEx(INVALID_FLOATING_POINT_STATE,
+                     0x1,
+                     (ULONG_PTR)FsContext->CurrentThread->Header.NpxIrql,
+                     (ULONG_PTR)KeGetCurrentIrql(),
+                     0);
+    }
+
+    /* Disable interrupts */
+    _disable();
+
+    /*
+     * The saved FPU state context is valid,
+     * it's time to restore the state. First,
+     * clear FPU exceptions now.
+     */
+    Ke386ClearFpExceptions();
+
+    /* Restore the state */
+    Ke386RestoreFpuState(FsContext->PfxSaveArea);
+
+    /* Give the saved NPX IRQL back to the NPX thread */
+    FsContext->CurrentThread->Header.NpxIrql = FsContext->OldNpxIrql;
+
+    /* Enable interrupts back */
+    _enable();
+
+    /* We're done, free the allocated area and context */
+    ExFreePoolWithTag(FsContext->Buffer, TAG_FLOATING_POINT_FX);
+    ExFreePoolWithTag(FsContext, TAG_FLOATING_POINT_CONTEXT);
+
     return STATUS_SUCCESS;
 }
 
@@ -1508,19 +1343,6 @@ KeSetDmaIoCoherency(IN ULONG Coherency)
 {
     /* Save the coherency globally */
     KiDmaIoCoherency = Coherency;
-}
-
-/*
- * @implemented
- */
-KAFFINITY
-NTAPI
-KeQueryActiveProcessors(VOID)
-{
-    PAGED_CODE();
-
-    /* Simply return the number of active processors */
-    return KeActiveProcessors;
 }
 
 /*

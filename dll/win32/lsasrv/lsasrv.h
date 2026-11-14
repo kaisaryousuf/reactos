@@ -126,6 +126,11 @@ NTSTATUS
 LsapLogonUser(PLSA_API_MSG RequestMsg,
               PLSAP_LOGON_CONTEXT LogonContext);
 
+VOID
+LsapTerminateLogon(
+    _In_ PLUID LogonId);
+
+
 /* authport.c */
 NTSTATUS
 StartAuthenticationPort(VOID);
@@ -430,6 +435,12 @@ LsapCreateAccountSd(PSECURITY_DESCRIPTOR *AccountSd,
 NTSTATUS
 LsapCreateSecretSd(PSECURITY_DESCRIPTOR *SecretSd,
                    PULONG SecretSdSize);
+
+NTSTATUS
+LsapCreateTokenSd(
+    _In_ const TOKEN_USER *User,
+    _Outptr_ PSECURITY_DESCRIPTOR *TokenSd,
+    _Out_ PULONG TokenSdSize);
 
 /* session.c */
 VOID

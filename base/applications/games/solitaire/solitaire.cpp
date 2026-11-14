@@ -2,6 +2,7 @@
 
 #include <winreg.h>
 #include <commctrl.h>
+#include <shellapi.h>
 #include <tchar.h>
 
 #include "resource.h"
@@ -341,7 +342,7 @@ INT_PTR CALLBACK OptionsDlgProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lPar
             else
                 EnableWindow(hCtrl, FALSE);
             return TRUE;
- 
+
         case IDOK:
             dwOptions &= ~OPTION_THREE_CARDS;
             if (IsDlgButtonChecked(hDlg, IDC_OPT_DRAWTHREE) == BST_CHECKED)
@@ -623,7 +624,7 @@ LRESULT CALLBACK WndProc (HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
 
             // For now, the Help dialog item is disabled because of lacking of HTML Help support
             EnableMenuItem(GetMenu(hwnd), IDM_HELP_CONTENTS, MF_BYCOMMAND | MF_GRAYED);
-            
+
             hwndStatus = CreateStatusWindow(WS_CHILD | WS_VISIBLE | CCS_BOTTOM | SBARS_SIZEGRIP, _T("Ready"), hwnd, 0);
 
             //SendMessage(hwndStatus, SB_SIMPLE, (WPARAM)TRUE, 0);
@@ -738,7 +739,8 @@ LRESULT CALLBACK WndProc (HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
                 return 0;
 
             case IDM_HELP_ABOUT:
-                MessageBox(hwnd, MsgAbout, szAppName, MB_OK|MB_ICONINFORMATION);
+                ShellAbout(hwnd, szAppName, MsgAbout,
+                           LoadIcon(hInstance, MAKEINTRESOURCE(IDI_SOLITAIRE)));
                 return 0;
 
             case IDM_GAME_EXIT:

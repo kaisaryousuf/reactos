@@ -27,7 +27,7 @@ extern VOID FASTCALL CHECK_PAGED_CODE_RTL(char *file, int line);
 #endif
 
 #define ROUND_DOWN(n, align) \
-    (((ULONG_PTR)(n)) & ~((align) - 1l))
+    (((ULONG_PTR)(n)) & ~((ULONG_PTR)(align) - 1))
 
 #define ROUND_UP(n, align) \
     ROUND_DOWN(((ULONG_PTR)(n)) + (align) - 1, (align))
@@ -43,10 +43,14 @@ RtlpSafeCopyMemory(
    _In_reads_bytes_(Length) CONST VOID UNALIGNED *Source,
    _In_ SIZE_T Length);
 
+#ifndef _BLDR_
+
 VOID
 NTAPI
 RtlpGetStackLimits(PULONG_PTR LowLimit,
                    PULONG_PTR HighLimit);
+
+#ifdef _M_IX86
 
 PEXCEPTION_REGISTRATION_RECORD
 NTAPI
@@ -54,12 +58,16 @@ RtlpGetExceptionList(VOID);
 
 VOID
 NTAPI
-RtlpSetHeapParameters(IN PRTL_HEAP_PARAMETERS Parameters);
-
-VOID
-NTAPI
 RtlpSetExceptionList(PEXCEPTION_REGISTRATION_RECORD NewExceptionList);
 
+#endif /* _M_IX86 */
+
+/* For heap.c */
+VOID
+NTAPI
+RtlpSetHeapParameters(IN PRTL_HEAP_PARAMETERS Parameters);
+
+/* For vectoreh.c */
 BOOLEAN
 NTAPI
 RtlCallVectoredExceptionHandlers(
@@ -81,6 +89,8 @@ typedef struct _DISPATCHER_CONTEXT
 } DISPATCHER_CONTEXT, *PDISPATCHER_CONTEXT;
 #endif
 
+#endif /* !_BLDR_ */
+
 /* These provide support for sharing code between User and Kernel RTL */
 PVOID
 NTAPI
@@ -94,6 +104,8 @@ RtlpFreeMemory(
     PVOID Mem,
     ULONG Tag);
 
+#ifndef _BLDR_
+
 KPROCESSOR_MODE
 NTAPI
 RtlpGetMode(VOID);
@@ -106,6 +118,7 @@ RtlpCaptureStackLimits(
     IN ULONG_PTR *StackEnd
 );
 
+/* For heap.c and heappage.c */
 NTSTATUS
 NTAPI
 RtlDeleteHeapLock(IN OUT PHEAP_LOCK Lock);
@@ -137,8 +150,12 @@ RtlpHandleDpcStackException(IN PEXCEPTION_REGISTRATION_RECORD RegistrationFrame,
                             IN OUT PULONG_PTR StackLow,
                             IN OUT PULONG_PTR StackHigh);
 
+#endif /* !_BLDR_ */
+
 #define RtlpAllocateStringMemory RtlpAllocateMemory
 #define RtlpFreeStringMemory     RtlpFreeMemory
+
+#ifndef _BLDR_
 
 ULONG
 NTAPI
@@ -167,7 +184,6 @@ RtlpExecuteHandlerForException(PEXCEPTION_RECORD ExceptionRecord,
                                PCONTEXT Context,
                                PVOID DispatcherContext,
                                PEXCEPTION_ROUTINE ExceptionHandler);
-#endif
 
 EXCEPTION_DISPOSITION
 NTAPI
@@ -176,6 +192,16 @@ RtlpExecuteHandlerForUnwind(PEXCEPTION_RECORD ExceptionRecord,
                             PCONTEXT Context,
                             PVOID DispatcherContext,
                             PEXCEPTION_ROUTINE ExceptionHandler);
+#else
+EXCEPTION_DISPOSITION
+NTAPI
+RtlpExecuteHandlerForUnwind(
+    _Inout_ struct _EXCEPTION_RECORD *ExceptionRecord,
+    _In_ PVOID EstablisherFrame,
+    _Inout_ struct _CONTEXT *ContextRecord,
+    _In_ PVOID DispatcherContext);
+
+#endif
 
 VOID
 NTAPI
@@ -209,17 +235,13 @@ DebugService2(
     IN ULONG Service
 );
 
-/* Tags for the String Allocators */
-#define TAG_USTR        'RTSU'
-#define TAG_ASTR        'RTSA'
-#define TAG_OSTR        'RTSO'
-
 /* Timer Queue */
-
 extern HANDLE TimerThreadHandle;
 
 NTSTATUS
 RtlpInitializeTimerThread(VOID);
+
+#endif /* !_BLDR_ */
 
 /* bitmap64.c */
 typedef struct _RTL_BITMAP64
@@ -234,6 +256,11 @@ typedef struct _RTL_BITMAP_RUN64
     ULONG64 NumberOfBits;
 } RTL_BITMAP_RUN64, *PRTL_BITMAP_RUN64;
 
+/* Tags for the String Allocators */
+#define TAG_USTR        'RTSU'
+#define TAG_ASTR        'RTSA'
+#define TAG_OSTR        'RTSO'
+
 /* nls.c */
 WCHAR
 NTAPI
@@ -242,6 +269,8 @@ RtlpUpcaseUnicodeChar(IN WCHAR Source);
 WCHAR
 NTAPI
 RtlpDowncaseUnicodeChar(IN WCHAR Source);
+
+#ifndef _BLDR_
 
 /* ReactOS only */
 VOID
@@ -253,5 +282,6 @@ NTAPI
 RtlpDebugBufferCommit(_Inout_ PRTL_DEBUG_INFORMATION Buffer,
                       _In_ SIZE_T Size);
 
+#endif /* !_BLDR_ */
 
 /* EOF */

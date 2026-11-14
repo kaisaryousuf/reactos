@@ -12,9 +12,9 @@
 
 DWORD RegisterDefaultClasses = FALSE;
 
-static PFNCLIENT pfnClientA;
-static PFNCLIENT pfnClientW;
-static PFNCLIENTWORKER pfnClientWorker;
+PFNCLIENT pfnClientA;
+PFNCLIENT pfnClientW;
+PFNCLIENTWORKER pfnClientWorker;
 
 
 /***********************************************************************
@@ -65,6 +65,7 @@ static const struct
 /*    { &ICONTITLE_builtin_class, FNID_ICONTITLE, ICLS_ICONTITLE}, // moved to win32k */
     { &STATIC_builtin_class,    FNID_STATIC,    ICLS_STATIC},
     { &GHOST_builtin_class,     FNID_GHOST,     ICLS_GHOST},
+    { &IME_builtin_class,       FNID_IME,       ICLS_IME},
 };
 
 BOOL WINAPI RegisterSystemControls(VOID)
@@ -81,11 +82,17 @@ BOOL WINAPI RegisterSystemControls(VOID)
 
     for (i = 0; i != sizeof(g_SysClasses) / sizeof(g_SysClasses[0]); i++)
     {
+        if (g_SysClasses[i].fnid == FNID_IME)
+        {
+            if (!IS_IMM_MODE() || (RegisterDefaultClasses & ICLASS_TO_MASK(ICLS_IME)))
+                continue;
+        }
+
         WndClass.lpszClassName = g_SysClasses[i].desc->name;
 
         // Set Global bit!
         WndClass.style = g_SysClasses[i].desc->style|CS_GLOBALCLASS;
-        WndClass.lpfnWndProc = g_SysClasses[i].desc->procW;
+        WndClass.lpfnWndProc = *g_SysClasses[i].desc->procW;
         WndClass.cbWndExtra = g_SysClasses[i].desc->extra;
         WndClass.hCursor = LoadCursorW(NULL, g_SysClasses[i].desc->cursor);
         WndClass.hbrBackground= g_SysClasses[i].desc->brush;
@@ -97,12 +104,6 @@ BOOL WINAPI RegisterSystemControls(VOID)
                                      FALSE);
         if (atom)
            RegisterDefaultClasses |= ICLASS_TO_MASK(g_SysClasses[i].ClsId);
-    }
-
-    if ( //gpsi->dwSRVIFlags & SRVINFO_IMM32 && Not supported yet, need NlsMbCodePageTag working in Win32k.
-        !(RegisterDefaultClasses & ICLASS_TO_MASK(ICLS_IME))) // So, work like XP.
-    {
-       RegisterIMEClass();
     }
 
     return TRUE;
@@ -146,8 +147,8 @@ BOOL WINAPI RegisterClientPFN(VOID)
 
   pfnClientA.pfnScrollBarWndProc      = ScrollBarWndProcA;
   pfnClientW.pfnScrollBarWndProc      = ScrollBarWndProcW;
-  pfnClientA.pfnTitleWndProc          = IconTitleWndProc;
-  pfnClientW.pfnTitleWndProc          = IconTitleWndProc;
+  pfnClientA.pfnTitleWndProc          = IconTitleWndProcA;
+  pfnClientW.pfnTitleWndProc          = IconTitleWndProcW;
   pfnClientA.pfnMenuWndProc           = PopupMenuWndProcA;
   pfnClientW.pfnMenuWndProc           = PopupMenuWndProcW;
   pfnClientA.pfnDesktopWndProc        = DesktopWndProcA;
@@ -203,10 +204,41 @@ BOOL WINAPI RegisterClientPFN(VOID)
   pfnClientWorker.pfnGhostWndProc     = GhostWndProc_common;
   pfnClientWorker.pfnCtfHookProc      = User32DefWindowProc;
 
+#if (DLL_EXPORT_VERSION >= _WIN32_WINNT_VISTA)
+    /* Register the PFNs with ntdll */
+    Status = RtlInitializeNtUserPfn(&pfnClientA,
+                                    sizeof(pfnClientA),
+                                    &pfnClientW,
+                                    sizeof(pfnClientW),
+                                    &pfnClientWorker,
+                                    sizeof(pfnClientWorker));
+    if (!NT_SUCCESS(Status))
+    {
+        return FALSE;
+    }
+
+    /* Query the PFN thunks from ntdll */
+    PFNCLIENT* pfnNtdllClientA;
+    PFNCLIENT* pfnNtdllClientW;
+    PFNCLIENTWORKER* pfnNtdllClientWorker;
+    Status = RtlRetrieveNtUserPfn((LPCVOID*)&pfnNtdllClientA,
+                                  (LPCVOID*)&pfnNtdllClientW,
+                                  (LPCVOID*)&pfnNtdllClientWorker);
+    if (!NT_SUCCESS(Status))
+    {
+        return FALSE;
+    }
+
+    /* Now update the global PFNs */
+    pfnClientA = *pfnNtdllClientA;
+    pfnClientW = *pfnNtdllClientW;
+    pfnClientWorker = *pfnNtdllClientWorker;
+#endif
+
   Status = NtUserInitializeClientPfnArrays( &pfnClientA,
                                             &pfnClientW,
                                             &pfnClientWorker,
                                             User32Instance);
-  
+
   return NT_SUCCESS(Status) ? TRUE : FALSE;
 }

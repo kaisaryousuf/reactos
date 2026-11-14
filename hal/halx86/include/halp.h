@@ -10,6 +10,14 @@
 #define HAL_BUILD_TYPE ((DBG ? PRCB_BUILD_DEBUG : 0) | PRCB_BUILD_UNIPROCESSOR)
 #endif
 
+/* Don't include this in freeloader */
+#ifndef _BLDR_
+extern KIRQL HalpIrqlSynchLevel;
+
+#undef SYNCH_LEVEL
+#define SYNCH_LEVEL HalpIrqlSynchLevel
+#endif
+
 typedef struct _HAL_BIOS_FRAME
 {
     ULONG SegSs;
@@ -53,11 +61,27 @@ VOID
 #define IDT_INTERNAL            0x11
 #define IDT_DEVICE              0x21
 
-/* Conversion functions */
-#define BCD_INT(bcd)            \
-    (((bcd & 0xF0) >> 4) * 10 + (bcd & 0x0F))
-#define INT_BCD(int)            \
-    (UCHAR)(((int / 10) << 4) + (int % 10))
+#ifdef _M_AMD64
+#define HALP_LOW_STUB_SIZE_IN_PAGES 5
+#else
+#define HALP_LOW_STUB_SIZE_IN_PAGES 3
+#endif
+
+FORCEINLINE
+UCHAR
+BCD_INT(
+    _In_ UCHAR Bcd)
+{
+    return ((Bcd & 0xF0) >> 4) * 10 + (Bcd & 0x0F);
+}
+
+FORCEINLINE
+UCHAR
+INT_BCD(
+    _In_ CSHORT Int)
+{
+    return ((Int / 10) << 4) + (Int % 10);
+}
 
 typedef
 BOOLEAN
@@ -189,6 +213,7 @@ typedef struct _HalAddressUsage
 PADAPTER_OBJECT NTAPI HalpAllocateAdapterEx(ULONG NumberOfMapRegisters,BOOLEAN IsMaster, BOOLEAN Dma32BitAddresses);
 
 /* sysinfo.c */
+CODE_SEG("INIT")
 VOID
 NTAPI
 HalpRegisterVector(IN UCHAR Flags,
@@ -196,6 +221,7 @@ HalpRegisterVector(IN UCHAR Flags,
                    IN ULONG SystemVector,
                    IN KIRQL Irql);
 
+CODE_SEG("INIT")
 VOID
 NTAPI
 HalpEnableInterruptHandler(IN UCHAR Flags,
@@ -217,8 +243,9 @@ DECLSPEC_NORETURN VOID FASTCALL HalpDispatchInterrupt2ndEntry(IN PKTRAP_FRAME Tr
 extern BOOLEAN HalpProfilingStopped;
 
 /* timer.c */
-VOID NTAPI HalpInitializeClock(VOID);
+CODE_SEG("INIT") VOID NTAPI HalpInitializeClock(VOID);
 VOID __cdecl HalpClockInterrupt(VOID);
+VOID __cdecl HalpClockIpi(VOID);
 VOID __cdecl HalpProfileInterrupt(VOID);
 
 typedef struct _HALP_ROLLOVER
@@ -227,6 +254,7 @@ typedef struct _HALP_ROLLOVER
     ULONG Increment;
 } HALP_ROLLOVER, *PHALP_ROLLOVER;
 
+CODE_SEG("INIT")
 VOID
 NTAPI
 HalpCalibrateStallExecution(VOID);
@@ -235,7 +263,7 @@ HalpCalibrateStallExecution(VOID);
 VOID HalpInitPciBus (VOID);
 
 /* dma.c */
-VOID HalpInitDma (VOID);
+CODE_SEG("INIT") VOID HalpInitDma (VOID);
 
 /* Non-generic initialization */
 VOID HalpInitPhase0 (PLOADER_PARAMETER_BLOCK LoaderBlock);
@@ -254,12 +282,14 @@ HalpCheckPowerButton(
     VOID
 );
 
+CODE_SEG("INIT")
 VOID
 NTAPI
 HalpRegisterKdSupportFunctions(
     VOID
 );
 
+CODE_SEG("INIT")
 NTSTATUS
 NTAPI
 HalpSetupPciDeviceForDebugging(
@@ -267,6 +297,7 @@ HalpSetupPciDeviceForDebugging(
     IN OUT PDEBUG_DEVICE_DESCRIPTOR PciDevice
 );
 
+CODE_SEG("INIT")
 NTSTATUS
 NTAPI
 HalpReleasePciDeviceForDebugging(
@@ -375,6 +406,7 @@ HaliHaltSystem(
 //
 // CMOS Routines
 //
+CODE_SEG("INIT")
 VOID
 NTAPI
 HalpInitializeCmos(
@@ -429,36 +461,42 @@ HalpOpenRegistryKey(
     IN BOOLEAN Create
 );
 
+CODE_SEG("INIT")
 VOID
 NTAPI
 HalpGetNMICrashFlag(
     VOID
 );
 
+CODE_SEG("INIT")
 BOOLEAN
 NTAPI
 HalpGetDebugPortTable(
     VOID
 );
 
+CODE_SEG("INIT")
 VOID
 NTAPI
 HalpReportSerialNumber(
     VOID
 );
 
+CODE_SEG("INIT")
 NTSTATUS
 NTAPI
 HalpMarkAcpiHal(
     VOID
 );
 
+CODE_SEG("INIT")
 VOID
 NTAPI
 HalpBuildAddressMap(
     VOID
 );
 
+CODE_SEG("INIT")
 VOID
 NTAPI
 HalpReportResourceUsage(
@@ -466,6 +504,7 @@ HalpReportResourceUsage(
     IN INTERFACE_TYPE InterfaceType
 );
 
+CODE_SEG("INIT")
 ULONG
 NTAPI
 HalpIs16BitPortDecodeSupported(
@@ -488,6 +527,13 @@ KeUpdateSystemTime(
 
 VOID
 NTAPI
+KeUpdateRunTime(
+    _In_ PKTRAP_FRAME TrapFrame,
+    _In_ KIRQL Irql);
+
+CODE_SEG("INIT")
+VOID
+NTAPI
 HalpInitBusHandlers(
     VOID
 );
@@ -498,9 +544,12 @@ HaliInitPnpDriver(
     VOID
 );
 
+CODE_SEG("INIT")
 VOID
 NTAPI
 HalpDebugPciDumpBus(
+    IN PBUS_HANDLER BusHandler,
+    IN PCI_SLOT_NUMBER PciSlot,
     IN ULONG i,
     IN ULONG j,
     IN ULONG k,
@@ -538,8 +587,6 @@ HalpInitializeClockPc98(VOID);
 extern ULONG PIT_FREQUENCY;
 #endif /* SARCH_PC98 */
 
-#ifdef _M_AMD64
-
 VOID
 NTAPI
 HalInitializeBios(
@@ -547,18 +594,24 @@ HalInitializeBios(
     _In_ PLOADER_PARAMETER_BLOCK LoaderBlock
 );
 
+#ifdef _M_AMD64
 #define KfLowerIrql KeLowerIrql
 #define KiEnterInterruptTrap(TrapFrame) /* We do all neccessary in asm code */
-#define KiEoiHelper(TrapFrame) return /* Just return to the caller */
-#define HalBeginSystemInterrupt(Irql, Vector, OldIrql) ((*(OldIrql) = PASSIVE_LEVEL), TRUE)
-#ifndef CONFIG_SMP
-/* On UP builds, spinlocks don't exist at IRQL >= DISPATCH */
-#define KiAcquireSpinLock(SpinLock)
-#define KiReleaseSpinLock(SpinLock)
-#define KfAcquireSpinLock(SpinLock) KfRaiseIrql(DISPATCH_LEVEL);
-#define KfReleaseSpinLock(SpinLock, OldIrql) KeLowerIrql(OldIrql);
-#endif // !CONFIG_SMP
 #endif // _M_AMD64
+
+#ifdef _MINIHAL_
+#if defined(_M_IX86) || defined(_M_AMD64)
+/* Use intrinsics for IA-32 and amd64 */
+#include <ioaccess.h>
+
+#define READ_PORT_BUFFER_UCHAR(port, buffer, count)   __inbytestring(H2I(port), buffer, count)
+#define READ_PORT_BUFFER_USHORT(port, buffer, count)  __inwordstring(H2I(port), buffer, count)
+#define READ_PORT_BUFFER_ULONG(port, buffer, count)   __indwordstring(H2I(port), buffer, count)
+#define WRITE_PORT_BUFFER_UCHAR(port, buffer, count)  __outbytestring(H2I(port), buffer, count)
+#define WRITE_PORT_BUFFER_USHORT(port, buffer, count) __outwordstring(H2I(port), buffer, count)
+#define WRITE_PORT_BUFFER_ULONG(port, buffer, count)  __outdwordstring(H2I(port), buffer, count)
+#endif
+#endif
 
 extern BOOLEAN HalpNMIInProgress;
 
@@ -580,4 +633,5 @@ extern KAFFINITY HalpDefaultInterruptAffinity;
 
 extern IDTUsageFlags HalpIDTUsageFlags[MAXIMUM_IDTVECTOR+1];
 
+extern BOOLEAN HalBootViaEfi;
 extern const USHORT HalpBuildType;

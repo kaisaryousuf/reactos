@@ -106,7 +106,7 @@ WSPEventSelect(
 
     /* Wait for return */
     if (Status == STATUS_PENDING) {
-        WaitForSingleObject(SockEvent, INFINITE);
+        MsafdWaitForAlert(SockEvent);
         Status = IOSB.Status;
     }
 
@@ -181,7 +181,7 @@ WSPEnumNetworkEvents(
 
     /* Wait for return */
     if (Status == STATUS_PENDING) {
-        WaitForSingleObject(SockEvent, INFINITE);
+        MsafdWaitForAlert(SockEvent);
         Status = IOSB.Status;
     }
 
@@ -189,7 +189,7 @@ WSPEnumNetworkEvents(
 
     if (Status != STATUS_SUCCESS)
     {
-        ERR("Status 0x%08x", Status);
+        ERR("Status 0x%08x\n", Status);
         return MsafdReturnWithErrno(Status, lpErrno, 0, NULL);
     }
 

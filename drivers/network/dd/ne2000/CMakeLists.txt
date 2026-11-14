@@ -1,6 +1,11 @@
 
 include_directories(BEFORE include)
 
+add_definitions(
+    -DNDIS51_MINIPORT
+    -DNDIS_MINIPORT_DRIVER
+    -DNDIS_LEGACY_MINIPORT=1)
+
 list(APPEND SOURCE
     ne2000/8390.c
     ne2000/main.c
@@ -11,4 +16,4 @@ add_pch(ne2000 include/ne2000.h SOURCE)
 set_module_type(ne2000 kernelmodedriver)
 add_importlibs(ne2000 ndis ntoskrnl hal)
 add_cd_file(TARGET ne2000 DESTINATION reactos/system32/drivers FOR all)
-add_driver_inf(ne2000 netne2000.inf netrtl8029.inf)
+add_driver_inf(ne2000 netne.inf)

@@ -1,14 +1,10 @@
 
-include_directories(
-    include
-    ${REACTOS_SOURCE_DIR}/sdk/lib/3rdparty/libwin-iconv
-    ${REACTOS_SOURCE_DIR}/sdk/include/reactos/libs/zlib)
+include_directories(${REACTOS_SOURCE_DIR}/sdk/lib/3rdparty/libwin-iconv)
 
 add_definitions(
     -D__MINGW32__
     -DLIBXML_STATIC
     -D_REENTRANT
-    -DHAVE_WIN32_THREADS
     -D_MBCS
     -D_WINDOWS
     -DWIN32
@@ -18,12 +14,10 @@ add_definitions(
 
 list(APPEND SOURCE
     buf.c
-    c14n.c
     catalog.c
     chvalid.c
     debugXML.c
     dict.c
-    DOCBparser.c
     encoding.c
     entities.c
     error.c
@@ -31,10 +25,7 @@ list(APPEND SOURCE
     hash.c
     HTMLparser.c
     HTMLtree.c
-    legacy.c
     list.c
-    nanoftp.c
-    nanohttp.c
     parser.c
     parserInternals.c
     pattern.c
@@ -46,34 +37,44 @@ list(APPEND SOURCE
     uri.c
     valid.c
     xinclude.c
-    xlink.c
     xmlIO.c
     xmlmemory.c
     xmlreader.c
     xmlregexp.c
-    xmlmodule.c
     xmlsave.c
     xmlschemas.c
     xmlschemastypes.c
     xmlunicode.c
-    xmlwriter.c
     xpath.c
     xpointer.c
     xmlstring.c
     libxml.h)
 
-add_library(libxml2 ${SOURCE})
+add_library(libxml2 STATIC ${SOURCE})
+add_pch(libxml2 libxml.h SOURCE)
 
-if(MSVC AND (NOT USE_CLANG_CL))
+if(CMAKE_C_COMPILER_ID STREQUAL "MSVC")
     # Unreferenced local variable
     remove_target_compile_option(libxml2 "/we4101")
     target_compile_options(libxml2 PRIVATE "/wd4101")
     # Local variable initialized but not referenced
     remove_target_compile_option(libxml2 "/we4189")
+    # warning C4996: 'function': was declared deprecated
+    target_compile_options(libxml2 PRIVATE "/wd4996")
+    # warning C4090: 'function': different 'const' qualifiers
+    target_compile_options(libxml2 PRIVATE "/wd4090")
+    if(ARCH STREQUAL "amd64" OR ARCH STREQUAL "arm64")
+        # '=': conversion from 'size_t' to 'int', possible loss of data
+        target_compile_options(libxml2 PRIVATE "/wd4267")
+    endif()
 else()
     target_compile_options(libxml2 PRIVATE "-w")
 endif()
 
+target_include_directories(libxml2
+    PRIVATE include/private
+    PUBLIC include;include/libxml
+)
+
 target_link_libraries(libxml2 oldnames)
-add_pch(libxml2 libxml.h SOURCE)
 add_dependencies(libxml2 psdk)

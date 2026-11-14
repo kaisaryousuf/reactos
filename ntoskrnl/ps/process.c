@@ -123,9 +123,10 @@ PsGetNextProcessThread(IN PEPROCESS Process,
     return FoundThread;
 }
 
+static
 PEPROCESS
 NTAPI
-PsGetNextProcess(IN PEPROCESS OldProcess)
+PsGetNextProcessEx(_In_opt_ PEPROCESS OldProcess, _In_ BOOLEAN Reverse)
 {
     PLIST_ENTRY Entry;
     PEPROCESS FoundProcess = NULL;
@@ -138,13 +139,15 @@ PsGetNextProcess(IN PEPROCESS OldProcess)
     /* Check if we're already starting somewhere */
     if (OldProcess)
     {
-        /* Start where we left off */
-        Entry = OldProcess->ActiveProcessLinks.Flink;
+        /* Start where we left off and move to the next/previous process */
+        Entry = Reverse ? OldProcess->ActiveProcessLinks.Blink :
+                          OldProcess->ActiveProcessLinks.Flink;
     }
     else
     {
-        /* Start at the beginning */
-        Entry = PsActiveProcessHead.Flink;
+        /* Start at the beginning (or end) */
+        Entry = Reverse ? PsActiveProcessHead.Blink :
+                          PsActiveProcessHead.Flink;
     }
 
     /* Loop the process list */
@@ -158,7 +161,7 @@ PsGetNextProcess(IN PEPROCESS OldProcess)
 
         /* Nothing found, keep trying */
         FoundProcess = NULL;
-        Entry = Entry->Flink;
+        Entry = Reverse ? Entry->Blink : Entry->Flink;
     }
 
     /* Release the lock */
@@ -167,6 +170,13 @@ PsGetNextProcess(IN PEPROCESS OldProcess)
     /* Dereference the Process we had referenced earlier */
     if (OldProcess) ObDereferenceObject(OldProcess);
     return FoundProcess;
+}
+
+PEPROCESS
+NTAPI
+PsGetNextProcess(_In_opt_ PEPROCESS OldProcess)
+{
+    return PsGetNextProcessEx(OldProcess, FALSE);
 }
 
 KPRIORITY
@@ -376,7 +386,9 @@ PspCreateProcess(OUT PHANDLE ProcessHandle,
     SECURITY_SUBJECT_CONTEXT SubjectContext;
     BOOLEAN NeedsPeb = FALSE;
     INITIAL_PEB InitialPeb;
+
     PAGED_CODE();
+
     PSTRACE(PS_PROCESS_DEBUG,
             "ProcessHandle: %p Parent: %p\n", ProcessHandle, ParentProcess);
 
@@ -438,6 +450,9 @@ PspCreateProcess(OUT PHANDLE ProcessHandle,
 
     /* Setup the Thread List Head */
     InitializeListHead(&Process->ThreadListHead);
+
+    /* Initialize the job process list entry */
+    InitializeListHead(&Process->JobLinks);
 
     /* Set up the Quota Block from the Parent */
     PspInheritQuota(Process, Parent);
@@ -709,11 +724,36 @@ PspCreateProcess(OUT PHANDLE ProcessHandle,
     /* Check if we need to audit */
     if (SeDetailedAuditingWithToken(NULL)) SeAuditProcessCreate(Process);
 
-    /* Check if the parent had a job */
-    if ((Parent) && (Parent->Job))
+    /*
+     * Attach the process to parent's job if:
+     *  a) parent exists,
+     *  b) parent has a job,
+     *  c) parent's job does NOT allow silent breakaway.
+     */
+    if (Parent && Parent->Job &&
+        !FlagOn(Parent->Job->LimitFlags, JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK))
     {
-        /* FIXME: We need to insert this process */
-        DPRINT1("Jobs not yet supported\n");
+        PEJOB ParentJob = Parent->Job;
+
+        /* If caller explicitly requested breakaway from the job */
+        if (FlagOn(Flags, PROCESS_CREATE_FLAGS_BREAKAWAY))
+        {
+            /* Deny if the job forbids breakaway */
+            if (!FlagOn(ParentJob->LimitFlags, JOB_OBJECT_LIMIT_BREAKAWAY_OK))
+            {
+                Status = STATUS_ACCESS_DENIED;
+                goto CleanupWithRef;
+            }
+        }
+        else
+        {
+            /* Under normal conditions, child should join a parent's job */
+            Status = PspAssignProcessToJob(Process, ParentJob);
+            if (!NT_SUCCESS(Status))
+            {
+                goto CleanupWithRef;
+            }
+        }
     }
 
     /* Create PEB only for User-Mode Processes */
@@ -1613,6 +1653,277 @@ NtOpenProcess(OUT PHANDLE ProcessHandle,
 
     /* Return status */
     return Status;
+}
+
+_IRQL_requires_max_(PASSIVE_LEVEL)
+ULONG64
+PsQueryTotalCycleTimeProcess(
+    _Inout_ PEPROCESS Process,
+    _Out_ PULONG64 CycleTimeStamp)
+{
+    ULONG64 CurrentCycleTime, TotalCycleTime;
+    KIRQL OldIrql;
+
+    /* Raise IRQL, so we stay on the same processor */
+    OldIrql = KeRaiseIrqlToDpcLevel();
+
+#ifdef CONFIG_SMP
+    // FIXME should send an IPI to all processors running this process to update
+    // their cycle times.
+#endif
+
+    /* Get the current cycle time */
+    CurrentCycleTime = KxQueryProcessorCycleTime();
+
+    /* Get the process' cycle time */
+    TotalCycleTime = Process->CycleTime;
+
+    /* Check if this is the current process */
+    if (Process == PsGetCurrentProcess())
+    {
+        /* Add the additional cycle time from the current thread */
+        TotalCycleTime += CurrentCycleTime - KeGetCurrentPrcb()->StartCycles;
+    }
+
+    /* Lower IRQL */
+    KeLowerIrql(OldIrql);
+
+    /* Return the current cycle time as the time stamp */
+    if (CycleTimeStamp)
+    {
+        *CycleTimeStamp = CurrentCycleTime;
+    }
+
+    /* Return the total cycle time */
+    return TotalCycleTime;
+}
+
+NTSTATUS
+NTAPI
+NtGetNextProcess(
+    _In_opt_ HANDLE ProcessHandle,
+    _In_ ACCESS_MASK DesiredAccess,
+    _In_ ULONG HandleAttributes,
+    _In_ ULONG Flags,
+    _Out_ PHANDLE NewProcessHandle)
+{
+    KPROCESSOR_MODE PreviousMode = KeGetPreviousMode();
+    PEPROCESS Process, NextProcess;
+    HANDLE NextProcessHandle;
+    BOOLEAN Reverse = FALSE;
+    NTSTATUS Status;
+    PAGED_CODE();
+
+    /* Enter SEH for probing */
+    _SEH2_TRY
+    {
+        if (PreviousMode != KernelMode)
+            ProbeForWriteHandle(NewProcessHandle);
+        *NewProcessHandle = NULL;
+    }
+    _SEH2_EXCEPT(EXCEPTION_EXECUTE_HANDLER)
+    {
+        DPRINT1("Exception while accessing NewProcessHandle\n");
+        return _SEH2_GetExceptionCode();
+    }
+    _SEH2_END;
+
+    /* Only allowed flag is PROCESS_GET_NEXT_FLAGS_PREVIOUS_PROCESS */
+    if (Flags & ~PROCESS_GET_NEXT_FLAGS_PREVIOUS_PROCESS)
+    {
+        DPRINT1("Invalid flags %lx\n", Flags);
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    Reverse = BooleanFlagOn(Flags, PROCESS_GET_NEXT_FLAGS_PREVIOUS_PROCESS);
+
+    /* Validate handle attributes */
+    HandleAttributes = ObpValidateAttributes(HandleAttributes, PreviousMode);
+
+    /* Check if the user passed a process handle */
+    if (ProcessHandle != NULL)
+    {
+        /* Reference the processs */
+        Status = ObReferenceObjectByHandle(ProcessHandle,
+                                           PROCESS_QUERY_INFORMATION,
+                                           PsProcessType,
+                                           PreviousMode,
+                                           (PVOID*)&Process,
+                                           NULL);
+        if (!NT_SUCCESS(Status))
+        {
+            DPRINT1("Failed to reference process handle 0x%p\n", ProcessHandle);
+            return Status;
+        }
+    }
+    else
+    {
+        Process = NULL;
+    }
+
+    /* Get the next process (this will dereference the previous process) */
+    NextProcess = PsGetNextProcessEx(Process, Reverse);
+
+    /* Fail, if no process was found */
+    if (NextProcess == NULL)
+    {
+        return STATUS_NO_MORE_ENTRIES;
+    }
+
+    /* Open the process object */
+    Status = ObOpenObjectByPointer(NextProcess,
+                                   HandleAttributes,
+                                   NULL,
+                                   DesiredAccess,
+                                   PsProcessType,
+                                   PreviousMode,
+                                   &NextProcessHandle);
+
+    /* Dereference the next process */
+    ObDereferenceObject(NextProcess);
+
+    if (!NT_SUCCESS(Status))
+    {
+        DPRINT1("Failed to open next process object\n");
+        return Status;
+    }
+
+    /* Return the new process handle */
+    _SEH2_TRY
+    {
+        *NewProcessHandle = NextProcessHandle;
+    }
+    _SEH2_EXCEPT(EXCEPTION_EXECUTE_HANDLER)
+    {
+        DPRINT1("Exception while accessing NewProcessHandle\n");
+        ObCloseHandle(NextProcessHandle, PreviousMode);
+        return _SEH2_GetExceptionCode();
+    }
+    _SEH2_END;
+
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS
+NTAPI
+NtGetNextThread(
+    _In_ HANDLE ProcessHandle,
+    _In_opt_ HANDLE ThreadHandle,
+    _In_ ACCESS_MASK DesiredAccess,
+    _In_ ULONG HandleAttributes,
+    _In_opt_ _Reserved_ ULONG Flags,
+    _Out_ PHANDLE NewThreadHandle)
+{
+    KPROCESSOR_MODE PreviousMode = KeGetPreviousMode();
+    PEPROCESS Process;
+    PETHREAD Thread, NextThread;
+    HANDLE NextThreadHandle;
+    NTSTATUS Status;
+    PAGED_CODE();
+
+    /* Enter SEH for probing */
+    _SEH2_TRY
+    {
+        if (PreviousMode != KernelMode)
+            ProbeForWriteHandle(NewThreadHandle);
+        *NewThreadHandle = NULL;
+    }
+    _SEH2_EXCEPT(EXCEPTION_EXECUTE_HANDLER)
+    {
+        DPRINT1("Exception while accessing NewThreadHandle\n");
+        return _SEH2_GetExceptionCode();
+    }
+    _SEH2_END;
+
+    /* Flags is reserved and must be 0 */
+    if (Flags != 0)
+    {
+        DPRINT1("Warning: NtGetNextThread Flags %lx\n", Flags);
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    /* Validate handle attributes */
+    HandleAttributes = ObpValidateAttributes(HandleAttributes, PreviousMode);
+
+    /* Reference the processs */
+    Status = ObReferenceObjectByHandle(ProcessHandle,
+                                       PROCESS_QUERY_INFORMATION,
+                                       PsProcessType,
+                                       PreviousMode,
+                                       (PVOID*)&Process,
+                                       NULL);
+    if (!NT_SUCCESS(Status))
+    {
+        DPRINT1("Failed to reference process handle 0x%p\n", ProcessHandle);
+        return Status;
+    }
+
+    /* Check if the user passed a thread handle */
+    if (ThreadHandle != NULL)
+    {
+        /* Reference the thread */
+        Status = ObReferenceObjectByHandle(ThreadHandle,
+                                           THREAD_QUERY_LIMITED_INFORMATION,
+                                           PsThreadType,
+                                           PreviousMode,
+                                           (PVOID*)&Thread,
+                                           NULL);
+        if (!NT_SUCCESS(Status))
+        {
+            DPRINT1("Failed to reference thread handle 0x%p\n", ThreadHandle);
+            ObDereferenceObject(Process);
+            return Status;
+        }
+    }
+    else
+    {
+        Thread = NULL;
+    }
+
+    /* Get the next thread (this will dereference the previous thread) */
+    NextThread = PsGetNextProcessThread(Process, Thread);
+
+    /* Dereference the process */
+    ObDereferenceObject(Process);
+
+    /* Fail, if no thread was found */
+    if (NextThread == NULL)
+    {
+        return STATUS_NO_MORE_ENTRIES;
+    }
+
+    /* Open the Thread Object */
+    Status = ObOpenObjectByPointer(NextThread,
+                                   HandleAttributes,
+                                   NULL,
+                                   DesiredAccess,
+                                   PsThreadType,
+                                   PreviousMode,
+                                   &NextThreadHandle);
+
+    /* Dereference the next thread */
+    ObDereferenceObject(NextThread);
+
+    if (!NT_SUCCESS(Status))
+    {
+        DPRINT1("Failed to open next thread object\n");
+        return Status;
+    }
+
+    /* Return the new thread handle */
+    _SEH2_TRY
+    {
+        *NewThreadHandle = NextThreadHandle;
+    }
+    _SEH2_EXCEPT(EXCEPTION_EXECUTE_HANDLER)
+    {
+        DPRINT1("Exception while accessing NewThreadHandle\n");
+        ObCloseHandle(NextThreadHandle, PreviousMode);
+        return _SEH2_GetExceptionCode();
+    }
+    _SEH2_END;
+
+    return STATUS_SUCCESS;
 }
 
 /* EOF */

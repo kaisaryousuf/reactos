@@ -156,7 +156,8 @@ BEGIN
             WS_VISIBLE | WS_TABSTOP | TVS_HASBUTTONS | TVS_HASLINES |
             TVS_LINESATROOT | TVS_DISABLEDRAGDROP, 8, 151, 236, 68
     LTEXT "Einige Dienste sind von anderen Diensten, Systemtreibern und Ladegruppen abhängig. Falls eine Systemkomponente anhält oder nicht einwandfrei ausgeführt wird, kann dies Auswirkungen auf abhängige Dienste haben.", IDC_STATIC, 8, 7, 238, 38
-    LTEXT "Dieser Dienst ist von folgenden Systemkomponenten abhängig", IDC_STATIC, 8, 57, 236, 9
+    LTEXT "Dieser Dienst ist von folgenden Systemkomponenten abhängig:", IDC_STATIC, 8, 57, 236, 9
+    LTEXT "Die folgenden Komponenten sind von diesem Dienst abhängig:", IDC_STATIC, 8, 140, 236, 9
     LTEXT "", IDC_DEPEND_SERVICE, 8, 38, 236, 13
 END
 
@@ -280,7 +281,7 @@ END
 
 STRINGTABLE
 BEGIN
-    IDS_HELP_OPTIONS "ERSTELLOPTIONEN:\r\nBEACHTEN SIE: Der Optionsname enthält das Gleichheitszeichen.\r\n type= <own|share|interact|kernel|filesys|rec>\r\n       (Standard = own)\r\n start= <boot|system|auto|demand|disabled>\r\n       (Standard = demand) \r\n error= <normal|severe|critical|ignore>\r\n       (Standard = normal)\r\n group= <LoadOrderGroup>\r\n tag= <yes|no>\r\n depend= <Abhängigkeiten (getrennt durch / (Schrägstrich))>\r\n obj= <KontoName|ObjektName>\r\n       (Standard = LocalSystem)\r\n password= <Passwort>\r\n"
+    IDS_HELP_OPTIONS "ERSTELLOPTIONEN:\nBEACHTEN SIE: Der Optionsname enthält das Gleichheitszeichen.\n type= <own|share|interact|kernel|filesys|rec>\n       (Standard = own)\n start= <boot|system|auto|demand|disabled>\n       (Standard = demand)\n error= <normal|severe|critical|ignore>\n       (Standard = normal)\n group= <LoadOrderGroup>\n tag= <yes|no>\n depend= <Abhängigkeiten (getrennt durch / (Schrägstrich))>\n obj= <KontoName|ObjektName>\n       (Standard = LocalSystem)\n password= <Passwort>\n"
 END
 
 /* Hints */

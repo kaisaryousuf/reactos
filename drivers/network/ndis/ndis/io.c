@@ -200,15 +200,15 @@ IO_ALLOCATION_ACTION NTAPI NdisSubordinateMapRegisterCallback (
  */
 {
     PNDIS_DMA_BLOCK DmaBlock = Context;
-    
+
     NDIS_DbgPrint(MAX_TRACE, ("Called.\n"));
-    
+
     DmaBlock->MapRegisterBase = MapRegisterBase;
-    
+
     NDIS_DbgPrint(MAX_TRACE, ("setting event and leaving.\n"));
-    
+
     KeSetEvent(&DmaBlock->AllocationEvent, 0, FALSE);
-    
+
     /* We have to hold the object open to keep our lock on the system DMA controller */
     return KeepObject;
 }
@@ -333,10 +333,10 @@ NdisMAllocateMapRegisters(
   Description.Master = TRUE;                         /* implied by calling this function */
   Description.ScatterGather = TRUE;                  /* XXX UNTRUE: All BM DMA are S/G (ms seems to do this) */
   Description.BusNumber = Adapter->NdisMiniportBlock.BusNumber;
-  Description.InterfaceType = Adapter->NdisMiniportBlock.BusType;
+  Description.InterfaceType = (INTERFACE_TYPE)Adapter->NdisMiniportBlock.BusType;
   Description.DmaChannel = DmaChannel;
   Description.MaximumLength = MaximumBufferSize;
-  
+
   if(DmaSize == NDIS_DMA_64BITS)
     Description.Dma64BitAddresses = TRUE;
   else if(DmaSize == NDIS_DMA_32BITS)
@@ -442,15 +442,15 @@ NdisMSetupDmaTransfer(OUT PNDIS_STATUS Status,
     KIRQL OldIrql;
     PDMA_ADAPTER AdapterObject;
     ULONG MapRegistersNeeded;
-    
+
     NDIS_DbgPrint(MAX_TRACE, ("called: Handle 0x%x, Buffer 0x%x, Offset 0x%x, Length 0x%x, WriteToDevice 0x%x\n",
                               MiniportDmaHandle, Buffer, Offset, Length, WriteToDevice));
-    
+
     Adapter = (PLOGICAL_ADAPTER)DmaBlock->Miniport;
     AdapterObject = (PDMA_ADAPTER)DmaBlock->SystemAdapterObject;
-    
+
     MapRegistersNeeded = (Length + (PAGE_SIZE - 1)) / PAGE_SIZE;
-    
+
     KeFlushIoBuffers(Buffer, !WriteToDevice, TRUE);
 
     KeRaiseIrql(DISPATCH_LEVEL, &OldIrql);
@@ -461,7 +461,7 @@ NdisMSetupDmaTransfer(OUT PNDIS_STATUS Status,
                                                                         NdisSubordinateMapRegisterCallback, Adapter);
     }
     KeLowerIrql(OldIrql);
-        
+
     if(!NT_SUCCESS(NtStatus))
     {
         NDIS_DbgPrint(MIN_TRACE, ("AllocateAdapterChannel failed: 0x%x\n", NtStatus));
@@ -469,9 +469,9 @@ NdisMSetupDmaTransfer(OUT PNDIS_STATUS Status,
         *Status = NDIS_STATUS_RESOURCES;
         return;
     }
-    
+
     NtStatus = KeWaitForSingleObject(&DmaBlock->AllocationEvent, Executive, KernelMode, FALSE, 0);
-        
+
     if(!NT_SUCCESS(NtStatus))
     {
         NDIS_DbgPrint(MIN_TRACE, ("KeWaitForSingleObject failed: 0x%x\n", NtStatus));
@@ -479,12 +479,12 @@ NdisMSetupDmaTransfer(OUT PNDIS_STATUS Status,
         *Status = NDIS_STATUS_RESOURCES;
         return;
     }
-    
+
     /* We must throw away the return value of MapTransfer for a system DMA device */
     AdapterObject->DmaOperations->MapTransfer(AdapterObject, Buffer,
                                               DmaBlock->MapRegisterBase,
                                               (PUCHAR)MmGetMdlVirtualAddress(Buffer) + Offset, &Length, WriteToDevice);
-    
+
     NDIS_DbgPrint(MAX_TRACE, ("returning success\n"));
     *Status = NDIS_STATUS_SUCCESS;
 }
@@ -529,10 +529,10 @@ NdisMCompleteDmaTransfer(OUT PNDIS_STATUS Status,
 {
     PNDIS_DMA_BLOCK DmaBlock = MiniportDmaHandle;
     PDMA_ADAPTER AdapterObject = (PDMA_ADAPTER)DmaBlock->SystemAdapterObject;
-    
+
     NDIS_DbgPrint(MAX_TRACE, ("called: Handle 0x%x, Buffer 0x%x, Offset 0x%x, Length 0x%x, WriteToDevice 0x%x\n",
                               MiniportDmaHandle, Buffer, Offset, Length, WriteToDevice));
-    
+
     if (!AdapterObject->DmaOperations->FlushAdapterBuffers(AdapterObject,
                                                            Buffer,
                                                            DmaBlock->MapRegisterBase,
@@ -546,7 +546,7 @@ NdisMCompleteDmaTransfer(OUT PNDIS_STATUS Status,
     }
 
     AdapterObject->DmaOperations->FreeAdapterChannel(AdapterObject);
-    
+
     NDIS_DbgPrint(MAX_TRACE, ("returning success\n"));
     *Status = NDIS_STATUS_SUCCESS;
 }
@@ -883,7 +883,7 @@ NdisMRegisterDmaChannel(
   DeviceDesc.Dma64BitAddresses = FALSE;
   DeviceDesc.BusNumber = Adapter->NdisMiniportBlock.BusNumber;
   DeviceDesc.DmaChannel = DmaDescription->DmaChannel;
-  DeviceDesc.InterfaceType = Adapter->NdisMiniportBlock.BusType;
+  DeviceDesc.InterfaceType = (INTERFACE_TYPE)Adapter->NdisMiniportBlock.BusType;
   DeviceDesc.DmaWidth = DmaDescription->DmaWidth;
   DeviceDesc.DmaSpeed = DmaDescription->DmaSpeed;
   DeviceDesc.MaximumLength = MaximumLength;
@@ -904,7 +904,7 @@ NdisMRegisterDmaChannel(
   }
 
   Adapter->NdisMiniportBlock.SystemAdapterObject = (PDMA_ADAPTER)DmaBlock->SystemAdapterObject;
-    
+
   KeInitializeEvent(&DmaBlock->AllocationEvent, NotificationEvent, FALSE);
 
   DmaBlock->Miniport = Adapter;
@@ -1039,16 +1039,15 @@ NdisMRegisterIoPortRange(
 
   NDIS_DbgPrint(MAX_TRACE, ("Called - InitialPort 0x%x, NumberOfPorts 0x%x\n", InitialPort, NumberOfPorts));
 
-  memset(&PortAddress, 0, sizeof(PortAddress));
-
   /*
    * FIXME: NDIS 5+ completely ignores the InitialPort parameter, but
    * we don't have a way to get the I/O base address yet (see
    * NDIS_MINIPORT_BLOCK->AllocatedResources and
    * NDIS_MINIPORT_BLOCK->AllocatedResourcesTranslated).
    */
+  PortAddress.QuadPart = 0ULL;
   if(InitialPort)
-      PortAddress = RtlConvertUlongToLargeInteger(InitialPort);
+      PortAddress.QuadPart = (ULONGLONG)InitialPort;
   else
       ASSERT(FALSE);
 
@@ -1104,7 +1103,7 @@ NdisMDeregisterIoPortRange(IN  NDIS_HANDLE MiniportAdapterHandle,
  */
 {
     PLOGICAL_ADAPTER Adapter = (PLOGICAL_ADAPTER)MiniportAdapterHandle;
-    PHYSICAL_ADDRESS PortAddress = RtlConvertUlongToLargeInteger(InitialPort);
+    PHYSICAL_ADDRESS PortAddress = RTL_CONSTANT_LARGE_INTEGER((ULONGLONG)InitialPort);
     PHYSICAL_ADDRESS TranslatedAddress;
     ULONG AddressSpace = 1;
 
@@ -1196,10 +1195,10 @@ NdisMInitializeScatterGatherDma(
     DeviceDesc.Dma32BitAddresses = TRUE; // All callers support 32-bit addresses
     DeviceDesc.Dma64BitAddresses = Dma64BitAddresses;
     DeviceDesc.BusNumber = Adapter->NdisMiniportBlock.BusNumber;
-    DeviceDesc.InterfaceType = Adapter->NdisMiniportBlock.BusType;
+    DeviceDesc.InterfaceType = (INTERFACE_TYPE)Adapter->NdisMiniportBlock.BusType;
     DeviceDesc.MaximumLength = MaximumPhysicalMapping;
 
-    Adapter->NdisMiniportBlock.SystemAdapterObject = 
+    Adapter->NdisMiniportBlock.SystemAdapterObject =
          IoGetDmaAdapter(Adapter->NdisMiniportBlock.PhysicalDeviceObject, &DeviceDesc, &MapRegisters);
 
     if (!Adapter->NdisMiniportBlock.SystemAdapterObject)

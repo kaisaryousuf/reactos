@@ -1,32 +1,54 @@
 /*
- * PROJECT:         ReactOS kernel-mode tests
- * LICENSE:         LGPLv2.1+ - See COPYING.LIB in the top level directory
- * PURPOSE:         Kernel-Mode Test Suite Reserved Mapping test
- * PROGRAMMER:      Thomas Faber <thomas.faber@reactos.org>
+ * PROJECT:     ReactOS kernel-mode tests
+ * LICENSE:     LGPL-2.1-or-later (https://spdx.org/licenses/LGPL-2.1-or-later)
+ * PURPOSE:     Kernel-Mode Test Suite Reserved Mapping test
+ * COPYRIGHT:   Copyright 2015,2023 Thomas Faber (thomas.faber@reactos.org)
+ * COPYRIGHT:   Copyright 2015 Pierre Schweitzer (pierre@reactos.org)
  */
 
 #include <kmt_test.h>
 
+static BOOLEAN g_IsPae;
+static BOOLEAN g_IsReactOS;
+
 #ifdef _M_IX86
 
+#define IS_PAE() (g_IsPae)
+
 #define PTE_BASE    0xC0000000
-#define MiAddressToPte(x) \
-    ((PMMPTE)(((((ULONG)(x)) >> 12) << 2) + PTE_BASE))
-#define MiPteToAddress(_Pte) ((PVOID)((ULONG)(_Pte) << 10))
+
+#define MiAddressToPteX86(x) \
+    ((PULONG)(((((ULONG)(x)) >> 12) << 2) + PTE_BASE))
+#define MiAddressToPtePAE(x) \
+    ((PULONGLONG)(((((ULONG)(x)) >> 12) << 3) + PTE_BASE))
+
+#define GET_PTE_VALUE_X86(Addr) (*MiAddressToPteX86(Addr))
+#define GET_PTE_VALUE_PAE(Addr) (*MiAddressToPtePAE(Addr))
+#define GET_PTE_VALUE(Addr) (IS_PAE() ? GET_PTE_VALUE_PAE(Addr) : GET_PTE_VALUE_X86(Addr))
+
+#define PTE_IS_VALID(PteValue) ((PteValue) & 1)
+
+#define PTE_GET_PFN_X86(PteValue) (((PteValue) >> PAGE_SHIFT) & 0x0fffffULL)
+#define PTE_GET_PFN_PAE(PteValue) (((PteValue) >> PAGE_SHIFT) & 0xffffffULL)
+#define PTE_GET_PFN(PteValue) (IS_PAE() ? PTE_GET_PFN_PAE(PteValue) : PTE_GET_PFN_X86(PteValue))
 
 #elif defined(_M_AMD64)
 
 #define PTI_SHIFT  12L
 #define PTE_BASE    0xFFFFF68000000000ULL
-PMMPTE
+PULONGLONG
 FORCEINLINE
 _MiAddressToPte(PVOID Address)
 {
     ULONG64 Offset = (ULONG64)Address >> (PTI_SHIFT - 3);
     Offset &= 0xFFFFFFFFFULL << 3;
-    return (PMMPTE)(PTE_BASE + Offset);
+    return (PULONGLONG)(PTE_BASE + Offset);
 }
 #define MiAddressToPte(x) _MiAddressToPte((PVOID)(x))
+
+#define GET_PTE_VALUE(Addr) (*_MiAddressToPte((PVOID)(Addr)))
+#define PTE_IS_VALID(PteValue) ((PteValue) & 1)
+#define PTE_GET_PFN(PteValue) (((PteValue) >> PAGE_SHIFT) & 0xFffffffffULL)
 
 #endif
 
@@ -54,30 +76,87 @@ ValidateMapping(
 {
     BOOLEAN Valid = TRUE;
 #if defined(_M_IX86) || defined(_M_AMD64)
-    PMMPTE PointerPte;
+    PUCHAR CurrentAddress;
+    ULONGLONG PteValue, ExpectedValue;
     ULONG i;
 
-    PointerPte = MiAddressToPte(BaseAddress);
+#ifdef _M_AMD64
+    if (skip(GetNTVersion() < _WIN32_WINNT_WIN10, 
+             "Win10 1607+ breaks these next tests.\n"))
+        return Valid;
+#endif
+
     for (i = 0; i < ValidPtes; i++)
     {
+        CurrentAddress = (PUCHAR)BaseAddress + i * PAGE_SIZE;
+        PteValue = GET_PTE_VALUE(CurrentAddress);
         Valid = Valid &&
-                ok(PointerPte[i].u.Hard.Valid == 1,
-                   "[%lu] PTE %p is not valid\n", i, &PointerPte[i]);
+                ok(PTE_IS_VALID(PteValue),
+                   "[%lu] PTE for %p is not valid (0x%I64x)\n",
+                   i, CurrentAddress, PteValue);
 
         Valid = Valid &&
-                ok(PointerPte[i].u.Hard.PageFrameNumber == Pfns[i],
-                   "[%lu] PTE %p has PFN %Ix, expected %Ix\n",
-                   i, &PointerPte[i], PointerPte[i].u.Hard.PageFrameNumber, Pfns[i]);
+                ok(PTE_GET_PFN(PteValue) == Pfns[i],
+                   "[%lu] PTE for %p has PFN %Ix, expected %Ix\n",
+                   i, CurrentAddress, PTE_GET_PFN(PteValue), Pfns[i]);
     }
     for (; i < TotalPtes; i++)
     {
+        CurrentAddress = (PUCHAR)BaseAddress + i * PAGE_SIZE;
+        PteValue = GET_PTE_VALUE(CurrentAddress);
         Valid = Valid &&
-                ok_eq_hex(PointerPte[i].u.Long, 0UL);
+                ok(PteValue == 0,
+                   "[%lu] PTE for %p is nonzero (0x%I64x)\n",
+                   i, CurrentAddress, PteValue);
+    }
+    CurrentAddress = (PUCHAR)BaseAddress - 1 * PAGE_SIZE;
+    PteValue = GET_PTE_VALUE(CurrentAddress);
+
+    if (skip(GetNTVersion() < _WIN32_WINNT_WIN10, 
+             "DVRT (Win10 1607+) breaks these next tests.\n"))
+        return Valid;
+
+#ifdef _M_AMD64
+    if (GetNTVersion() >= _WIN32_WINNT_WIN8)
+        ExpectedValue = ((PoolTag & ~1ULL) + 1) << 28;
+    else if (GetNTVersion() >= _WIN32_WINNT_VISTA)
+#else
+    if (GetNTVersion() >= _WIN32_WINNT_VISTA)
+#endif
+        ExpectedValue = ((PoolTag & ~1ULL) + 1) << 32;
+    else
+        ExpectedValue = PoolTag & ~1ULL;
+
+    Valid = Valid &&
+            ok(PteValue == ExpectedValue,
+               "PTE for %p contains 0x%I64x, expected 0x%I64x\n",
+               CurrentAddress, PteValue, ExpectedValue);
+    CurrentAddress = (PUCHAR)BaseAddress - 2 * PAGE_SIZE;
+    PteValue = GET_PTE_VALUE(CurrentAddress);
+
+#ifdef _M_AMD64
+    if (GetNTVersion() >= _WIN32_WINNT_WIN8)
+    {
+        ExpectedValue = (TotalPtes + 2) << 28;
+    }
+    else if (g_IsReactOS || GetNTVersion() >= _WIN32_WINNT_VISTA)
+#else
+    if (g_IsReactOS || GetNTVersion() >= _WIN32_WINNT_VISTA)
+#endif
+    {
+        /* On ReactOS and on Vista+ the size is stored in
+         * the NextEntry field of a MMPTE_LIST structure */
+        ExpectedValue = ((ULONG64)TotalPtes + 2) << 32;
+    }
+    else
+    {
+        /* On Windows 2003 the size is shifted by 1 bit only */
+        ExpectedValue = (TotalPtes + 2) * 2;
     }
     Valid = Valid &&
-            ok_eq_tag(PointerPte[-1].u.Long, PoolTag & ~1);
-    Valid = Valid &&
-            ok_eq_ulong(PointerPte[-2].u.Long, (TotalPtes + 2) * 2);
+            ok(PteValue == ExpectedValue,
+               "PTE for %p contains 0x%I64x, expected 0x%I64x\n",
+               CurrentAddress, PteValue, ExpectedValue);
 #endif
 
     return Valid;
@@ -133,6 +212,7 @@ TestMap(
 
         KmtStartSeh()
             *(volatile ULONG *)BaseAddress = 0x01234567;
+            ok_eq_ulong(*(volatile ULONG *)BaseAddress, 0x01234567);
         KmtEndSeh(STATUS_SUCCESS);
 
         MmUnmapReservedMapping(BaseAddress,
@@ -151,13 +231,17 @@ TestMap(
     ok(BaseAddress != NULL, "MmMapLockedPagesWithReservedMapping failed\n");
     if (!skip(BaseAddress != NULL, "Failed to map MDL\n"))
     {
-        ok_eq_pointer(BaseAddress, (PUCHAR)Mapping + sizeof(ULONG));
+        if (GetNTVersion() >= _WIN32_WINNT_WIN8)
+            ok_eq_pointer(BaseAddress, (PVOID)ALIGN_DOWN_BY((PUCHAR)Mapping + sizeof(ULONG), 16));
+        else
+            ok_eq_pointer(BaseAddress, (PUCHAR)Mapping + sizeof(ULONG));
 
         ok_bool_true(ValidateMapping(BaseAddress, TotalPtes, PoolTag, 1, MdlPages),
                      "ValidateMapping returned");
 
         KmtStartSeh()
             *(volatile ULONG *)BaseAddress = 0x01234567;
+            ok_eq_ulong(*(volatile ULONG *)BaseAddress, 0x01234567);
         KmtEndSeh(STATUS_SUCCESS);
 
         MmUnmapReservedMapping(BaseAddress,
@@ -169,6 +253,7 @@ TestMap(
     }
 
     MmFreePagesFromMdl(Mdl);
+    ExFreePool(Mdl);
 
     /* Map all pages */
     Mdl = pMmAllocatePagesForMdlEx(ZeroPhysical,
@@ -199,7 +284,8 @@ TestMap(
         for (i = 0; i < TotalPtes; i++)
         {
             KmtStartSeh()
-                *((volatile ULONG *)BaseAddress + i * PAGE_SIZE / sizeof(ULONG)) = 0x01234567;
+                *((volatile ULONG *)((PUCHAR)BaseAddress + i * PAGE_SIZE)) = 0x01234567 + i;
+                ok_eq_ulong(*((volatile ULONG *)((PUCHAR)BaseAddress + i * PAGE_SIZE)), 0x01234567 + i);
             KmtEndSeh(STATUS_SUCCESS);
         }
 
@@ -212,6 +298,7 @@ TestMap(
     }
 
     MmFreePagesFromMdl(Mdl);
+    ExFreePool(Mdl);
 
     /* Try to map more pages than we reserved */
     Mdl = pMmAllocatePagesForMdlEx(ZeroPhysical,
@@ -238,11 +325,17 @@ TestMap(
     }
 
     MmFreePagesFromMdl(Mdl);
+    ExFreePool(Mdl);
 }
 
 START_TEST(MmReservedMapping)
 {
     PVOID Mapping;
+
+    g_IsPae = ExIsProcessorFeaturePresent(PF_PAE_ENABLED);
+    g_IsReactOS = *(PULONG)(KI_USER_SHARED_DATA + PAGE_SIZE - sizeof(ULONG)) == 0x8eac705;
+    if (!g_IsReactOS)
+        trace("Not ReactOS\n");
 
     pMmAllocatePagesForMdlEx = KmtGetSystemRoutineAddress(L"MmAllocatePagesForMdlEx");
 
@@ -258,7 +351,7 @@ START_TEST(MmReservedMapping)
     }
 
     /* 10 pages */
-    Mapping = MmAllocateMappingAddress(10 * PAGE_SIZE, 'MRmK' & ~1);
+    Mapping = MmAllocateMappingAddress(10 * PAGE_SIZE, 'MRmK');
     ok(Mapping != NULL, "MmAllocateMappingAddress failed\n");
     if (!skip(Mapping != NULL, "No mapping\n"))
     {

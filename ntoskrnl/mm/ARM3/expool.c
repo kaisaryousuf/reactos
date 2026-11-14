@@ -480,6 +480,10 @@ ExpComputePartialHashForAddress(IN PVOID BaseAddress)
     ((Tag) >= 0x20 /* Space */ && (Tag) <= 0x7E /* Tilde */)
 
 #ifdef KDBG
+#include <kdbg/kdb.h>
+#endif
+
+#ifdef KDBG
 #define MiDumperPrint(dbg, fmt, ...)        \
     if (dbg) KdbpPrint(fmt, ##__VA_ARGS__); \
     else DPRINT1(fmt, ##__VA_ARGS__)
@@ -873,7 +877,6 @@ ExpInsertPoolTracker(IN ULONG Key,
     // ASSERT on ReactOS features not yet supported
     //
     ASSERT(!(PoolType & SESSION_POOL_MASK));
-    ASSERT(KeGetCurrentProcessorNumber() == 0);
 
     //
     // Why the double indirection? Because normally this function is also used

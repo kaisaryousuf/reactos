@@ -21,40 +21,42 @@ extern "C" {
 #define ABS_AUTOHIDE	1
 #define ABS_ALWAYSONTOP	2
 
-#define SEE_MASK_DEFAULT	0x00000000
-#define SEE_MASK_CLASSNAME	0x00000001
-#define SEE_MASK_CLASSKEY	0x00000003
-#define SEE_MASK_IDLIST	0x00000004
-#define SEE_MASK_INVOKEIDLIST	0x0000000C
-#define SEE_MASK_ICON	0x00000010
-#define SEE_MASK_HOTKEY	0x00000020
-#define SEE_MASK_NOCLOSEPROCESS	0x00000040
-#define SEE_MASK_CONNECTNETDRV	0x00000080
-#define SEE_MASK_NOASYNC	0x00000100
-#define SEE_MASK_FLAG_DDEWAIT	SEE_MASK_NOASYNC
-#define SEE_MASK_DOENVSUBST	0x00000200
-#define SEE_MASK_FLAG_NO_UI	0x00000400
-#define SEE_MASK_UNICODE	0x00004000
-#define SEE_MASK_NO_CONSOLE	0x00008000
-/*
- * NOTE: The following three flags are undocumented and are not present in the
- * official Windows SDK. However they are used in shobjidl.idl to define some
- * CMIC_MASK_* flags, these ones being mentioned in the MSDN documentation of
- * the CMINVOKECOMMANDINFOEX structure.
- * I affect them this range of values which seems to be strangely empty. Of
- * course their values may differ from the real ones, however I have no way
- * of discovering them. If somebody else can verify them, it would be great.
- */
-#define SEE_MASK_HASLINKNAME	0x00010000
-#define SEE_MASK_HASTITLE	0x00020000
-#define SEE_MASK_FLAG_SEPVDM	0x00040000
-/* END NOTE */
-#define SEE_MASK_ASYNCOK	0x00100000
-#define SEE_MASK_HMONITOR	0x00200000
-#define SEE_MASK_NOZONECHECKS	0x00800000
-#define SEE_MASK_NOQUERYCLASSSTORE	0x01000000
-#define SEE_MASK_WAITFORINPUTIDLE	0x02000000
-#define SEE_MASK_FLAG_LOG_USAGE	0x04000000
+#define SEE_MASK_DEFAULT        0x00000000
+#define SEE_MASK_CLASSNAME      0x00000001
+#define SEE_MASK_CLASSKEY       0x00000003
+#define SEE_MASK_IDLIST         0x00000004
+#define SEE_MASK_INVOKEIDLIST   0x0000000C
+#if (NTDDI_VERSION < NTDDI_VISTA) || defined(__REACTOS__)
+#define SEE_MASK_ICON           0x00000010
+#endif
+#define SEE_MASK_HOTKEY         0x00000020
+#define SEE_MASK_NOCLOSEPROCESS 0x00000040
+#define SEE_MASK_CONNECTNETDRV  0x00000080
+#define SEE_MASK_NOASYNC        0x00000100
+#define SEE_MASK_FLAG_DDEWAIT   SEE_MASK_NOASYNC
+#define SEE_MASK_DOENVSUBST     0x00000200
+#define SEE_MASK_FLAG_NO_UI     0x00000400
+// 0x00001000 is undocumented.
+#define SEE_MASK_UNICODE        0x00004000
+#define SEE_MASK_NO_CONSOLE     0x00008000
+// 0x00010000 .. 0x00080000 are undocumented.
+#define SEE_MASK_ASYNCOK        0x00100000
+#if (NTDDI_VERSION >= NTDDI_WIN2K)
+#define SEE_MASK_HMONITOR       0x00200000
+#endif
+#if (NTDDI_VERSION >= NTDDI_WINXPSP1)
+#define SEE_MASK_NOZONECHECKS   0x00800000
+#endif
+#if (NTDDI_VERSION >= NTDDI_WIN2K)
+#define SEE_MASK_NOQUERYCLASSSTORE  0x01000000
+#define SEE_MASK_WAITFORINPUTIDLE   0x02000000
+#endif
+#if (NTDDI_VERSION >= NTDDI_WINXP)
+#define SEE_MASK_FLAG_LOG_USAGE     0x04000000
+#endif
+#if (NTDDI_VERSION >= NTDDI_VISTA)
+#define SEE_MASK_FLAG_HINST_IS_SITE 0x08000000
+#endif
 
 #define ABM_NEW	0
 #define ABM_REMOVE	1
@@ -66,6 +68,7 @@ extern "C" {
 #define ABM_GETAUTOHIDEBAR	7
 #define ABM_SETAUTOHIDEBAR	8
 #define ABM_WINDOWPOSCHANGED	9
+#define ABM_SETSTATE            10
 #define ABN_STATECHANGE		0
 #define ABN_POSCHANGED		1
 #define ABN_FULLSCREENAPP	2
@@ -152,6 +155,7 @@ extern "C" {
 #define FOF_WANTNUKEWARNING        0x4000  /* during delete operation, warn if delete instead
                                               of recycling (even if FOF_NOCONFIRMATION) */
 #define FOF_NORECURSEREPARSE       0x8000  /* don't do recursion into reparse points */
+#define FOF_NO_UI                  (FOF_SILENT | FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_NOCONFIRMMKDIR)
 
 #define PO_DELETE 19
 #define PO_RENAME 20
@@ -315,11 +319,17 @@ typedef struct _SHELLEXECUTEINFOA {
 	LPCSTR lpDirectory;
 	int nShow;
 	HINSTANCE hInstApp;
+	/* Optional fields */
 	PVOID lpIDList;
 	LPCSTR lpClass;
 	HKEY hkeyClass;
 	DWORD dwHotKey;
-	HANDLE hIcon;
+	_ANONYMOUS_UNION union {
+		HANDLE hIcon;
+#if (NTDDI_VERSION >= NTDDI_WIN2K)
+		HANDLE hMonitor;
+#endif
+	} DUMMYUNIONNAME;
 	HANDLE hProcess;
 } SHELLEXECUTEINFOA,*LPSHELLEXECUTEINFOA;
 typedef struct _SHELLEXECUTEINFOW {
@@ -332,11 +342,17 @@ typedef struct _SHELLEXECUTEINFOW {
 	LPCWSTR lpDirectory;
 	int nShow;
 	HINSTANCE hInstApp;
+	/* Optional fields */
 	PVOID lpIDList;
 	LPCWSTR lpClass;
 	HKEY hkeyClass;
 	DWORD dwHotKey;
-	HANDLE hIcon;
+	_ANONYMOUS_UNION union {
+		HANDLE hIcon;
+#if (NTDDI_VERSION >= NTDDI_WIN2K)
+		HANDLE hMonitor;
+#endif
+	} DUMMYUNIONNAME;
 	HANDLE hProcess;
 } SHELLEXECUTEINFOW,*LPSHELLEXECUTEINFOW;
 typedef struct _SHFILEOPSTRUCTA {
@@ -398,11 +414,6 @@ typedef struct _SHNAMEMAPPINGW {
 /******************************************
  * Links
  */
-
-#define SHGNLI_PIDL        0x01
-#define SHGNLI_PREFIXNAME  0x02
-#define SHGNLI_NOUNIQUE    0x04
-#define SHGNLI_NOLNK       0x08
 
 LPWSTR * WINAPI CommandLineToArgvW(_In_ LPCWSTR, _Out_ int*);
 void WINAPI DragAcceptFiles(_In_ HWND, _In_ BOOL);
@@ -490,7 +501,12 @@ FindExecutableW(
   _In_opt_ LPCWSTR lpDirectory,
   _Out_writes_(MAX_PATH) LPWSTR lpResult);
 
-UINT_PTR WINAPI SHAppBarMessage(_In_ DWORD, _Inout_ PAPPBARDATA);
+UINT_PTR
+WINAPI
+SHAppBarMessage(
+  _In_ DWORD dwMessage,
+  _Inout_ PAPPBARDATA pData);
+
 BOOL WINAPI Shell_NotifyIconA(_In_ DWORD, _In_ PNOTIFYICONDATAA);
 BOOL WINAPI Shell_NotifyIconW(_In_ DWORD, _In_ PNOTIFYICONDATAW);
 
@@ -552,6 +568,14 @@ ShellExecuteW(
 
 BOOL WINAPI ShellExecuteExA(_Inout_ LPSHELLEXECUTEINFOA);
 BOOL WINAPI ShellExecuteExW(_Inout_ LPSHELLEXECUTEINFOW);
+
+HRESULT WINAPI
+SHEvaluateSystemCommandTemplate(
+    _In_ PCWSTR pszCmdTemplate,
+    _Outptr_ PWSTR *ppszApplication,
+    _Outptr_opt_ PWSTR *ppszCommandLine,
+    _Outptr_opt_ PWSTR *ppszParameters);
+
 int WINAPI SHFileOperationA(_Inout_ LPSHFILEOPSTRUCTA);
 int WINAPI SHFileOperationW(_Inout_ LPSHFILEOPSTRUCTW);
 void WINAPI SHFreeNameMappings(_In_opt_ HANDLE);
@@ -573,6 +597,13 @@ SHGetFileInfoW(
   _Inout_updates_bytes_opt_(cbFileInfo) SHFILEINFOW *psfi,
   UINT cbFileInfo,
   UINT uFlags);
+
+#define SHGNLI_PIDL        0x01
+#define SHGNLI_PREFIXNAME  0x02
+#define SHGNLI_NOUNIQUE    0x04
+#define SHGNLI_NOLNK       0x08
+#define SHGNLI_NOLOCNAME   0x10 // WinVista+
+#define SHGNLI_USEURLEXT   0x20 // Win7+
 
 _Success_(return != 0)
 BOOL
@@ -634,6 +665,12 @@ DoEnvironmentSubstW(
     _Inout_updates_(cchSrc) LPWSTR pszSrc,
     UINT cchSrc);
 
+HRESULT WINAPI
+SHSetUnreadMailCountW(
+    _In_ PCWSTR pszMailAddress,
+    _In_ DWORD dwCount,
+    _In_ PCWSTR pszShellExecuteCommand);
+
 #if (_WIN32_IE >= 0x0601)
 BOOL
 WINAPI
@@ -641,6 +678,28 @@ SHTestTokenMembership(
     _In_opt_ HANDLE hToken,
     _In_ ULONG ulRID);
 #endif
+
+HRESULT WINAPI
+SHEnumerateUnreadMailAccountsW(
+    _In_opt_ HKEY hKeyUser,
+    _In_ DWORD dwIndex,
+    _Out_writes_(cchMailAddress) PWSTR pszMailAddress,
+    _In_ INT cchMailAddress);
+
+HRESULT WINAPI
+SHGetUnreadMailCountW(
+    _In_opt_ HKEY hKeyUser,
+    _In_opt_ PCWSTR pszMailAddress,
+    _Out_opt_ PDWORD pdwCount,
+    _Inout_opt_ PFILETIME pFileTime,
+    _Out_writes_opt_(cchShellExecuteCommand) PWSTR pszShellExecuteCommand,
+    _In_ INT cchShellExecuteCommand);
+
+HRESULT WINAPI
+SHSetLocalizedName(
+    _In_ PCWSTR pszPath,
+    _In_ PCWSTR pszResModule,
+    _In_ INT idsRes);
 
 #ifdef UNICODE
 #define NOTIFYICONDATA_V1_SIZE NOTIFYICONDATAW_V1_SIZE
@@ -817,6 +876,22 @@ typedef enum SHSTOCKICONID
   /* Missing: 141 - 174 */
   SIID_MAX_ICONS = 175
 } SHSTOCKICONID;
+
+typedef enum
+{
+  QUNS_NOT_PRESENT = 1,
+  QUNS_BUSY = 2,
+  QUNS_RUNNING_D3D_FULL_SCREEN = 3,
+  QUNS_PRESENTATION_MODE = 4,
+  QUNS_ACCEPTS_NOTIFICATIONS = 5,
+  QUNS_QUIET_TIME = 6,
+  QUNS_APP = 7
+} QUERY_USER_NOTIFICATION_STATE;
+
+HRESULT
+WINAPI
+SHQueryUserNotificationState(
+  _Out_ QUERY_USER_NOTIFICATION_STATE *pquns);
 
 #endif /* (NTDDI_VERSION >= NTDDI_VISTA) */
 

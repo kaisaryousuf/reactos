@@ -25,6 +25,10 @@ Author:
 #include <umtypes.h>
 #include <mmtypes.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #ifndef NTOS_MODE_USER
 
 //
@@ -48,12 +52,12 @@ NTAPI
 MmMapViewOfSection(
     _In_ PVOID SectionObject,
     _In_ PEPROCESS Process,
-    _Inout_ PVOID *BaseAddress,
+    _Outptr_result_bytebuffer_(*ViewSize) _Pre_opt_valid_ PVOID *BaseAddress,
     _In_ ULONG_PTR ZeroBits,
     _In_ SIZE_T CommitSize,
     _Inout_opt_ PLARGE_INTEGER SectionOffset,
     _Inout_ PSIZE_T ViewSize,
-    _In_ SECTION_INHERIT InheritDisposition,
+    _In_range_(ViewShare, ViewUnmap) SECTION_INHERIT InheritDisposition,
     _In_ ULONG AllocationType,
     _In_ ULONG Protect
 );
@@ -106,8 +110,8 @@ NTSTATUS
 NTAPI
 NtCreatePagingFile(
     _In_ PUNICODE_STRING FileName,
-    _In_ PLARGE_INTEGER InitialSize,
-    _In_ PLARGE_INTEGER MaxiumSize,
+    _In_ PLARGE_INTEGER MinimumSize,
+    _In_ PLARGE_INTEGER MaximumSize,
     _In_ ULONG Reserved
 );
 
@@ -217,14 +221,14 @@ NTAPI
 NtMapViewOfSection(
     _In_ HANDLE SectionHandle,
     _In_ HANDLE ProcessHandle,
-    _Inout_ PVOID *BaseAddress,
+    _Outptr_result_bytebuffer_(*ViewSize) _Pre_valid_ PVOID *BaseAddress,
     _In_ ULONG_PTR ZeroBits,
     _In_ SIZE_T CommitSize,
     _Inout_opt_ PLARGE_INTEGER SectionOffset,
     _Inout_ PSIZE_T ViewSize,
-    _In_ SECTION_INHERIT InheritDisposition,
+    _In_range_(ViewShare, ViewUnmap) SECTION_INHERIT InheritDisposition,
     _In_ ULONG AllocationType,
-    _In_ ULONG AccessProtection
+    _In_ ULONG Win32Protect
 );
 
 NTSYSCALLAPI
@@ -346,8 +350,8 @@ NTSTATUS
 NTAPI
 ZwCreatePagingFile(
     _In_ PUNICODE_STRING FileName,
-    _In_ PLARGE_INTEGER InitialSize,
-    _In_ PLARGE_INTEGER MaxiumSize,
+    _In_ PLARGE_INTEGER MinimumSize,
+    _In_ PLARGE_INTEGER MaximumSize,
     _In_ ULONG Reserved
 );
 
@@ -401,12 +405,12 @@ NTAPI
 ZwMapViewOfSection(
     _In_ HANDLE SectionHandle,
     _In_ HANDLE ProcessHandle,
-    _Outptr_result_bytebuffer_(*ViewSize) PVOID *BaseAddress,
+    _Outptr_result_bytebuffer_(*ViewSize) _Pre_valid_ PVOID *BaseAddress,
     _In_ ULONG_PTR ZeroBits,
     _In_ SIZE_T CommitSize,
     _Inout_opt_ PLARGE_INTEGER SectionOffset,
     _Inout_ PSIZE_T ViewSize,
-    _In_ SECTION_INHERIT InheritDisposition,
+    _In_range_(ViewShare, ViewUnmap) SECTION_INHERIT InheritDisposition,
     _In_ ULONG AllocationType,
     _In_ ULONG Win32Protect
 );
@@ -495,4 +499,8 @@ ZwWriteVirtualMemory(
     _Out_opt_ PSIZE_T NumberOfBytesWritten
 );
 
+#ifdef __cplusplus
+} // extern "C"
 #endif
+
+#endif // _MMFUNCS_H

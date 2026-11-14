@@ -1,4 +1,3 @@
-#define __ROS_LONG64__
 
 #define STANDALONE
 #include <wine/test.h>
@@ -10,6 +9,6 @@ const struct test winetest_testlist[] =
 {
     { "sw_extensions", func_sw_extensions },
     { "sw_pixelformat", func_sw_pixelformat },
-    
+
     { 0, 0 }
 };
